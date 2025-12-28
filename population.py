@@ -6,7 +6,7 @@ from tqdm import tqdm
 import time
 
 def generate_gamepad_array(N):
-    ints = np.random.randint(-100, 101, size=(N, 2))
+    ints = np.random.randint(-128, 128, size=(N, 2))
     bools = np.random.choice([True, False], size=(N, 3), p=[0.04, 1-0.04])
 
     gamepad = np.empty((N, 5), dtype=object)
@@ -42,7 +42,13 @@ def pad_from_np(pad_np):
     return GamePad(button, stick_x, stick_y)
 
 import struct
+import os
 def write_gamepads_to_file(gamepads, filename="output.m64"):
+    # Create the directory if it doesn't exist
+    directory = os.path.dirname(filename)
+    if directory and not os.path.exists(directory):
+        os.makedirs(directory)
+
     with open(filename, "wb") as f:
         for gp in gamepads:
             data = struct.pack(
@@ -53,9 +59,24 @@ def write_gamepads_to_file(gamepads, filename="output.m64"):
             )
             f.write(data)
 
+import copy
+class Scoring:
+    # tmp_states are states between pop.base_game and self.temp_game that we do not want to finalise yet
+    def get_fitness(self, tmp_states):
+        scores = np.array([-state.pos[2] for state in tmp_states])
+
+        i = np.argmax(scores)
+
+        return scores[i] - i
+    def add_state(self, state):
+        pass
+
 
 class Population:
-    def __init__(self, pop_size=100, genome_length=50, mutation_rate=0.05, pop_elite=None):
+    def __init__(self, pop_size=100, genome_length=50, mutation_rate=0.05, pop_elite=None, scoring=None):
+        if scoring == None:
+            scoring = Scoring()
+        self.scoring = scoring
         self.pop_size = pop_size
 
         if pop_elite is None:
@@ -102,7 +123,9 @@ class Population:
             self.base_game.step_game(step_pad)
             self.base_path.append(step_pad)
 
-            base_state = pop.base_game.get_game_state()
+            base_state = self.base_game.get_game_state()
+            self.scoring.add_state(base_state)
+
             positions.append(base_state.pos)
 
         if viewer is not None:
@@ -115,22 +138,15 @@ class Population:
 
     def fitness(self, gamepad_array):
         self.game_gen.copy_to(self.base_game, self.temp_game)
-
-        max_fitness = -np.inf
+        tmp_states = []
 
         for i, pad_np in enumerate(gamepad_array):
             pad = pad_from_np(pad_np)
             self.temp_game.step_game(pad)
-
             state = self.temp_game.get_game_state()
+            tmp_states.append(state)
 
-            current_fitness = -state.pos[2]
-
-            # the i term means that achieving that max score sooner is better
-            i_coef = 0
-            max_fitness = max(max_fitness, current_fitness - i_coef * i)
-
-        return max_fitness
+        return self.scoring.get_fitness(tmp_states)
 
     def iterate(self):
         fitnesses = []

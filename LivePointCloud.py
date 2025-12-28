@@ -4,7 +4,6 @@ from dash import Dash, dcc, html
 from dash.dependencies import Output, Input
 import plotly.graph_objects as go
 import time
-
 import logging
 
 
@@ -55,34 +54,55 @@ class LivePointCloud:
         else:
             color_strings = []
 
-        fig = go.Figure(
-            data=[go.Scatter3d(
-                x=-self.points[:, 0] if len(self.points) > 0 else [],
-                y=self.points[:, 2] if len(self.points) > 0 else [],
-                z=self.points[:, 1] if len(self.points) > 0 else [],
-                mode='markers',
-                marker=dict(
-                    size=3,
-                    color=color_strings
-                )
-            )],
-            layout=go.Layout(
-                width=960,
-                height=720,
-                scene=dict(
-                    xaxis=dict(range=self.xlim, title='X'),
-                    yaxis=dict(range=self.ylim, title='Z'),
-                    zaxis=dict(range=self.zlim, title='Y'),
-                    aspectmode='cube'
-                ),
-                dragmode='lasso',
-                uirevision='lock'
+        fig = go.Figure()
+
+        # Scatter plot for points
+        fig.add_trace(go.Scatter3d(
+            x=-self.points[:, 0] if len(self.points) > 0 else [],
+            y=self.points[:, 2] if len(self.points) > 0 else [],
+            z=self.points[:, 1] if len(self.points) > 0 else [],
+            mode='markers',
+            marker=dict(
+                size=3,
+                color=color_strings
             )
+        ))
+
+        # Add the "current position" marker as a black cross
+        if len(self.points) > 0:
+            last_point = self.points[-1]
+            fig.add_trace(go.Scatter3d(
+                x=[-last_point[0]],
+                y=[last_point[2]],
+                z=[last_point[1]],
+                mode='markers+text',
+                marker=dict(
+                    size=15,  # Larger size for visibility
+                    color='black',
+                    symbol='x',  # Cross symbol
+                    line=dict(width=2)
+                ),
+                text=["Current Position"],
+                textposition="top center"
+            ))
+
+        # Configure layout
+        fig.update_layout(
+            width=960,
+            height=720,
+            scene=dict(
+                xaxis=dict(range=self.xlim, title='X'),
+                yaxis=dict(range=self.ylim, title='Z'),
+                zaxis=dict(range=self.zlim, title='Y'),
+                aspectmode='cube'
+            ),
+            dragmode='lasso',
+            uirevision='lock'
         )
+
         return fig
 
-
-    def add_points(self, new_points):
+    def add_points(self, new_points, rgb=None):
         """
         Accepts:
         - Nx3  -> XYZ (default blue)
@@ -91,24 +111,17 @@ class LivePointCloud:
 
         new_points = np.asarray(new_points)
 
-        if new_points.shape[1] == 3:
-            xyz = new_points
-            rgb = np.tile(np.array([[0, 0, 255]]), (len(xyz), 1))  # default blue
-
-        elif new_points.shape[1] == 6:
-            xyz = new_points[:, :3]
-            rgb = new_points[:, 3:6]
-
+        if rgb is None:
+            rgb = np.tile(np.array([[0, 0, 255]]), (len(new_points), 1))  # default blue
         else:
             raise ValueError("new_points must be Nx3 or Nx6 (XYZ or XYZRGB)")
 
         self.points = (
-            np.vstack([self.points, xyz]) if self.points.size else xyz
+            np.vstack([self.points, new_points]) if self.points.size else new_points
         )
         self.colors = (
             np.vstack([self.colors, rgb]) if self.colors.size else rgb
         )
-
 
 
 if __name__ == "__main__":
