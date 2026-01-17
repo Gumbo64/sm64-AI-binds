@@ -73,11 +73,12 @@ class Scoring:
 
 
 class Population:
-    def __init__(self, pop_size=100, genome_length=50, mutation_rate=0.05, pop_elite=None, scoring=None):
+    def __init__(self, pop_size=100, genome_length=50, mutation_rate=0.05, pop_elite=None, scoring=None, skip_menu=True):
         if scoring == None:
             scoring = Scoring()
         self.scoring = scoring
         self.pop_size = pop_size
+        self.skip_menu = skip_menu
 
         if pop_elite is None:
             self.pop_elite = (pop_size // 5) + 1
@@ -93,11 +94,27 @@ class Population:
         rom_bytes = open("./baserom.us.z64", "rb").read()
         self.game_gen = SM64GameGenerator.new(rom_bytes)
 
-
         self.base_game = self.game_gen.create_game()
         self.base_path = []
+        self.reset_base()
+
 
         self.temp_game = self.game_gen.create_game()
+
+    def reset_base(self):
+        self.base_game = self.game_gen.create_game()
+        self.base_path = []
+        if self.skip_menu:
+            for i in range(1680):
+                button = 0
+                stickx = 0
+                sticky = 0
+                if (150 < i < 160) or (200 < i < 300):
+                    button = buttons.START_BUTTON
+                if (i % 2 == 0):
+                    button = buttons.A_BUTTON
+                pad = GamePad(button, stickx, sticky)
+                self.base_step(pad)
 
     def base_step(self, pad=None, n=5, viewer=None):
         """
