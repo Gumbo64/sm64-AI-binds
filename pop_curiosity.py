@@ -10,12 +10,12 @@ class CuriosityScoring:
         self.circle_radius = 1
 
         # Initialize bucket counts using a dictionary for sparse representation
-        self.bucket_counts = defaultdict(lambda: 0)
+        self.bucket_counts = defaultdict(int)
 
     def get_fitness(self, tmp_states):
         bucket_keys = [self.get_bucket_key(state) for state in tmp_states]
         
-        tmp_bucket_counts = defaultdict(lambda: 0)
+        tmp_bucket_counts = defaultdict(int)
 
         scores = []
         for i, key in enumerate(bucket_keys):
@@ -70,21 +70,6 @@ if __name__ == "__main__":
     # Use the new CuriosityPopulation class
     scoring = CuriosityScoring()
     pop = Population(pop_size=pop_size, genome_length=genome_length, scoring=scoring)
-
-    for i in range(1700):
-        button = 0
-        stickx = 0
-        sticky = 0
-        if (150 < i < 160) or (200 < i < 300):
-            button = buttons.START_BUTTON
-        if (i % 2 == 0):
-            button = buttons.A_BUTTON
-
-        pad = GamePad(button, stickx, sticky)
-        pop.base_step(pad)
-
-        base_state = pop.base_game.get_game_state()
-        viewer.add_points([base_state.pos])
 
     while True:
         print(pop.iterate())
