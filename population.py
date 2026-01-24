@@ -215,7 +215,7 @@ if __name__ == "__main__":
     from LivePointCloud import LivePointCloud
     viewer = LivePointCloud()  # opens browser tab
 
-    pop_size = 1000
+    pop_size = 100
     genome_length = 50
     step_amount = 10
 
