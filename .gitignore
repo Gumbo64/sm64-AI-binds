@@ -10,3 +10,6 @@ wheels/
 .venv
 
 runs
+
+baserom.us.z64
+curiosity_scoring.pkl
