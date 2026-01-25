@@ -216,7 +216,7 @@ impl<S: ScoringStrategy> Population<S> {
 
         Ok(best_fitness)
     }
-    pub fn write_base_path_to_file(self, filename: &str) {
+    pub fn write_base_path_to_file(&self, filename: &str) {
         if let Err(e) = write_gamepads_to_file(&self.base_path, &filename) {
             eprintln!("Failed to write m64 file: {}", e);
         }
