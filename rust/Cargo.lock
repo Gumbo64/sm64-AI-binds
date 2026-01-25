@@ -1415,18 +1415,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "rust"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "byteorder",
- "rand",
- "rayon",
- "sm64-binds",
- "tqdm",
-]
-
-[[package]]
 name = "rustc-demangle"
 version = "0.1.27"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1635,6 +1623,18 @@ dependencies = [
  "sha1",
  "wasmer",
  "zip",
+]
+
+[[package]]
+name = "sm64_ai"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "byteorder",
+ "rand",
+ "rayon",
+ "sm64-binds",
+ "tqdm",
 ]
 
 [[package]]

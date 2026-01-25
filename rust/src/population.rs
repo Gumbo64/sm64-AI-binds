@@ -1,66 +1,13 @@
-use std::fs::{self, File};
-use std::path::Path;
 use rand::prelude::*;
 use rayon::prelude::*;
-use byteorder::{BigEndian, WriteBytesExt};
 use anyhow::{Result, Error};
-use sm64_binds::{GamePad, SM64Game, SM64GameGenerator, GameState, buttons};
-use tqdm::tqdm;
+use sm64_binds::{GamePad, SM64Game, SM64GameGenerator};
 
-fn random_gamepad(rng: &mut ThreadRng) -> GamePad {
-    let stick_x = rng.random_range(-128..=127);
-    let stick_y = rng.random_range(-128..=127);
-
-    let mut button = 0;
-    if rng.random_bool(0.04) { button |= buttons::A_BUTTON; }
-    if rng.random_bool(0.04) { button |= buttons::B_BUTTON; }
-    if rng.random_bool(0.04) { button |= buttons::Z_TRIG; }
-    return GamePad::new(button, stick_x, stick_y)
-}
 
 type Genome = Vec<GamePad>;
 
-fn skip_menu_pads() -> Vec<GamePad> {
-    let mut path = Vec::new();
-    for i in 0..1680 {
-        let mut button = 0;
-        if (150..160).contains(&i) || (200..300).contains(&i) {
-            button = buttons::START_BUTTON;
-        }
-        if i % 2 == 0 {
-            button = buttons::A_BUTTON; 
-        }
-        let pad = GamePad::new(button, 0, 0);
-        path.push(pad);
-    }
-    path
-}
-
-trait ScoringStrategy: Clone + Send + Sync {
-    fn get_fitness(&self, tmp_states: &[GameState]) -> f32;
-    fn add_state(&mut self, state: GameState);
-}
-#[derive(Debug, Clone)]
-struct DefaultScoring;
-
-impl ScoringStrategy for DefaultScoring {
-    fn get_fitness(&self, tmp_states: &[GameState]) -> f32 {
-        if tmp_states.is_empty() {
-            return -f32::INFINITY;
-        }
-
-        // Equivalent to: scores = np.array([-state.pos[2] for state in tmp_states])
-        // i = np.argmax(scores); return scores[i] - i
-        let (best_idx, best_val) = tmp_states.iter().enumerate()
-            .map(|(i, state)| (i, -state.pos[2]))
-            .max_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal))
-            .unwrap();
-
-        best_val - (best_idx as f32)
-    }
-
-    fn add_state(&mut self, _state: GameState) {}
-}
+use crate::scoring::ScoringStrategy;
+use crate::util::{random_gamepad, skip_menu_pads, write_gamepads_to_file};
 
 struct SM64ThreadState<S: ScoringStrategy> {
     scoring: S,
@@ -92,7 +39,8 @@ impl<S: ScoringStrategy> SM64ThreadState<S> {
 
     fn get_fitness(&mut self, genome: &Genome) -> Result<f32, Error> {
         self.base_game.copy_to(&mut self.tmp_game)?;
-                    
+        // self.base_game.full_copy_to(&mut self.tmp_game)?;
+
         let mut tmp_states = Vec::with_capacity(genome.len());
         for pad in genome {
             self.tmp_game.step_game(*pad)?;
@@ -106,7 +54,7 @@ impl<S: ScoringStrategy> SM64ThreadState<S> {
 
 // --- POPULATION ---
 
-struct Population<S: ScoringStrategy> {
+pub struct Population<S: ScoringStrategy> {
     pop_size: usize,
     genome_length: usize,
     mutation_rate: f64,
@@ -114,13 +62,12 @@ struct Population<S: ScoringStrategy> {
     
     pop: Vec<Genome>,
     
-    // Wrapped in Arc so it can be shared across threads
-    base_path: Vec<GamePad>,
+    pub base_path: Vec<GamePad>,
     thread_states: Vec<SM64ThreadState<S>>
 }
 
 impl<S: ScoringStrategy> Population<S> {
-    fn new(pop_size: usize, genome_length: usize, scoring: S, skip_menu: bool) -> Result<Self, Error> {
+    pub fn new(pop_size: usize, genome_length: usize, scoring: S, skip_menu: bool) -> Result<Self, Error> {
         println!("making temp games");
 
         let base_path: Vec<GamePad> = match skip_menu {
@@ -160,13 +107,12 @@ impl<S: ScoringStrategy> Population<S> {
     //     Ok(())
     // }
 
-    fn base_step_n(&mut self, n: usize) -> Result<(), Error> {
+    pub fn base_step_n(&mut self, n: usize) -> Result<(), Error> {
         // Apply fittest genome steps (assuming sorted, index 0 is best)
         let fittest_genome = &self.pop[0].clone();
 
         let step_path = &fittest_genome[0..n];
-        self.base_path.extend(fittest_genome);
-
+        self.base_path.extend(step_path);
 
         let results: Vec<Result<_, Error>> = self.thread_states
             .par_iter_mut()
@@ -187,7 +133,7 @@ impl<S: ScoringStrategy> Population<S> {
         Ok(())
     }
 
-    fn iterate(&mut self) -> Result<f32, Error> {
+    pub fn iterate(&mut self) -> Result<f32, Error> {
         let num_workers = self.thread_states.len();
         let chunk_size = (self.pop.len() + num_workers - 1) / num_workers;
 
@@ -270,49 +216,10 @@ impl<S: ScoringStrategy> Population<S> {
 
         Ok(best_fitness)
     }
+    pub fn write_base_path_to_file(self, filename: &str) {
+        if let Err(e) = write_gamepads_to_file(&self.base_path, &filename) {
+            eprintln!("Failed to write m64 file: {}", e);
+        }
+    }
 }
 
-// --- IO UTILS ---
-
-fn write_gamepads_to_file(gamepads: &[GamePad], filename: &str) -> std::io::Result<()> {
-    if let Some(parent) = Path::new(filename).parent() {
-        fs::create_dir_all(parent)?;
-    }
-    let mut file = File::create(filename)?;
-    for gp in gamepads {
-        file.write_u16::<BigEndian>(gp.button)?;
-        file.write_i8(gp.stick_x)?;
-        file.write_i8(gp.stick_y)?;
-    }
-    Ok(())
-}
-
-fn main() -> Result<(), Error> {
-    let pop_size = 1000;
-    let genome_length = 50;
-    let step_amount = 10;
-
-    println!("Initialising population");
-
-    // Initialize population (loads ROM)
-    let mut pop = Population::new(
-        pop_size, 
-        genome_length,
-        DefaultScoring{},
-        true // Python's main block doesn't seem to pass skip_menu=True, but calls base_step manually
-    )?;
-
-    println!("Starting loop...");
-    for _i in tqdm(0..100) {
-        let _best_fit = pop.iterate()?;
-        // println!("Best Fitness: {:.4}", best_fit);
-
-        pop.base_step_n(step_amount)?;
-
-        let filename = format!("runs/pop{}-genlen{}-step{}.m64", pop_size, genome_length, step_amount);
-        // if let Err(e) = write_gamepads_to_file(&pop.base_path, &filename) {
-        //     eprintln!("Failed to write m64 file: {}", e);
-        // }
-    }
-    Ok(())
-}

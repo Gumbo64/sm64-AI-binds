@@ -213,9 +213,10 @@ class Population:
 
 if __name__ == "__main__":
     from LivePointCloud import LivePointCloud
+    from tqdm import tqdm
     viewer = LivePointCloud()  # opens browser tab
 
-    pop_size = 100
+    pop_size = 1000
     genome_length = 50
     step_amount = 10
 
@@ -236,7 +237,7 @@ if __name__ == "__main__":
         base_state = pop.base_game.get_game_state()
         viewer.add_points([base_state.pos])
 
-    while True:
+    for _ in tqdm(range(100)):
         print(pop.iterate())
 
         pop.base_step(n=step_amount, viewer=viewer)
