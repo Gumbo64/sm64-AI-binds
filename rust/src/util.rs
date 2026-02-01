@@ -1,7 +1,7 @@
 use std::fs::{self, File};
 use std::path::Path;
 use rand::prelude::*;
-use byteorder::{BigEndian, WriteBytesExt};
+use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
 use sm64_binds::{GamePad, buttons};
 
 pub fn write_gamepads_to_file(gamepads: &[GamePad], filename: &str) -> std::io::Result<()> {
@@ -15,6 +15,31 @@ pub fn write_gamepads_to_file(gamepads: &[GamePad], filename: &str) -> std::io::
         file.write_i8(gp.stick_y)?;
     }
     Ok(())
+}
+
+pub fn read_gamepads_from_file(filename: &str) -> std::io::Result<Vec<GamePad>> {
+    let mut file = File::open(filename)?;
+    let mut gamepads = Vec::new();
+
+    loop {
+        // Try to read the button; if we hit EOF cleanly, we're done
+        let button = match file.read_u16::<BigEndian>() {
+            Ok(v) => v,
+            Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => break,
+            Err(e) => return Err(e),
+        };
+
+        let stick_x = file.read_i8()?;
+        let stick_y = file.read_i8()?;
+
+        gamepads.push(GamePad {
+            button,
+            stick_x,
+            stick_y,
+        });
+    }
+
+    Ok(gamepads)
 }
 
 pub fn random_gamepad(rng: &mut ThreadRng) -> GamePad {

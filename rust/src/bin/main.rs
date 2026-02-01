@@ -1,4 +1,4 @@
-use sm64_ai::population::Population;
+use sm64_ai::{population::Population, util::skip_menu_pads};
 use sm64_ai::scoring::DefaultScoring;
 use anyhow::{Result, Error};
 use tqdm::tqdm;
@@ -15,7 +15,7 @@ fn main() -> Result<(), Error> {
         pop_size, 
         genome_length,
         DefaultScoring{},
-        true
+        skip_menu_pads()
     )?;
 
     println!("Hot start time...");
@@ -32,6 +32,6 @@ fn main() -> Result<(), Error> {
     }
 
     let filename = format!("runs/pop{}-genlen{}-step{}.m64", pop_size, genome_length, step_amount);
-    pop.write_base_path_to_file(&filename);
+    pop.save_base_path(&filename)?;
     Ok(())
 }

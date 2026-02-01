@@ -1,13 +1,15 @@
+use std::fs::File;
+use std::io::Write;
+
 use rand::prelude::*;
 use rayon::prelude::*;
 use anyhow::{Result, Error};
 use sm64_binds::{GamePad, SM64Game, SM64GameGenerator};
 
-
 type Genome = Vec<GamePad>;
 
 use crate::scoring::ScoringStrategy;
-use crate::util::{random_gamepad, skip_menu_pads, write_gamepads_to_file};
+use crate::util::{random_gamepad, write_gamepads_to_file};
 
 struct SM64ThreadState<S: ScoringStrategy> {
     scoring: S,
@@ -16,14 +18,14 @@ struct SM64ThreadState<S: ScoringStrategy> {
 }
 
 impl<S: ScoringStrategy> SM64ThreadState<S> {
-    fn new(skip_menu: bool, scoring: S) -> Result<Self, Error> {
+    fn new(initial_base_path: Vec<GamePad>, scoring: S) -> Result<Self, Error> {
         let game_gen = SM64GameGenerator::new(include_bytes!("../../baserom.us.z64").to_vec())?;
         let mut base_game = game_gen.create_game()?;
-        if skip_menu {
-            for pad in skip_menu_pads() {
-                base_game.step_game(pad)?;
-            }
+
+        for pad in initial_base_path {
+            base_game.step_game(pad)?;
         }
+        
         let tmp_game = game_gen.create_game()?;
         Ok(Self { scoring, base_game, tmp_game })
     }
@@ -67,18 +69,13 @@ pub struct Population<S: ScoringStrategy> {
 }
 
 impl<S: ScoringStrategy> Population<S> {
-    pub fn new(pop_size: usize, genome_length: usize, scoring: S, skip_menu: bool) -> Result<Self, Error> {
+    pub fn new(pop_size: usize, genome_length: usize, scoring: S, initial_base_path: Vec<GamePad>) -> Result<Self, Error> {
         println!("making temp games");
-
-        let base_path: Vec<GamePad> = match skip_menu {
-            true => skip_menu_pads(),
-            false => Vec::new(),
-        };
 
         let thread_count = rayon::current_num_threads();
         let thread_states: Result<Vec<SM64ThreadState<S>>, Error> = (0..thread_count)
             .into_par_iter()
-            .map(|_| SM64ThreadState::new(skip_menu, scoring.clone()))
+            .map(|_| SM64ThreadState::new(initial_base_path.clone(), scoring.clone()))
             .collect();
         let thread_states = thread_states?;
 
@@ -94,7 +91,7 @@ impl<S: ScoringStrategy> Population<S> {
             mutation_rate: 0.05,
             pop_elite: (pop_size / 5) + 1,
             pop,
-            base_path,
+            base_path: initial_base_path,
             thread_states,
         })
     }
@@ -216,10 +213,16 @@ impl<S: ScoringStrategy> Population<S> {
 
         Ok(best_fitness)
     }
-    pub fn write_base_path_to_file(&self, filename: &str) {
-        if let Err(e) = write_gamepads_to_file(&self.base_path, &filename) {
-            eprintln!("Failed to write m64 file: {}", e);
-        }
+    pub fn save_base_path(&self, filename: &str) -> Result<(), Error> {
+        Ok(write_gamepads_to_file(&self.base_path, &filename)?)
     }
+
+    pub fn save_scoring(&self, filename: &str) -> Result<(), Error> {
+        let bytes = postcard::to_allocvec(&self.thread_states[0].scoring)?;
+        let mut file = File::create(filename)?;
+        file.write_all(&bytes)?;
+        Ok(())
+    }
+
 }
 

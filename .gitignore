@@ -10,6 +10,6 @@ wheels/
 .venv
 
 runs
-
+plots
 baserom.us.z64
 curiosity_scoring.pkl
