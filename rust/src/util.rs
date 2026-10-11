@@ -50,6 +50,7 @@ pub fn random_gamepad(rng: &mut ThreadRng) -> GamePad {
     if rng.random_bool(0.04) { button |= buttons::A_BUTTON; }
     if rng.random_bool(0.04) { button |= buttons::B_BUTTON; }
     if rng.random_bool(0.04) { button |= buttons::Z_TRIG; }
+    // if rng.random_bool(0.0001) {button |= buttons::START_BUTTON; }
     return GamePad::new(button, stick_x, stick_y)
 }
 

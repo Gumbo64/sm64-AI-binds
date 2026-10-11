@@ -73,15 +73,12 @@ impl ScoringStrategy for CuriosityScoring {
         }
     }
     fn get_fitness(&self, tmp_states: &[GameState]) -> f32 {
-        let bucket_keys: Vec<BucketKey> = tmp_states.iter()
-            .map(|s| self.get_bucket_key(s))
-            .collect();
-
         let mut tmp_bucket_counts: HashMap<BucketKey, u32> = HashMap::new();
         let mut tmp_zone_counts: HashMap<ZoneKey, u32> = HashMap::new();
-        let mut scores: Vec<f32> = Vec::with_capacity(bucket_keys.len());
+        let mut scores: Vec<f32> = Vec::with_capacity(tmp_states.len());
 
-        for (i, &key) in bucket_keys.iter().enumerate() {
+        for s in tmp_states.iter() {
+            let key = self.get_bucket_key(&s);
             let zone_key = Self::get_zone_from_key(key);
 
             // 1. Get visits from global + local temporary counts
@@ -99,6 +96,12 @@ impl ScoringStrategy for CuriosityScoring {
             let s1 = 1.0 / f32::sqrt(1.0 + (visits as f32));
             let s2 = 1.0 / f32::sqrt(1.0 + (total_zone_visits as f32));
             let s3 = (tmp_states[i].num_stars + tmp_states[i].in_credits) as f32;
+            // let s4 = f32::sqrt(s.vel[0]*s.vel[0] + s.vel[1]*s.vel[1] + s.vel[2]*s.vel[2])/50.0;
+            
+            // let mut s3 = s.num_stars as f32 * 1000.0;
+            // // s3 += s.coins as f32;
+            // s3 += s.lives as f32 * 100.0;
+            // // s3 += s.health as f32 / 0x0100 as f32;
 
             let s = s1 + s2 + 1000.0 * s3;
             scores.push(s);
