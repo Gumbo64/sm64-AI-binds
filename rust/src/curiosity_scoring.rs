@@ -95,7 +95,7 @@ impl ScoringStrategy for CuriosityScoring {
             // Example: Using both for curiosity. You could adjust this formula.
             let s1 = 1.0 / f32::sqrt(1.0 + (visits as f32));
             let s2 = 1.0 / f32::sqrt(1.0 + (total_zone_visits as f32));
-            let s3 = (tmp_states[i].num_stars + tmp_states[i].in_credits) as f32;
+            let s3 = (s.num_stars + s.in_credits) as f32;
             // let s4 = f32::sqrt(s.vel[0]*s.vel[0] + s.vel[1]*s.vel[1] + s.vel[2]*s.vel[2])/50.0;
             
             // let mut s3 = s.num_stars as f32 * 1000.0;
