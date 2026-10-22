@@ -6,8 +6,8 @@ use std::{collections::HashMap, fs::File, io::Read};
 
 use crate::scoring::ScoringStrategy;
 
-type BucketKey = (ZoneKey, i32, i32, i32);
-type ZoneKey = i32; // levelNum
+pub type BucketKey = (ZoneKey, i32, i32, i32);
+pub type ZoneKey = i32; // levelNum
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CuriosityScoring {
@@ -46,7 +46,8 @@ impl CuriosityScoring {
         }
     }
 
-    fn get_bucket_key(&self, state: &GameState) -> BucketKey {
+    /// The voxel (level, x, y, z) a state counts towards.
+    pub fn get_bucket_key(&self, state: &GameState) -> BucketKey {
         let x_bucket = self.discretize_position(state.pos[0]);
         let y_bucket = self.discretize_position(state.pos[1]);
         let z_bucket = self.discretize_position(state.pos[2]);

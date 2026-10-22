@@ -2,6 +2,7 @@ use std::fs::File;
 use std::io::Write;
 
 use rand::prelude::*;
+use rand::rngs::SmallRng;
 use rayon::prelude::*;
 use anyhow::{Result, Error};
 use sm64_binds::{GamePad, SM64Game, SM64GameGenerator};
@@ -9,7 +10,8 @@ use sm64_binds::{GamePad, SM64Game, SM64GameGenerator};
 type Genome = Vec<GamePad>;
 
 use crate::scoring::ScoringStrategy;
-use crate::util::{random_gamepad, write_gamepads_to_file};
+use crate::noise::{Slot, Variant, random_gamepad};
+use crate::util::write_gamepads_to_file;
 
 struct SM64ThreadState<S: ScoringStrategy> {
     scoring: S,
@@ -18,8 +20,7 @@ struct SM64ThreadState<S: ScoringStrategy> {
 }
 
 impl<S: ScoringStrategy> SM64ThreadState<S> {
-    fn new(initial_base_path: Vec<GamePad>, scoring: S) -> Result<Self, Error> {
-        let game_gen = SM64GameGenerator::new(include_bytes!("../../baserom.us.z64").to_vec())?;
+    fn new(game_gen: &SM64GameGenerator, initial_base_path: Vec<GamePad>, scoring: S) -> Result<Self, Error> {
         let mut base_game = game_gen.create_game()?;
 
         for pad in initial_base_path {
@@ -40,8 +41,9 @@ impl<S: ScoringStrategy> SM64ThreadState<S> {
     }
 
     fn get_fitness(&mut self, genome: &Genome) -> Result<f32, Error> {
-        self.base_game.copy_to(&mut self.tmp_game)?;
-        // self.base_game.full_copy_to(&mut self.tmp_game)?;
+        // Copies only the pages the previous genome wrote, while the base is
+        // unchanged; a full copy otherwise.
+        self.tmp_game.sync_from(&self.base_game)?;
 
         let mut tmp_states = Vec::with_capacity(genome.len());
         for pad in genome {
@@ -65,24 +67,37 @@ pub struct Population<S: ScoringStrategy> {
     pop: Vec<Genome>,
     
     pub base_path: Vec<GamePad>,
-    thread_states: Vec<SM64ThreadState<S>>
+    thread_states: Vec<SM64ThreadState<S>>,
+    rng: SmallRng,
+    variant: Variant,
+    slots: Vec<Slot>,
 }
 
 impl<S: ScoringStrategy> Population<S> {
     pub fn new(pop_size: usize, genome_length: usize, scoring: S, initial_base_path: Vec<GamePad>) -> Result<Self, Error> {
+        let game_gen = SM64GameGenerator::new(include_bytes!("../../baserom.us.z64").to_vec())?;
+        let white = Variant::named("white").unwrap();
+        Self::with_options(pop_size, genome_length, scoring, initial_base_path, &game_gen, white, rand::rng().random())
+    }
+
+    /// `new` with a game generator, the inputs' noise (`crate::noise`) and a
+    /// seed: the same seed gives the same run.
+    pub fn with_options(pop_size: usize, genome_length: usize, scoring: S, initial_base_path: Vec<GamePad>,
+                        game_gen: &SM64GameGenerator, variant: Variant, seed: u64) -> Result<Self, Error> {
         println!("making temp games");
 
         let thread_count = rayon::current_num_threads();
         let thread_states: Result<Vec<SM64ThreadState<S>>, Error> = (0..thread_count)
             .into_par_iter()
-            .map(|_| SM64ThreadState::new(initial_base_path.clone(), scoring.clone()))
+            .map(|_| SM64ThreadState::new(game_gen, initial_base_path.clone(), scoring.clone()))
             .collect();
         let thread_states = thread_states?;
 
 
-        let mut rng = rand::rng();
-        let pop = (0..pop_size)
-            .map(|_| (0..genome_length).map(|_| random_gamepad(&mut rng)).collect())
+        let mut rng = SmallRng::seed_from_u64(seed);
+        let mut slots: Vec<Slot> = (0..pop_size).map(|_| Slot::new(&mut rng, variant)).collect();
+        let pop = slots.iter_mut()
+            .map(|slot| (0..genome_length).map(|_| slot.next(&mut rng)).collect())
             .collect();
 
         Ok(Self {
@@ -93,6 +108,9 @@ impl<S: ScoringStrategy> Population<S> {
             pop,
             base_path: initial_base_path,
             thread_states,
+            rng,
+            variant,
+            slots,
         })
     }
 
@@ -120,11 +138,10 @@ impl<S: ScoringStrategy> Population<S> {
         }
     
         // Roll genomes: remove first n, add n randoms at end
-        let mut rng = rand::rng();
-        for genome in self.pop.iter_mut() {
+        for (genome, slot) in self.pop.iter_mut().zip(&mut self.slots) {
             genome.drain(0..n);
             for _ in 0..n {
-                genome.push(random_gamepad(&mut rng));
+                genome.push(slot.next(&mut self.rng));
             }
         }
         Ok(())
@@ -172,10 +189,12 @@ impl<S: ScoringStrategy> Population<S> {
         // 3. Parallel Offspring Generation
         let offspring_needed = self.pop_size - new_pop.len();
 
-        let mut offspring: Vec<Genome> = (0..offspring_needed)
+        // One seed per child, drawn in order, so a run doesn't depend on threads.
+        let seeds: Vec<u64> = (0..offspring_needed).map(|_| self.rng.random()).collect();
+        let mut offspring: Vec<Genome> = seeds
             .into_par_iter()
-            .map(|_| {
-                let mut rng = rand::rng(); // Thread-local RNG
+            .map(|seed| {
+                let mut rng = SmallRng::seed_from_u64(seed);
                 let idx1 = rng.random_range(0..self.pop_size);
                 let idx2 = rng.random_range(0..self.pop_size);
                 
@@ -184,8 +203,12 @@ impl<S: ScoringStrategy> Population<S> {
                 
                 // Use map to generate the genome in parallel if genome_length is huge, 
                 // but usually a standard loop here is faster due to lower overhead.
+                // Block variants copy runs of about 30 frames from one parent.
+                let mut r: f64 = rng.random();
                 (0..self.genome_length).map(|j| {
-                    let r: f64 = rng.random();
+                    if !self.variant.block || j == 0 || rng.random_bool(1.0 / 30.0) {
+                        r = rng.random();
+                    }
                     let mut gene = if r < 0.4 {
                         parent1[j].clone()
                     } else if r < 0.8 {
@@ -215,6 +238,10 @@ impl<S: ScoringStrategy> Population<S> {
     }
     pub fn save_base_path(&self, filename: &str) -> Result<(), Error> {
         Ok(write_gamepads_to_file(&self.base_path, &filename)?)
+    }
+
+    pub fn scoring(&self) -> &S {
+        &self.thread_states[0].scoring
     }
 
     pub fn save_scoring(&self, filename: &str) -> Result<(), Error> {

@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 5
 requires-python = ">=3.12"
 
 [[package]]
@@ -1195,20 +1195,20 @@ requires-dist = [
     { name = "numpy", specifier = ">=2.4.0" },
     { name = "open3d", specifier = ">=0.19.0" },
     { name = "seaborn", specifier = ">=0.13.2" },
-    { name = "sm64-binds", specifier = ">=0.0.6" },
+    { name = "sm64-binds", specifier = ">=2.0.0" },
     { name = "tqdm", specifier = ">=4.67.1" },
 ]
 
 [[package]]
 name = "sm64-binds"
-version = "0.0.6"
+version = "2.0.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "wasmtime" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/a1/c5/684a96416df744aa5ed22073150f78de0e9da57c02aebac750abeed617f5/sm64_binds-0.0.6.tar.gz", hash = "sha256:259b66798c527fc29ba81b39f08a1d53c467de28af9df89af9ce0089135a326e", size = 5857114, upload-time = "2025-12-25T14:05:53.829Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/74/5b/ebe4095d6625f43c9e2ca4915f8e33e66a39be6b213a4a7062585e3d0da6/sm64_binds-2.0.0.tar.gz", hash = "sha256:a6f96c64c438fd11fc94fda5be4d299645244a2137db9cff9f51d222c25c939d", size = 5877906, upload-time = "2026-10-22T06:18:24.776Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/58/44/87a362467e381c8fde9b3d7c8d17b7bb0fef0cac3a70ecea86e8ac935959/sm64_binds-0.0.6-py3-none-any.whl", hash = "sha256:17ba3aeb0cc941d346b81535ec47917f176cd05ea86d11b3063e8a2d69746590", size = 5856224, upload-time = "2025-12-25T14:05:42.705Z" },
+    { url = "https://files.pythonhosted.org/packages/57/56/ce3b1c6e90832ec024dd5a82bc64b3a3740e18fb90fde65d230e408217db/sm64_binds-2.0.0-py3-none-any.whl", hash = "sha256:ea8de1a3f7031d63e78fc03689814cd8730092b13155ce00fe2aff787e5b0896", size = 5869108, upload-time = "2026-10-22T06:18:23.02Z" },
 ]
 
 [[package]]
