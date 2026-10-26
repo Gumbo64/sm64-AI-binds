@@ -1,0 +1,15 @@
+[package]
+name = "obrrt-search"
+description = "Objective-based RRT's search: state tree, objective pool, sampling, GA attempts, diagnostics and automatic tuning."
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+rand.workspace = true
+rayon.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sm64-binds.workspace = true
+lz4_flex.workspace = true
+obrrt-core.workspace = true
