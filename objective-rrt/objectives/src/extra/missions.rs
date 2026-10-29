@@ -31,6 +31,7 @@ use obrrt_core::layout::*;
 use obrrt_core::{Budget, Obj, Objective, Progress, St, course_of_level, dist};
 
 mod table;
+pub mod twostar;
 
 /// What has to happen before a [`Spot`]'s star is there.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -121,6 +122,10 @@ impl ReachSpot {
 }
 
 impl Objective for ReachSpot {
+    /// Dense adds (`OBRRT_DENSE_EVERY=obj`): collecting and fighting: a state every 15 frames, none mid-arc.
+    fn dense_keep(&self) -> obrrt_core::DenseKeep {
+        obrrt_core::DenseKeep::Every { n: 15, air: false }
+    }
     fn precision(&self) -> obrrt_core::Precision {
         obrrt_core::Precision::Precise
     }
@@ -204,6 +209,10 @@ impl ReachLoadedStar {
 }
 
 impl Objective for ReachLoadedStar {
+    /// Dense adds (`OBRRT_DENSE_EVERY=obj`): collecting and fighting: a state every 15 frames, none mid-arc.
+    fn dense_keep(&self) -> obrrt_core::DenseKeep {
+        obrrt_core::DenseKeep::Every { n: 15, air: false }
+    }
     fn precision(&self) -> obrrt_core::Precision {
         obrrt_core::Precision::Precise
     }
@@ -290,6 +299,10 @@ impl Counter {
 }
 
 impl Objective for Counter {
+    /// Dense adds (`OBRRT_DENSE_EVERY=obj`): collecting and fighting: a state every 15 frames, none mid-arc.
+    fn dense_keep(&self) -> obrrt_core::DenseKeep {
+        obrrt_core::DenseKeep::Every { n: 15, air: false }
+    }
     fn kind(&self) -> &'static str {
         match self.count {
             Count::RedCoins => "RedCoins::CollectNext",
@@ -372,10 +385,17 @@ pub struct Coins {
 const COIN_SPAN: i16 = 15;
 
 fn nearest_coin(s: &St) -> Option<[f32; 3]> {
+    if twostar::on() {
+        return twostar::coin_target(s, None);
+    }
     nearest(s, |o| o.interact_type == INTERACT_COIN).map(|o| o.pos)
 }
 
 impl Objective for Coins {
+    /// Dense adds (`OBRRT_DENSE_EVERY=obj`): collecting and fighting: a state every 15 frames, none mid-arc.
+    fn dense_keep(&self) -> obrrt_core::DenseKeep {
+        obrrt_core::DenseKeep::Every { n: 15, air: false }
+    }
     fn kind(&self) -> &'static str {
         if self.target >= 100 { "Coins::Reach100" } else { "Coins::Milestone" }
     }
@@ -383,6 +403,9 @@ impl Objective for Coins {
         format!("Coins {} -> {}", self.course, self.target)
     }
     fn obj_weight(&self, _b: &St) -> f64 {
+        if let Some(w) = twostar::milestone_weight(self.target) {
+            return w;
+        }
         if self.target >= 100 { 10.0 } else { 2.0 + self.target as f64 / 20.0 }
     }
     fn base_criteria(&self, s: &St) -> bool {
@@ -453,6 +476,10 @@ impl PssUnder21 {
 }
 
 impl Objective for PssUnder21 {
+    /// Dense adds (`OBRRT_DENSE_EVERY=obj`): collecting and fighting: a state every 15 frames, none mid-arc.
+    fn dense_keep(&self) -> obrrt_core::DenseKeep {
+        obrrt_core::DenseKeep::Every { n: 15, air: false }
+    }
     fn precision(&self) -> obrrt_core::Precision {
         obrrt_core::Precision::Precise
     }
@@ -543,6 +570,10 @@ pub fn generate_level(b: &St, out: &mut Vec<Arc<dyn Objective>>) {
         out.push(Arc::new(Coins { level: b.level, course, target }));
         if target < 100 && b.coins >= 100 - COIN_SPAN {
             out.push(Arc::new(Coins { level: b.level, course, target: 100 }));
+        }
+        // OBRRT_TWOSTAR: coins along the way, for two stars a visit.
+        if let Some(r) = twostar::CoinRun::new(b) {
+            out.push(Arc::new(r));
         }
     }
     if level == LEVEL_PSS && !b.has_star(19, 1) {

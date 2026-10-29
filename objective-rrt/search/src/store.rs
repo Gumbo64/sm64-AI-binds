@@ -31,12 +31,23 @@ impl Delta {
         Delta { base, pages, xor: lz4_flex::compress_prepend_size(&xor) }
     }
 
+    /// No save at all (sparse saves, `OBRRT_REPLAY_MAX`): the state is
+    /// rebuilt from its saved ancestor (`Tree::load_into`). `apply` fails.
+    pub fn none() -> Delta {
+        Delta { base: u16::MAX, pages: Vec::new(), xor: Vec::new() }
+    }
+
+    pub fn is_none(&self) -> bool {
+        self.base == u16::MAX
+    }
+
     pub fn bytes(&self) -> usize {
         self.xor.len() + 4 * self.pages.len()
     }
 
     /// The full save state: its base's bytes with these pages XORed back in.
     pub fn apply(&self, bases: &[Vec<u8>]) -> Result<SaveState> {
+        anyhow::ensure!(!self.is_none(), "no save state (sparse saves: load through Tree::load_into)");
         let mut bytes = bases[self.base as usize].clone();
         if !self.pages.is_empty() {
             let xor = lz4_flex::decompress_size_prepended(&self.xor)?;

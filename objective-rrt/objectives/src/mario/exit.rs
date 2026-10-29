@@ -29,6 +29,10 @@ impl GoToCastle {
 }
 
 impl Objective for GoToCastle {
+    /// Dense adds (`OBRRT_DENSE_EVERY=obj`): a menu macro: nothing to start from along the way.
+    fn dense_keep(&self) -> obrrt_core::DenseKeep {
+        obrrt_core::DenseKeep::EndOnly
+    }
     fn kind(&self) -> &'static str {
         "Mario::GoToCastle"
     }
@@ -36,8 +40,11 @@ impl Objective for GoToCastle {
         format!("GoToCastle {}", self.level)
     }
     fn obj_weight(&self, b: &St) -> f64 {
-        // Worth most right after a course gave a star.
-        if b.stars > 0 { 2.0 } else { 0.5 }
+        // Worth most right after a course gave a star. OBRRT_PAINTING_FAST:
+        // not boosted (8 of 10 no-star course visits in the hy/dn/mg routes
+        // were pass-throughs: re-enter the same painting, exit, 179-234 f,
+        // no faster than walking to the next painting).
+        if b.stars > 0 && !crate::painting::painting_fast() { 2.0 } else { 0.5 }
     }
     fn base_criteria(&self, s: &St) -> bool {
         s.level == self.level && s.action_has(ACT_FLAG_PAUSE_EXIT)

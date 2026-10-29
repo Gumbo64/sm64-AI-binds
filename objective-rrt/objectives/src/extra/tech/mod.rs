@@ -50,6 +50,10 @@ mod poleredirect;
 mod hyperclimb;
 mod hyperwalk;
 pub mod bombclip;
+pub mod moatwarp;
+pub mod pausebuf;
+mod fastexit;
+pub mod waterwarp;
 
 /// Objectives from the technique files in this directory, per object near
 /// `b`. Each technique adds one line here, guarded by `enabled("name")`.
@@ -58,6 +62,7 @@ pub fn generate(b: &St, o: &Obj, out: &mut Vec<Arc<dyn Objective>>) {
     if enabled("kinghits") { kinghits::generate(b, o, out); }
     if enabled("whomphits") { whomphits::generate(b, o, out); }
     if enabled("lakituskip") { lakituskip::generate(b, o, out); }
+    if enabled("fastexit") { fastexit::generate(b, o, out); }
 }
 
 /// Objectives from the technique files in this directory, once per `b`.
@@ -87,12 +92,15 @@ pub fn generate_level(b: &St, out: &mut Vec<Arc<dyn Objective>>) {
     if enabled("bljany") { bljany::BljAny::generate(b, out); }
     if enabled("hyperwalk") { hyperwalk::generate(b, out); }
     if enabled("bombclip") { bombclip::BombClip::generate(b, out); }
+    if enabled("moatwarp") { moatwarp::MoatWarpBlj::generate(b, out); }
+    if enabled("lakituskip") { lakituskip::generate_level(b, out); }
     if enabled("wfopener") { openers::generate_level(b, openers::Which::Wf, out); }
     if enabled("bobopener") { openers::generate_level(b, openers::Which::Bob, out); }
     if enabled("wfclimb") && std::env::var("OBRRT_WFCLIMB").is_ok_and(|v| v == "1") { wfclimb::generate_level(b, out); }
     if enabled("slidekick") && kicks::KickRun::applies(b) { out.push(Arc::new(kicks::KickRun::new(b, kicks::Kick::Slide))); }
     if enabled("jumpkick") && kicks::KickRun::applies(b) { out.push(Arc::new(kicks::KickRun::new(b, kicks::Kick::Jump))); }
     if travel::aim_on() { travel::generate_aim(b, out); }
+    waterwarp::generate(b, out); // OBRRT_WATERWARP=1 only
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -220,6 +228,11 @@ pub const TECHNIQUES: &[Technique] = &[Technique {
     tags: &[Tag::Movement],
     course: None,
 }, Technique {
+    name: "moatwarp",
+    description: "Tech::MoatWarpBlj (also needs OBRRT_MOATWARP=1): the 2026 TAS opening, BLJ up the castle-grounds moat bank (3442, -166, 787) to a wall stall, x1.5 per 2 frames, then one walking frame into the VCutM warp (-3379, -815, -2025) r 600; BLJ overlay + free exit; success = VCutM after a BLJ",
+    tags: &[Tag::Location, Tag::Star],
+    course: Some(22),
+}, Technique {
     name: "bljkinds",
     description: "bljany's extra BLJ kinds (CATALOGUE G02): rising object floor without oVelY (tilted object floor or a known platform), shallow-water slope (water-100 < y < water-40, no slide test), blocked quarter step (LONG_JUMP at the floor, vy -2/-4, fv <= -3), step riser (LONG_JUMP_LAND at -53 < fv <= -20 on a flat floor: growth seen, not just a wall behind); water gate y > water-100",
     tags: &[Tag::Movement],
@@ -303,6 +316,11 @@ pub const TECHNIQUES: &[Technique] = &[Technique {
     name: "bombclip",
     description: "Tech::BombClip: at a wall with a floor seen 150-300 behind it, air-throw a bob-omb towards the wall, regrab it as it bloats (hitbox 65->117), carry it facing away (it pushes Mario back ~49/frame) to the wall and release it at the hand (push up to ~110) through the wall; keyed rule overlay (release/regrab windows); progress 0 until a bloated-bob-omb push frame, then depth through the plane; success past the plane on a floor (or a star) with the bob-omb/explosion near",
     tags: &[Tag::Movement],
+    course: None,
+}, Technique {
+    name: "fastexit",
+    description: "Tech::FastExit (OBRRT_FASTEXIT=1): grab a star with a death warp already queued (below a death plane's line, 20 frames, or out of bounds, 48) so the death exit replaces the star dance, kick-out and save menu (~160 frames); progress tiers doomed > over a death plane > rest",
+    tags: &[Tag::Location],
     course: None,
 }];
 

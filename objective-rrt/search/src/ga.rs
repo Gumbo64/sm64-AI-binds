@@ -112,7 +112,13 @@ pub enum Fitness {
     Steps,
 }
 
-pub const ORIGINS: [&str; 10] = ["seeded", "random", "span", "turn", "a-toggle", "resteer", "press", "pink", "key", "backseed"];
+pub const ORIGINS: [&str; 12] =
+    ["seeded", "random", "span", "turn", "a-toggle", "resteer", "press", "pink", "key", "backseed", "policy", "repolicy"];
+
+/// [`ORIGINS`] index of a first-generation policy-seeded rollout and of a
+/// `repolicy` child (`OBRRT_MOVE_GA`, movegenome.rs).
+const ORIGIN_POLICY: u8 = 10;
+const ORIGIN_REPOLICY: u8 = 11;
 
 /// Share of children of a parent with key frames (a keyed overlay's) that
 /// change only those frames' sticks, by small Gaussian steps.
@@ -161,6 +167,121 @@ pub struct Attempt<S = SaveState> {
     pub frames: u64,
     pub died: bool,
     pub ga: Option<GaInfo>,
+    /// Dense adds (`OBRRT_ADD`): more sampled states as candidates.
+    pub dense: Option<Box<crate::dense::Out>>,
+}
+
+/// What a dense-add attempt collects, and against what (see dense.rs).
+pub struct DenseReq<'a> {
+    pub modes: crate::dense::Modes,
+    pub grid: f32,
+    pub cap: usize,
+    /// The tree's dense-key index as of the round's start: whether a state
+    /// with this key at this frame would be new.
+    pub novel: &'a (dyn Fn(u64, u32) -> bool + Sync),
+    /// Sparse saves: a candidate gets a save when more than this many frames
+    /// from the last save on its chain (the start's anchor counts).
+    pub replay_max: u32,
+    /// Frames from the start's anchor to the start.
+    pub start_dist: u32,
+    /// Packs a save as the tree stores it (against the start's base).
+    pub pack: &'a (dyn Fn(&SaveState) -> crate::store::Delta + Sync),
+}
+
+/// One rollout's candidates: (inputs played, state, save, key).
+struct DChain {
+    genome: Vec<GamePad>,
+    cands: Vec<(usize, St, Option<crate::store::Delta>, u64)>,
+}
+
+/// Collects an attempt's dense candidates.
+pub(crate) struct Collector<'a> {
+    req: &'a DenseReq<'a>,
+    /// The earliest frame per key among this attempt's candidates.
+    best: std::collections::HashMap<u64, u32>,
+    chains: Vec<DChain>,
+    stats: crate::dense::Stats,
+    /// The rollout being played (`all`): its candidates, and the inputs
+    /// count at its last save (None: the start's anchor).
+    cur: Vec<(usize, St, Option<crate::store::Delta>, u64)>,
+    cur_save: Option<usize>,
+}
+
+impl<'a> Collector<'a> {
+    fn new(req: &'a DenseReq<'a>) -> Self {
+        Collector { req, best: Default::default(), chains: Vec::new(), stats: Default::default(), cur: Vec::new(), cur_save: None }
+    }
+
+    /// Whether `st` (`t` inputs into its rollout) is a new candidate; if so
+    /// it is noted as the attempt's earliest at its key.
+    fn wanted(&mut self, st: &St, start: &St) -> Option<u64> {
+        self.stats.seen += 1;
+        if !crate::dense::eligible(st, start) {
+            return None;
+        }
+        let k = crate::dense::dkey(st, self.req.grid);
+        if !(self.req.novel)(k, st.frame) || self.best.get(&k).is_some_and(|&f| f <= st.frame) {
+            return None;
+        }
+        // With a cap, at most 2x it are held (each with its objects, ~10 KB)
+        // until the attempt ends: later ones are refused.
+        if self.req.cap > 0 && self.stats.novel >= 2 * self.req.cap as u64 {
+            self.stats.capped += 1;
+            return None;
+        }
+        self.stats.novel += 1;
+        self.best.insert(k, st.frame);
+        Some(k)
+    }
+
+    /// Whether a candidate `t` inputs into a rollout whose last save was at
+    /// `last` needs a save of its own.
+    fn needs_save(&self, t: usize, last: Option<usize>) -> bool {
+        let d = match last {
+            Some(l) => (t - l) as u64,
+            None => self.req.start_dist as u64 + t as u64,
+        };
+        d > self.req.replay_max as u64
+    }
+
+    /// The kept candidates, chained (see dense.rs).
+    fn finish(mut self) -> crate::dense::Out {
+        let mut taken = std::collections::HashSet::new();
+        let mut all: Vec<(u32, usize, usize)> = Vec::new();
+        for (ci, ch) in self.chains.iter().enumerate() {
+            for (j, c) in ch.cands.iter().enumerate() {
+                if self.best.get(&c.3) == Some(&c.1.frame) && taken.insert(c.3) {
+                    all.push((ci as u32, j, c.1.frame as usize));
+                } else {
+                    self.stats.beaten += 1;
+                }
+            }
+        }
+        if self.req.cap > 0 && all.len() > self.req.cap {
+            let mut by_frame: Vec<usize> = (0..all.len()).collect();
+            by_frame.sort_by_key(|&i| (all[i].2, i));
+            let mut keep = vec![false; all.len()];
+            for &i in &by_frame[..self.req.cap] {
+                keep[i] = true;
+            }
+            self.stats.capped += (all.len() - self.req.cap) as u64;
+            all = all.into_iter().zip(keep).filter(|x| x.1).map(|x| x.0).collect();
+        }
+        let mut out = crate::dense::Out::default();
+        let mut prev: Vec<usize> = vec![0; self.chains.len()];
+        let mut chains: Vec<Vec<Option<(usize, St, Option<crate::store::Delta>, u64)>>> =
+            self.chains.iter_mut().map(|c| std::mem::take(&mut c.cands).into_iter().map(Some).collect()).collect();
+        for (ci, j, _) in all {
+            let (t, st, save, key) = chains[ci as usize][j].take().unwrap();
+            let g = &self.chains[ci as usize].genome;
+            let inputs = g[prev[ci as usize]..t].to_vec();
+            prev[ci as usize] = t;
+            out.cands.push(crate::dense::Cand { chain: ci, inputs, st, save, key });
+        }
+        self.stats.returned = out.cands.len() as u64;
+        out.stats = self.stats;
+        out
+    }
 }
 
 impl Attempt {
@@ -173,7 +294,7 @@ impl Attempt {
             .into_iter()
             .map(|s| Segment { inputs: s.inputs, end: s.end.map(|(st, save)| (st, f(save))), success: s.success, progress: s.progress })
             .collect();
-        Attempt { segments, frames: self.frames, died: self.died, ga: self.ga }
+        Attempt { segments, frames: self.frames, died: self.died, ga: self.ga, dense: self.dense }
     }
 }
 
@@ -197,6 +318,14 @@ struct Rollout {
     cut: bool,
     generation: u16,
     origin: u8,
+    /// `OBRRT_MOVE_GA`: the policy-seeded plan this rollout is or descends
+    /// from (index into the attempt's plans; `u32::MAX` none), and the
+    /// policy of the `repolicy` mutation that made it (`u8::MAX` none).
+    plan: u32,
+    rp: u8,
+    /// `OBRRT_CALM`: jump starts from the ground in the trajectory (the
+    /// mover's [`obrrt_core::mover::Mover::is_jump_start`]; 0 when off).
+    jumps: u32,
     /// Genome indices an objective's keyed overlay marked as key frames.
     key: Vec<usize>,
     /// With `OBRRT_GA_TIME`: the tiebreaks after goals met (greater is
@@ -223,16 +352,26 @@ impl Rollout {
             if time_eps().is_some() {
                 return self.tcmp(other);
             }
+            // OBRRT_CALM: at least one goal met at the same frames: fewer
+            // jump starts first.
+            if calm() && !self.ends.is_empty() && self.jumps != other.jumps {
+                return other.jumps.cmp(&self.jumps);
+            }
             return self.fitness.1.total_cmp(&other.fitness.1).then(Equal);
         }
         if time_eps().is_some() {
             return self.fitness.0.cmp(&other.fitness.0).then_with(|| self.tcmp(other));
         }
-        self.fitness.0.cmp(&other.fitness.0).then(self.fitness.1.total_cmp(&other.fitness.1))
+        let o = self.fitness.0.cmp(&other.fitness.0).then(self.fitness.1.total_cmp(&other.fitness.1));
+        if o.is_eq() && calm() { other.jumps.cmp(&self.jumps) } else { o }
     }
 
     fn tcmp(&self, other: &Rollout) -> std::cmp::Ordering {
-        self.tkey.iter().zip(&other.tkey).map(|(a, b)| a.total_cmp(b)).find(|o| o.is_ne()).unwrap_or(std::cmp::Ordering::Equal)
+        let o = |i: usize| self.tkey[i].total_cmp(&other.tkey[i]);
+        // OBRRT_CALM: within a bucket reached at the same frame, fewer jump
+        // starts before the momentum and raw-progress tiebreaks.
+        let jumps = if calm() { other.jumps.cmp(&self.jumps) } else { std::cmp::Ordering::Equal };
+        o(0).then(o(1)).then(jumps).then(o(2)).then(o(3))
     }
 }
 
@@ -248,7 +387,34 @@ fn met(obj: &dyn Objective, traj: &[St]) -> bool {
     }
 }
 
+/// Diagnostics (diag::door_overshoot): for a door target, whether the
+/// winner came within 150 of the door airborne or in a landing before
+/// meeting it.
+fn door_overshoot(obj: &dyn Objective, start: &St, best: &Rollout) {
+    if obj.arrival(start) != obrrt_core::Arrival::Door {
+        return;
+    }
+    let (Some(m), Some(t)) = (obrrt_core::mover::mover(), obj.steer_target(start)) else { return };
+    let end = best.ends.first().map_or(best.traj.len(), |&e| e + 1).min(best.traj.len());
+    let over = best.traj[..end].iter().any(|s| m.in_flight(s) && s.hdist(t) < 150.0);
+    crate::diag::door_overshoot(over, !best.ends.is_empty());
+}
+
+/// `OBRRT_CALM=1`: fewer pointless jumps (random genomes' A scaled by the
+/// mover's `jump_useful`, ties broken by fewer jump starts).
+fn calm() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| std::env::var("OBRRT_CALM").is_ok_and(|v| v == "1"))
+}
+
+fn a_mult() -> f64 {
+    A_MULT.with(|a| a.get())
+}
+
 thread_local! {
+    /// The attempt's multiplier on random genomes' A presses (`OBRRT_CALM`;
+    /// exactly 1 otherwise, so the draws are unchanged).
+    static A_MULT: std::cell::Cell<f64> = const { std::cell::Cell::new(1.0) };
     /// While a seeded attempt runs on this thread: the objectives' pad
     /// overlays are not applied to a rollout's given prefix frames (a seed
     /// is recorded tree inputs, already as played), only to steered ones.
@@ -267,7 +433,7 @@ pub(crate) fn random_segment_v2(rng: &mut SmallRng, out: &mut Vec<GamePad>, len:
     let (sx, sy) = ((mag * angle.sin()) as i8, (mag * angle.cos()) as i8);
     let at = out.len();
     out.extend((0..len).map(|_| GamePad::new(0, sx, sy)));
-    for (button, p) in [(A_BUTTON, 0.4), (B_BUTTON, 0.12), (Z_TRIG, 0.15)] {
+    for (button, p) in [(A_BUTTON, 0.4 * a_mult()), (B_BUTTON, 0.12), (Z_TRIG, 0.15)] {
         if rng.random_bool(p) {
             let from = rng.random_range(0..len);
             let n = if rng.random_bool(0.5) { rng.random_range(1..4) } else { rng.random_range(1..=len - from) };
@@ -276,6 +442,30 @@ pub(crate) fn random_segment_v2(rng: &mut SmallRng, out: &mut Vec<GamePad>, len:
             }
         }
     }
+    c_turn(rng, out, at, len);
+}
+
+/// `OBRRT_GA_CBUTTONS=<p>`: the chance per random segment of a C-left or
+/// C-right span (default 0: off, no extra draws). The stick is read
+/// relative to the camera's yaw, which a held C button turns (~310 a
+/// frame), so a fixed stick then steers along a turning line, and
+/// directions between the 8-bit stick's become reachable.
+fn c_buttons_p() -> f64 {
+    static P: OnceLock<f64> = OnceLock::new();
+    *P.get_or_init(|| std::env::var("OBRRT_GA_CBUTTONS").ok().and_then(|v| v.parse().ok()).unwrap_or(0.0))
+}
+
+fn c_turn(rng: &mut SmallRng, out: &mut [GamePad], at: usize, len: usize) {
+    let p = c_buttons_p();
+    if p <= 0.0 || len == 0 || !rng.random_bool(p.min(1.0)) {
+        return;
+    }
+    let button = if rng.random_bool(0.5) { sm64_binds::buttons::L_CBUTTONS } else { sm64_binds::buttons::R_CBUTTONS };
+    let from = rng.random_range(0..len);
+    let n = if rng.random_bool(0.5) { rng.random_range(1..4) } else { rng.random_range(1..=len - from) };
+    for pad in &mut out[at + from..(at + from + n).min(at + len)] {
+        pad.button |= button;
+    }
 }
 
 fn random_segment(rng: &mut SmallRng, out: &mut Vec<GamePad>, len: usize) {
@@ -283,7 +473,7 @@ fn random_segment(rng: &mut SmallRng, out: &mut Vec<GamePad>, len: usize) {
     let mag = if rng.random_bool(0.1) { 0.0 } else if rng.random_bool(0.2) { rng.random_range(20.0..127.0) } else { 127.0 };
     let (sx, sy) = ((mag * angle.sin()) as i8, (mag * angle.cos()) as i8);
     let mut button = 0;
-    if rng.random_bool(0.35) {
+    if rng.random_bool(0.35 * a_mult()) {
         button |= A_BUTTON;
     }
     if rng.random_bool(0.08) {
@@ -293,10 +483,12 @@ fn random_segment(rng: &mut SmallRng, out: &mut Vec<GamePad>, len: usize) {
         button |= Z_TRIG;
     }
     let tap = rng.random_bool(0.5);
+    let at = out.len();
     for i in 0..len {
         let b = if tap && i > 0 { button & !A_BUTTON & !B_BUTTON } else { button };
         out.push(GamePad::new(b, sx, sy));
     }
+    c_turn(rng, out, at, len);
 }
 
 fn random_inputs(rng: &mut SmallRng, n: usize, new: bool) -> Vec<GamePad> {
@@ -317,24 +509,45 @@ impl Worker {
     /// (a star dance, dialog): the next needs control.
     fn rollout(
         &mut self,
+        dc: &mut Option<Collector>,
         stages: &[&dyn Objective],
         start: &St,
         prefix: &[GamePad],
         steer_to: Option<usize>,
         horizon: usize,
     ) -> Result<Rollout> {
-        self.rollout_with(stages, start, prefix, steer_to, None, horizon)
+        self.rollout_with(dc, stages, start, prefix, steer_to, None, horizon)
     }
 
     /// [`Worker::rollout`], with each frame after `prefix` from `policy` if
     /// given (a [`Budget::Policy`]).
+    #[allow(clippy::too_many_arguments)]
     fn rollout_with(
         &mut self,
+        dc: &mut Option<Collector>,
         stages: &[&dyn Objective],
         start: &St,
         prefix: &[GamePad],
         steer_to: Option<usize>,
         policy: Option<&PadPolicy>,
+        horizon: usize,
+    ) -> Result<Rollout> {
+        self.rollout_inner(dc, stages, start, prefix, steer_to, policy, None, horizon)
+    }
+
+    /// [`Worker::rollout_with`], the steered frames after `prefix` from
+    /// `plan` (movegenome.rs: mover policies, fixed pads, then the default
+    /// steering) when given.
+    #[allow(clippy::too_many_arguments)]
+    fn rollout_inner(
+        &mut self,
+        dc: &mut Option<Collector>,
+        stages: &[&dyn Objective],
+        start: &St,
+        prefix: &[GamePad],
+        steer_to: Option<usize>,
+        policy: Option<&PadPolicy>,
+        plan: Option<&crate::movegenome::Plan>,
         horizon: usize,
     ) -> Result<Rollout> {
         self.tmp.sync_from(&self.base)?;
@@ -363,7 +576,10 @@ impl Worker {
             let pad = match (prefix.get(f), steer_to) {
                 (Some(p), _) => *p,
                 (None, _) if policy.is_some() => policy.unwrap().pad(&traj, &genome),
-                (None, Some(every)) => steer(stages[ends.len()], traj.last().unwrap(), f, every),
+                (None, Some(every)) => match plan {
+                    Some(pl) => crate::movegenome::pad(pl, f - prefix.len(), stages[ends.len()], traj.last().unwrap(), f, every),
+                    None => steer(stages[ends.len()], traj.last().unwrap(), f, every),
+                },
                 (None, None) => break,
             };
             let pad = match overlays.get(ends.len()) {
@@ -383,6 +599,29 @@ impl Worker {
                 break;
             }
             genome.push(pad);
+            // Dense adds, `all`: candidates as they are played (objects
+            // and saves read right here, as objective-scattershot does).
+            if let Some(c) = dc.as_mut().filter(|c| c.req.modes.all).filter(|_| {
+                // OBRRT_DENSE_EVERY / _AIR (the rollout's end isn't known
+                // here: every n-th frame only).
+                crate::dense::settings().filter(|d| d.thins()).is_none_or(|d| {
+                    let rule = d.rule(stages[ends.len().min(stages.len() - 1)]);
+                    crate::dense::thinned(rule, genome.len(), usize::MAX, &st, traj.last())
+                })
+            }) {
+                if let Some(k) = c.wanted(&st, start) {
+                    let t = genome.len();
+                    let full = if st.objects.is_some() { st.clone() } else { read_state(&self.tmp, st.frame, true) };
+                    let save = if c.needs_save(t, c.cur_save) {
+                        c.cur_save = Some(t);
+                        c.stats.saves += 1;
+                        Some((c.req.pack)(&self.tmp.save_state()))
+                    } else {
+                        None
+                    };
+                    c.cur.push((t, full, save, k));
+                }
+            }
             traj.push(st);
             // A dialog or menu option is over once its dialog or menu is,
             // whichever option was taken.
@@ -397,6 +636,14 @@ impl Worker {
                     cut = true;
                     break 'frames;
                 }
+            }
+        }
+        if let Some(c) = dc.as_mut().filter(|c| c.req.modes.all) {
+            c.cur_save = None;
+            if !c.cur.is_empty() {
+                let cands = std::mem::take(&mut c.cur);
+                let n = cands.last().unwrap().0;
+                c.chains.push(DChain { genome: genome[..n].to_vec(), cands });
             }
         }
         let done = ends.len();
@@ -445,12 +692,57 @@ impl Worker {
                 }
             }
         };
+        let jumps = match obrrt_core::mover::mover() {
+            Some(m) if calm() => traj.windows(2).filter(|w| m.is_jump_start(&w[0], &w[1])).count() as u32,
+            _ => 0,
+        };
         if objects {
             for s in &mut traj {
                 s.objects = None;
             }
         }
-        Ok(Rollout { genome, traj, ends, fitness, peak, progress, died, cut, generation: 0, origin: 0, key, tkey })
+        Ok(Rollout { genome, traj, ends, fitness, peak, progress, died, cut, generation: 0, origin: 0, plan: u32::MAX, rp: u8::MAX, jumps, key, tkey })
+    }
+
+    /// Dense adds, after the GA: candidates among `traj` (the rollout of
+    /// `genome` from the start, objects dropped), each with its inputs
+    /// count, replayed once from the start to read their objects and take
+    /// the saves they need.
+    fn collect_posthoc(&mut self, c: &mut Collector, genome: &[GamePad], states: &[(usize, &St)], start: &St) -> Result<()> {
+        let mut want = Vec::new();
+        for &(t, st) in states {
+            if t == 0 || t > genome.len() {
+                continue;
+            }
+            if let Some(k) = c.wanted(st, start) {
+                want.push((t, k));
+            }
+        }
+        if want.is_empty() {
+            return Ok(());
+        }
+        self.tmp.sync_from(&self.base)?;
+        let mut cands = Vec::with_capacity(want.len());
+        let mut played = 0;
+        let mut last = None;
+        for (t, k) in want {
+            while played < t {
+                self.tmp.step_game(genome[played])?;
+                played += 1;
+            }
+            let st = read_state(&self.tmp, start.frame + t as u32, true);
+            let save = if c.needs_save(t, last) {
+                last = Some(t);
+                c.stats.saves += 1;
+                Some((c.req.pack)(&self.tmp.save_state()))
+            } else {
+                None
+            };
+            cands.push((t, st, save, k));
+        }
+        c.stats.replay_frames += played as u64;
+        c.chains.push(DChain { genome: genome[..played].to_vec(), cands });
+        Ok(())
     }
 
     /// Attempts `stages` in order from `start` (whose save state is `save`).
@@ -482,17 +774,46 @@ impl Worker {
         params: GaParams,
         seed: Option<&[GamePad]>,
     ) -> Result<Attempt> {
-        RAW_PREFIX.with(|r| r.set(seed.is_some()));
-        let out = self.attempt_inner(stages, start, save, rng, params, seed);
-        RAW_PREFIX.with(|r| r.set(false));
-        out
+        self.attempt_full(stages, start, Some(save), rng, params, seed, None)
     }
 
-    fn attempt_inner(
+    /// [`Worker::attempt_seeded`] with `save` None when `base` already holds
+    /// the start (`Tree::load_into`), and dense adds when `dense` is given.
+    #[allow(clippy::too_many_arguments)]
+    pub fn attempt_full(
         &mut self,
         stages: &[&dyn Objective],
         start: &St,
-        save: &SaveState,
+        save: Option<&SaveState>,
+        rng: &mut SmallRng,
+        params: GaParams,
+        seed: Option<&[GamePad]>,
+        dense: Option<&DenseReq>,
+    ) -> Result<Attempt> {
+        RAW_PREFIX.with(|r| r.set(seed.is_some()));
+        // OBRRT_CALM: random genomes' A presses scaled by how useful
+        // jumping looks from the start (the mover's jump_useful).
+        if calm() {
+            let m = match (obrrt_core::mover::mover(), stages[0].steer_target(start)) {
+                (Some(m), Some(t)) => (m.jump_useful(start, t, stages[0].arrival(start)) as f64).clamp(0.05, 1.0),
+                _ => 1.0,
+            };
+            A_MULT.with(|a| a.set(m));
+        }
+        let mut dc = dense.filter(|d| d.modes.any()).map(Collector::new);
+        let out = self.attempt_inner(&mut dc, stages, start, save, rng, params, seed);
+        RAW_PREFIX.with(|r| r.set(false));
+        A_MULT.with(|a| a.set(1.0));
+        out
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn attempt_inner(
+        &mut self,
+        dc: &mut Option<Collector>,
+        stages: &[&dyn Objective],
+        start: &St,
+        save: Option<&SaveState>,
         rng: &mut SmallRng,
         params: GaParams,
         seed: Option<&[GamePad]>,
@@ -503,8 +824,13 @@ impl Worker {
         let ga_scale = if explore { 1.0 } else { params.scale };
         let early_stop = !params.new_ops || explore;
         let mode = params.fitness;
-        self.base.load_state(save)?;
+        if let Some(save) = save {
+            self.base.load_state(save)?;
+        }
         let mut frames = 0u64;
+        // Dense adds, `last_gen`: the last generation's other rollouts
+        // (inputs, final state); the winner's is taken from `best`.
+        let mut last_gen: Vec<(Vec<GamePad>, St)> = Vec::new();
         let mut ga = None;
         let fixed = match (stages.len(), stages[0].budget()) {
             (1, Budget::Macro(pads)) => Some((pads.len(), pads, None)),
@@ -512,7 +838,7 @@ impl Worker {
             _ => None,
         };
         let best = if let Some((limit, pads, policy)) = fixed {
-            let r = self.rollout_with(stages, start, &pads, None, policy.as_ref(), limit)?;
+            let r = self.rollout_with(dc, stages, start, &pads, None, policy.as_ref(), limit)?;
             frames += r.genome.len() as u64;
             r
         } else {
@@ -533,7 +859,31 @@ impl Worker {
             let target = if pure { None } else { stages[0].steer_target(start).map(|_| ()) };
             let mut pop: Vec<Rollout> = Vec::with_capacity(population);
             let mut seed_hit = None;
-            for i in 0..population {
+            // OBRRT_MOVE_GA: policy-seeded rollouts in place of some of the
+            // first generation (movegenome::slot), from the mover's plausible
+            // policies; `ok` also feeds the repolicy mutation.
+            let move_ga = crate::movegenome::enabled() && target.is_some() && seed.is_none() && !pure;
+            let ok = if move_ga { crate::movegenome::plausible(stages[0], start) } else { Vec::new() };
+            // OBRRT_MOVE_GA_EXTRA: on top of the population instead.
+            let extra = crate::movegenome::extra();
+            let pass = stages[0].arrival(start) == obrrt_core::Arrival::Pass;
+            let plans = if ok.is_empty() {
+                Vec::new()
+            } else {
+                let n = crate::movegenome::budget_n();
+                crate::movegenome::gen0_plans(&ok, if extra { n } else { n.min(crate::movegenome::slots_in(population, pass)) }, rng)
+            };
+            let mut repolicies: Vec<usize> = Vec::new();
+            for i in 0..population + if extra { plans.len() } else { 0 } {
+                let k = if extra { i.checked_sub(population) } else { crate::movegenome::slot(i, pass).filter(|&k| k < plans.len()) };
+                if let Some(k) = k {
+                    let mut r = self.rollout_inner(dc, stages, start, &[], Some(4), None, Some(&plans[k]), horizon)?;
+                    r.origin = ORIGIN_POLICY;
+                    r.plan = k as u32;
+                    frames += r.genome.len() as u64;
+                    pop.push(r);
+                    continue;
+                }
                 if let Some(s) = seed {
                     let mut g = s.to_vec();
                     g.truncate(horizon);
@@ -566,7 +916,7 @@ impl Worker {
                             }
                         }
                     }
-                    let mut r = self.rollout(stages, start, &g, steer_every, horizon)?;
+                    let mut r = self.rollout(dc, stages, start, &g, steer_every, horizon)?;
                     if i == 0 {
                         seed_hit = Some((r.ends.len() == stages.len(), r.ends.last().copied().unwrap_or(0) as u32));
                     }
@@ -577,7 +927,7 @@ impl Worker {
                 }
                 if params.pink > 0.0 && rng.random_bool(params.pink.min(1.0)) {
                     let g = crate::noise::pink_inputs(rng, horizon);
-                    let mut r = self.rollout(stages, start, &g, None, horizon)?;
+                    let mut r = self.rollout(dc, stages, start, &g, None, horizon)?;
                     r.origin = 7;
                     frames += r.genome.len() as u64;
                     pop.push(r);
@@ -588,10 +938,10 @@ impl Worker {
                         let every = [2, 4, 8, 16, 30][rng.random_range(0..5)];
                         let n = rng.random_range(0..horizon / 4 + 1);
                         let noise = random_inputs(rng, n, params.new_ops);
-                        self.rollout(stages, start, &noise, Some(every), horizon)?
+                        self.rollout(dc, stages, start, &noise, Some(every), horizon)?
                     }
                     _ => {
-                        let mut r = self.rollout(stages, start, &random_inputs(rng, horizon, params.new_ops), None, horizon)?;
+                        let mut r = self.rollout(dc, stages, start, &random_inputs(rng, horizon, params.new_ops), None, horizon)?;
                         r.origin = 1;
                         r
                     }
@@ -600,7 +950,9 @@ impl Worker {
                 frames += r.genome.len() as u64;
                 pop.push(r);
             }
-            let gen0 = pop.iter().max_by(|a, b| a.better(b, mode)).map(|r| r.fitness).unwrap();
+            let gen0_best = pop.iter().max_by(|a, b| a.better(b, mode)).unwrap();
+            let gen0 = gen0_best.fitness;
+            let gen0_plan = (gen0_best.origin == ORIGIN_POLICY).then_some(gen0_best.plan as usize);
             let mut found_at = None;
             for generation in 1..generations {
                 pop.sort_by(|a, b| b.better(a, mode));
@@ -611,10 +963,45 @@ impl Worker {
                     }
                 }
                 let elite = (population / 4).max(1);
+                // OBRRT_MOVE_GA: policy lineages fill at most half the elite
+                // (the best always stays), so similar policy rollouts don't
+                // crowd out the other genomes.
+                if move_ga && !plans.is_empty() && elite > 1 {
+                    let cap = elite.div_ceil(2);
+                    let (mut keep, mut rest) = (Vec::with_capacity(elite), Vec::new());
+                    let mut n = 0;
+                    for (i, r) in pop.drain(..).enumerate() {
+                        let lineage = r.plan != u32::MAX;
+                        if keep.len() < elite && (i == 0 || !lineage || n < cap) {
+                            n += lineage as usize;
+                            keep.push(r);
+                        } else {
+                            rest.push(r);
+                        }
+                    }
+                    let short = elite.saturating_sub(keep.len());
+                    keep.extend(rest.into_iter().take(short));
+                    pop = keep;
+                }
                 pop.truncate(elite);
                 while pop.len() < population {
                     let parent = &pop[rng.random_range(0..elite)];
                     let mut g = parent.genome.clone();
+                    let lineage = parent.plan;
+                    // OBRRT_MOVE_GA: re-simulate a span under another policy.
+                    if !ok.is_empty() && rng.random_bool(crate::movegenome::repolicy_p()) {
+                        if let Some((pre, pl)) = crate::movegenome::repolicy(&g, &ok, horizon, rng) {
+                            let mut child = self.rollout_inner(dc, stages, start, &pre, Some(4), None, Some(&pl), horizon)?;
+                            child.generation = generation as u16;
+                            child.origin = ORIGIN_REPOLICY;
+                            child.plan = lineage;
+                            child.rp = pl.segs[0].0 as u8;
+                            repolicies.push(pl.segs[0].0);
+                            frames += child.genome.len() as u64;
+                            pop.push(child);
+                            continue;
+                        }
+                    }
                     // A keyed overlay's key frames: sometimes nudge just
                     // their sticks (no draw at all for other objectives).
                     if !parent.key.is_empty() && rng.random_bool(KEY_P) {
@@ -634,9 +1021,10 @@ impl Worker {
                             g[i].stick_y = (g[i].stick_y as f32 + dy).round().clamp(-128.0, 127.0) as i8;
                         }
                         g.truncate(horizon);
-                        let mut child = self.rollout(stages, start, &g, target.map(|_| 4), horizon)?;
+                        let mut child = self.rollout(dc, stages, start, &g, target.map(|_| 4), horizon)?;
                         child.generation = generation as u16;
                         child.origin = 8;
+                        child.plan = lineage;
                         frames += child.genome.len() as u64;
                         pop.push(child);
                         continue;
@@ -658,7 +1046,7 @@ impl Worker {
                             }
                             g.splice(a.min(g.len())..b.min(g.len()), seg);
                             g.truncate(horizon);
-                            self.rollout(stages, start, &g, target.map(|_| 4), horizon)?
+                            self.rollout(dc, stages, start, &g, target.map(|_| 4), horizon)?
                         }
                         1 => {
                             let b = (a + rng.random_range(5..60)).min(g.len());
@@ -669,18 +1057,22 @@ impl Worker {
                                 p.stick_x = (mag * ang.cos()) as i8;
                                 p.stick_y = (mag * ang.sin()) as i8;
                             }
-                            self.rollout(stages, start, &g, target.map(|_| 4), horizon)?
+                            self.rollout(dc, stages, start, &g, target.map(|_| 4), horizon)?
                         }
                         2 => {
                             let b = (a + rng.random_range(1..12)).min(g.len());
                             for p in &mut g[a..b] {
                                 p.button ^= A_BUTTON;
                             }
-                            self.rollout(stages, start, &g, target.map(|_| 4), horizon)?
+                            self.rollout(dc, stages, start, &g, target.map(|_| 4), horizon)?
                         }
                         4 => {
                             // Press A, B or Z for a few frames somewhere.
-                            let button = [A_BUTTON, A_BUTTON, Z_TRIG, Z_TRIG, B_BUTTON][rng.random_range(0..5)];
+                            let mut button = [A_BUTTON, A_BUTTON, Z_TRIG, Z_TRIG, B_BUTTON][rng.random_range(0..5)];
+                            // OBRRT_CALM: an A press only as often as A looks useful.
+                            if button == A_BUTTON && calm() && !rng.random_bool(a_mult()) {
+                                button = 0;
+                            }
                             let n = rng.random_range(1..5);
                             g.truncate(horizon);
                             while g.len() < (a + n).min(horizon) {
@@ -689,35 +1081,49 @@ impl Worker {
                             for p in &mut g[a.min(horizon.saturating_sub(1))..(a + n).min(horizon)] {
                                 p.button |= button;
                             }
-                            self.rollout(stages, start, &g, target.map(|_| 4), horizon)?
+                            self.rollout(dc, stages, start, &g, target.map(|_| 4), horizon)?
                         }
                         _ => {
                             g.truncate(a);
                             match target {
                                 Some(()) => {
                                     let every = [2, 4, 8, 16, 30][rng.random_range(0..5)];
-                                    self.rollout(stages, start, &g, Some(every), horizon)?
+                                    self.rollout(dc, stages, start, &g, Some(every), horizon)?
                                 }
                                 None if pure => {
                                     g.extend(crate::noise::pink_inputs(rng, horizon - a));
-                                    self.rollout(stages, start, &g, None, horizon)?
+                                    self.rollout(dc, stages, start, &g, None, horizon)?
                                 }
                                 None => {
                                     let rest = random_inputs(rng, horizon - a, params.new_ops);
                                     g.extend(rest);
-                                    self.rollout(stages, start, &g, None, horizon)?
+                                    self.rollout(dc, stages, start, &g, None, horizon)?
                                 }
                             }
                         }
                     };
                     child.generation = generation as u16;
                     child.origin = 2 + op as u8;
+                    child.plan = lineage;
                     frames += child.genome.len() as u64;
                     pop.push(child);
                 }
             }
             pop.sort_by(|a, b| b.better(a, mode));
+            if dc.as_ref().is_some_and(|c| c.req.modes.last_gen && !c.req.modes.all) {
+                last_gen = pop[1..].iter().map(|r| (r.genome.clone(), r.traj.last().unwrap().clone())).collect();
+            }
             let best = pop.swap_remove(0);
+            door_overshoot(stages[0], start, &best);
+            if move_ga {
+                crate::movegenome::record(&crate::movegenome::Outcome {
+                    plans: &plans,
+                    repolicies: &repolicies,
+                    gen0_best: gen0_plan,
+                    winner: (best.plan != u32::MAX).then_some((best.plan as usize, best.origin == ORIGIN_POLICY)),
+                    winner_repolicy: (best.origin == ORIGIN_REPOLICY).then_some(best.rp as usize),
+                });
+            }
             ga = Some(GaInfo {
                 generations,
                 winner_gen: best.generation,
@@ -730,6 +1136,43 @@ impl Worker {
             best
         };
 
+        // Dense adds after the GA: the winner's states, the last generation's
+        // final states (`all` collected them as they were played).
+        let dense = match dc.take() {
+            Some(mut c) => {
+                if !c.req.modes.all {
+                    if c.req.modes.winner_all {
+                        // OBRRT_DENSE_EVERY / _AIR: thinned by the rule of
+                        // the stage each frame worked on (the winner's ends
+                        // split its rollout into stages).
+                        let ds = crate::dense::settings().filter(|d| d.thins());
+                        let len = best.traj.len() - 1;
+                        let stage_of = |t: usize| best.ends.iter().filter(|&&e| e < t).count().min(stages.len() - 1);
+                        let states: Vec<(usize, &St)> = best
+                            .traj
+                            .iter()
+                            .enumerate()
+                            .skip(1)
+                            .filter(|(t, st)| {
+                                ds.as_ref().is_none_or(|d| crate::dense::thinned(d.rule(stages[stage_of(*t)]), *t, len, st, best.traj.get(t - 1)))
+                            })
+                            .collect();
+                        self.collect_posthoc(&mut c, &best.genome, &states, start)?;
+                    }
+                    if c.req.modes.last_gen {
+                        let n = best.traj.len() - 1;
+                        self.collect_posthoc(&mut c, &best.genome, &[(n, &best.traj[n])], start)?;
+                        for (g, last) in &last_gen {
+                            self.collect_posthoc(&mut c, g, &[(g.len(), last)], start)?;
+                        }
+                    }
+                }
+                let out = c.finish();
+                frames += out.stats.replay_frames;
+                Some(Box::new(out))
+            }
+            None => None,
+        };
         // Segment boundaries: where each met objective was met, then the
         // peak of the unmet one's progress.
         let mut bounds: Vec<(usize, bool)> = best.ends.iter().map(|&e| (e, true)).collect();
@@ -801,11 +1244,11 @@ impl Worker {
             let gained = st.progress() > start.progress();
             if !(st.controllable() || st.modal()) || (!gained && (!st.alive() || st.lives < start.lives)) {
                 segments.push(Segment { inputs: Vec::new(), end: None, success: false, progress });
-                return Ok(Attempt { segments, frames, died: true, ga });
+                return Ok(Attempt { segments, frames, died: true, ga, dense });
             }
             let st = read_state(&self.tmp, start.frame + (played + tail) as u32, true);
             segments.push(Segment { inputs, end: Some((st, self.tmp.save_state())), success, progress });
         }
-        Ok(Attempt { segments, frames, died: best.died, ga })
+        Ok(Attempt { segments, frames, died: best.died, ga, dense })
     }
 }

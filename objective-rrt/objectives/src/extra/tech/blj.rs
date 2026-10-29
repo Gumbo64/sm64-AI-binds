@@ -334,13 +334,14 @@ pub fn overlay(start: [f32; 3], yaw: i32, run_up: f32, spot: Option<[f32; 3]>, s
 /// is played (it steers the exit to the spot's goal) instead of nothing.
 pub fn overlay_exit(start: [f32; 3], yaw: i32, run_up: f32, spot: Option<[f32; 3]>, stop: f32, free_exit: bool) -> PadOverlay {
     let r = Rule { start, yaw, run_up, spot, stop, free_exit };
-    PadOverlay::keyed(move |traj, played, genome| {
+    // OBRRT_PAUSE_BUF=1: pause-buffer presses after a same-frame landing.
+    super::pausebuf::maybe(PadOverlay::keyed(move |traj, played, genome| {
         let pad = r.pad(traj, played, Some(genome));
         // Key frames: the chain's presses (the genome's stick is used there).
         let key = pad.button & A_BUTTON != 0 && traj.last().is_some_and(|s| s.action == ACT_LONG_JUMP_LAND)
             || (r.free_exit && traj.last().is_some_and(|s| s.action == ACT_LONG_JUMP) && !traj.iter().any(|t| t.action == ACT_LONG_JUMP_LAND));
         (pad, key)
-    })
+    }))
 }
 
 #[derive(Clone, Copy)]
@@ -834,6 +835,10 @@ impl Blj {
 }
 
 impl Objective for Blj {
+    /// Dense adds (`OBRRT_DENSE_EVERY=obj`): technique setups are frame-precise: every state, mid-air too.
+    fn dense_keep(&self) -> obrrt_core::DenseKeep {
+        obrrt_core::DenseKeep::Every { n: 1, air: true }
+    }
     fn kind(&self) -> &'static str {
         if self.run { "Tech::BljRun" } else { "Tech::Blj" }
     }

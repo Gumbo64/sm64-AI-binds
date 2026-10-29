@@ -6,6 +6,7 @@
 
 pub mod geo;
 pub mod layout;
+pub mod mover;
 mod read;
 
 use std::sync::Arc;
@@ -14,6 +15,16 @@ pub use read::{bhv_addr, bhv_name, check_layout, read_state};
 pub use sm64_binds::{GamePad, buttons};
 
 static EARLY_DIALOG_END: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+
+/// Extra work under way that [`St::wip`] adds, set by the objectives crate
+/// (domain knowledge stays there; e.g. `OBRRT_TWOSTAR`'s coin count toward
+/// a 100-coin star). Unset: nothing added.
+static WIP_EXTRA: std::sync::OnceLock<fn(&St) -> i64> = std::sync::OnceLock::new();
+
+/// Installs the [`St::wip`] extra (first call wins).
+pub fn set_wip_extra(f: fn(&St) -> i64) {
+    let _ = WIP_EXTRA.set(f);
+}
 
 /// Whether a closing dialog stops counting as a dialog once Mario plays
 /// again ([`St::dialog_released`]); on by default, off for the old
@@ -269,6 +280,9 @@ impl St {
     /// compared within a level.
     pub fn wip(&self) -> i64 {
         let mut w = self.red_coins.max(0) as i64 + self.level_changes();
+        if let Some(f) = WIP_EXTRA.get() {
+            w += f(self);
+        }
         for o in self.objects() {
             let max = match o.bhv_name() {
                 "bhvKingBobomb" | "bhvWhompKingBoss" | "bhvGhostHuntBigBoo" | "bhvBalconyBigBoo" | "bhvMerryGoRoundBigBoo" => 3,
@@ -407,6 +421,20 @@ pub enum Precision {
     Precise,
 }
 
+/// Which states along an attempt's winning rollout become dense nodes
+/// (`OBRRT_ADD=winner_all|all` with `OBRRT_DENSE_EVERY=obj`), chosen by the
+/// objective each stretch of the rollout was working on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DenseKeep {
+    /// The search's default (`OBRRT_DENSE_EVERY=obj:<n>`, `OBRRT_DENSE_AIR`).
+    Global,
+    /// None between the rollout's end and its met goals.
+    EndOnly,
+    /// Every `n`-th frame (1 = all), and mid-air states only with `air`
+    /// (else just take-off frames).
+    Every { n: u32, air: bool },
+}
+
 /// How an objective is attempted.
 #[derive(Debug, Clone)]
 pub enum Budget {
@@ -445,6 +473,21 @@ impl PadPolicy {
     pub fn pad(&self, traj: &[St], played: &[GamePad]) -> GamePad {
         (self.0)(traj, played)
     }
+}
+
+/// How a steering target must be reached ([`Objective::arrival`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum Arrival {
+    /// Touching it or passing through it counts (a progress point, a coin,
+    /// a painting, a warp): overshooting costs nothing.
+    #[default]
+    Pass,
+    /// Mario must stop, stand or interact at the spot (talk, grab, press,
+    /// board a platform): overshooting means coming back.
+    Stop,
+    /// A door: opens only to walking within reach of it (land short, walk
+    /// in).
+    Door,
 }
 
 /// The rule of [`Objective::pad_overlay`]. A keyed rule also says which
@@ -528,6 +571,11 @@ pub trait Objective: Send + Sync {
     fn kinship(&self) -> u32 {
         6
     }
+    /// Dense adds with `OBRRT_DENSE_EVERY=obj`: which of the states its
+    /// stretch of a winning rollout passes through become nodes.
+    fn dense_keep(&self) -> DenseKeep {
+        DenseKeep::Global
+    }
     /// Softmax temperature over `base_heuristic` when picking the start.
     fn temperature(&self) -> f64 {
         1.0
@@ -559,6 +607,14 @@ pub trait Objective: Send + Sync {
     /// usual "A while the target is higher" (e.g. B to grab when close).
     fn steer_button(&self, _s: &St) -> u16 {
         0
+    }
+    /// How the steering target must be reached (domain knowledge for a
+    /// movement library, [`mover::Mover`]): passing through or past it is
+    /// fine ([`Arrival::Pass`], the default), Mario must stop there
+    /// ([`Arrival::Stop`]), or it is a door, which opens only to walking
+    /// ([`Arrival::Door`]). Only a registered mover reads it.
+    fn arrival(&self, _s: &St) -> Arrival {
+        Arrival::Pass
     }
     /// A per-frame rule over the GA's inputs: given the trajectory so far,
     /// the inputs played and the genome's (or the steering controller's)

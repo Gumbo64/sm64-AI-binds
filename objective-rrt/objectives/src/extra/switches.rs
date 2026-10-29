@@ -16,7 +16,7 @@
 use std::sync::Arc;
 
 use obrrt_core::buttons::{A_BUTTON, B_BUTTON, Z_TRIG};
-use obrrt_core::layout::{ACT_FLAG_AIR, ACT_FLAG_ON_POLE, INTERACT_POLE, LEVEL_BBH, LEVEL_BOB, LEVEL_CASTLE, LEVEL_SSL, LEVEL_THI};
+use obrrt_core::layout::{ACT_FLAG_AIR, ACT_FLAG_ON_POLE, INTERACT_POLE, LEVEL_BBH, LEVEL_BOB, LEVEL_CASTLE, LEVEL_CASTLE_GROUNDS, LEVEL_SSL, LEVEL_THI};
 use obrrt_core::{Budget, Obj, ObjId, Objective, Progress, St, dist};
 
 // Mario actions, from include/sm64.h.
@@ -226,6 +226,10 @@ impl Switch {
 }
 
 impl Objective for Switch {
+    /// Dense adds (`OBRRT_DENSE_EVERY=obj`): collecting and fighting: a state every 15 frames, none mid-arc.
+    fn dense_keep(&self) -> obrrt_core::DenseKeep {
+        obrrt_core::DenseKeep::Every { n: 15, air: false }
+    }
     fn precision(&self) -> obrrt_core::Precision {
         if matches!(self.kind(), "Post::Pound" | "Pillar::Pound" | "IslandTop::Pound" | "BlueCoinSwitch::Pound") { obrrt_core::Precision::Precise } else { obrrt_core::Precision::Explore }
     }
@@ -341,6 +345,9 @@ impl Objective for Switch {
     fn needs_objects(&self) -> bool {
         true
     }
+    fn arrival(&self, _s: &St) -> obrrt_core::Arrival {
+        obrrt_core::Arrival::Stop
+    }
     fn steer_target(&self, s: &St) -> Option<[f32; 3]> {
         let o = self.tgt.find(s)?;
         match self.k {
@@ -420,6 +427,9 @@ pub fn generate(b: &St, o: &Obj, out: &mut Vec<Arc<dyn Objective>>) {
             let w = match o.bhv_name() {
                 // WF's giant pole leads to the top of the fortress area.
                 "bhvGiantPole" => 3.0,
+                // OBRRT_GROUNDS_FIX=1: the grounds' trees lead nowhere (no
+                // star or warp at their tops); a quarter of the weight.
+                "bhvTree" if level == LEVEL_CASTLE_GROUNDS && crate::extra::warps::grounds_fix() => 0.1,
                 "bhvTree" => 0.4,
                 "bhvKoopaFlag" => 0.2,
                 _ => 0.6,

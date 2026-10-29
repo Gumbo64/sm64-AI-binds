@@ -29,6 +29,8 @@ GLOBALS = [
     "sLoadedActNum", "sActSelectorMenuTimer", "sInitSelectedActNum", "sSelectableStarIndex", "sObtainedStars",
     # Static floors for the walkable-distance graph (core/src/geo.rs).
     "gStaticSurfacePartition",
+    # Water boxes for objectives' water-warp probes (core/src/geo.rs).
+    "gEnvironmentRegions",
 ]
 
 OBJECT_FIELDS = [

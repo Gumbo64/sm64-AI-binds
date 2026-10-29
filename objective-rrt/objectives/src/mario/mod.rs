@@ -8,5 +8,5 @@ mod time;
 
 pub use exit::GoToCastle;
 pub use idle::{Settle, Wait};
-pub use pos::PosDist;
+pub use pos::{PosDist, swim_targets, underwater_point};
 pub use time::PosTime;

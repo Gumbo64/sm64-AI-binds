@@ -168,6 +168,63 @@ pub struct Config {
     /// the 30 s report, which made trees depend on machine load; 10 M frames
     /// is about 30 s of a 16-thread run (v35: 500 M frames in 1139 s).
     pub tune_frames: u64,
+    /// OBRRT_REROUTE=1: graft slower duplicates' subtrees onto faster ones by
+    /// replaying their inputs (see `reroute`). Off by default.
+    pub reroute: bool,
+    /// OBRRT_REROUTE_SCHEMA: an objective-scattershot schema whose key says
+    /// what "the same state" is; without it, the duplicate check's cell.
+    pub reroute_schema: Option<String>,
+    /// OBRRT_REROUTE_SHARE: at most this share of a round's slots for grafts.
+    pub reroute_share: f64,
+    /// OBRRT_REROUTE_MARGIN: frames a graft must save.
+    pub reroute_margin: u32,
+    /// OBRRT_ZONE_SHARE=1: replay the inputs states took since entering
+    /// their zone from other entries of it (see `share`). Off by default.
+    pub zone_share: bool,
+    /// OBRRT_ZONE_SHARE_K: top donors per zone entry (4).
+    pub zone_share_k: usize,
+    /// OBRRT_ZONE_SHARE_CAP: frames a replayed path is at most (3000).
+    pub zone_share_cap: u32,
+    /// OBRRT_ZONE_SHARE_SHARE: at most this share of a round's slots (0.2).
+    pub zone_share_share: f64,
+    /// OBRRT_ZONE_SHARE_BG: background jobs drawn per round (2).
+    pub zone_share_bg: usize,
+    /// OBRRT_REPLAY_BUDGET=<fraction>: replay jobs (reroute grafts, zone
+    /// share) take no plan slots; after each round's plans they run until
+    /// their frames reach this fraction of the plans' (see `replay`).
+    /// None (default): the slot shares above.
+    pub replay_budget: Option<f64>,
+    /// OBRRT_CHAIN=route: an attempt chases one objective; a follow-on stage
+    /// is appended only where the best routes (`hot`) met that objective and
+    /// went on with a known next one ("continue along the known route"),
+    /// each with the fixed probability `chain_follow`, never learned from
+    /// success counts. Objectives met along the way are credited by the
+    /// arrival check in `merge`. Off: the random stacking of `extend_chain`
+    /// with its learned `chain_prob`.
+    pub chain_route: bool,
+    /// OBRRT_CHAIN_FOLLOW: probability of each route follow-on (0.5).
+    pub chain_follow: f64,
+    /// OBRRT_SAMPLER=rate: entry weights are base_weight × clamp(rate /
+    /// median rate, floor, cap), the rate being an entry's improvement per
+    /// frame spent (novel states, first success, frames saved on its
+    /// soonest success, closer kept ends), faded in emulated frames, with a
+    /// prior at the pool's overall rate; no ×decay per failure and no
+    /// resets. Start states likewise: yield per frame (floored) instead of
+    /// ×state_decay per barren attempt. Off: the decay rules.
+    pub sampler_rate: bool,
+    /// OBRRT_RATE_FLOOR / _CAP / _TAU / _PRIOR / _NOSTART (see RateParams).
+    pub rate: crate::pool::RateParams,
+    /// OBRRT_RATE_NODE_PRIOR: a start's prior, in frames at the tree's
+    /// rate; OBRRT_RATE_NODE_CAP: its multiplier's cap (floor: rate.floor).
+    pub node_prior: f64,
+    pub node_cap: f64,
+    /// OBRRT_KINSHIP_MULT: multiplies each objective's kinship (the
+    /// generations pick_start looks up and down from b), for trees whose
+    /// edges are short (dense adds). 1 = as the objective says.
+    pub kinship_mult: f64,
+    /// OBRRT_SPARSE_CHECK: at the end, rebuild this many save-less nodes
+    /// (sparse saves) and compare each with its recorded state.
+    pub rebuild_check: usize,
 }
 
 impl Default for Config {
@@ -228,6 +285,24 @@ impl Default for Config {
             earliest_cell: true,
             report_every: Duration::from_secs(30),
             tune_frames: 10_000_000,
+            reroute: false,
+            reroute_schema: None,
+            reroute_share: 0.25,
+            reroute_margin: 10,
+            zone_share: false,
+            zone_share_k: 4,
+            zone_share_cap: 3000,
+            zone_share_share: 0.2,
+            zone_share_bg: 2,
+            replay_budget: None,
+            chain_route: false,
+            chain_follow: 0.5,
+            sampler_rate: false,
+            rate: crate::pool::RateParams { floor: 0.15, cap: 4.0, tau: 50_000_000.0, prior_frames: 200_000.0, nostart_frames: 5_000.0, hier: false, kind_scale: 10.0, nostart_skip: false, skip_budget: 2_000_000 },
+            node_prior: 300_000.0,
+            node_cap: 2.0,
+            kinship_mult: 1.0,
+            rebuild_check: 0,
         }
     }
 }
@@ -240,6 +315,9 @@ struct Plan {
     b: u32,
     /// RRT* rewiring: the slower state whose objective this re-attempts.
     rewire: Option<u32>,
+    /// OBRRT_NEAR_SEED: recorded inputs of a nearby start's attempt of the
+    /// first stage, seeding the GA (see near.rs).
+    seed: Option<Vec<GamePad>>,
 }
 
 /// RRT* rewiring work: re-attempt `target`'s objective from `from`, a state
@@ -316,6 +394,52 @@ fn starset(st: &St) -> u64 {
     if STARSET.load(std::sync::atomic::Ordering::Relaxed) { st.progress_set() } else { 0 }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum ReplayEnd {
+    Done,
+    /// Dead at an edge boundary (that state isn't recorded).
+    Died,
+    /// Recorded a boundary outside the start's zone, and stopped there.
+    LeftZone,
+}
+
+/// A replay job's states, one per edge boundary passed.
+struct Replayed {
+    states: Vec<(St, Delta)>,
+    frames: u64,
+    end: ReplayEnd,
+}
+
+/// Replays the recorded inputs of `edges` (node ids) in order from node
+/// `from`'s save, recording the state (and its save, against `from`'s base)
+/// at the end of each; stops at a dead boundary and, with `stay`, after a
+/// boundary outside `from`'s zone.
+fn replay_edges(game: &mut sm64_binds::SM64Game, tree: &Tree, bases: &[Vec<u8>], from: u32, edges: &[u32], stay: bool) -> Result<Replayed> {
+    let base = tree.base_of(from);
+    tree.load_into(from, game, bases)?;
+    let from = &tree.nodes[from as usize];
+    let mut out = Replayed { states: Vec::with_capacity(edges.len()), frames: 0, end: ReplayEnd::Done };
+    for &e in edges {
+        let inputs = &tree.nodes[e as usize].inputs;
+        for p in inputs {
+            game.step_game(*p)?;
+        }
+        out.frames += inputs.len() as u64;
+        let st = read_state(game, from.st.frame + out.frames as u32, true);
+        if !st.alive() {
+            out.end = ReplayEnd::Died;
+            break;
+        }
+        let left = stay && st.zone() != from.st.zone();
+        out.states.push((st, Delta::new(base, &bases[base as usize], &game.save_state())));
+        if left {
+            out.end = ReplayEnd::LeftZone;
+            break;
+        }
+    }
+    Ok(out)
+}
+
 fn cell(st: &St) -> Cell {
     let c = |v: f32| (v / 64.0).floor() as i32;
     let modal = if st.in_dialog() { st.dialog } else if st.in_save_menu() { -2 } else if st.act_select { -3 } else { -1 };
@@ -332,6 +456,12 @@ fn cell(st: &St) -> Cell {
 }
 
 pub struct Engine {
+    /// Rerouting onto faster duplicates (`Config::reroute`).
+    rr: Option<crate::reroute::Reroute>,
+    /// Zone-entry input sharing (`Config::zone_share`).
+    zs: Option<crate::share::ZoneShare>,
+    /// Replay budget (`Config::replay_budget`).
+    rb: Option<crate::replay::ReplayBudget>,
     pub cfg: Config,
     pub tree: Tree,
     pub pool: Pool,
@@ -378,6 +508,30 @@ pub struct Engine {
     bc: crate::backchain::Backchain,
     /// Wall seconds spent planning (steps 1-4) and merging (step 6).
     diag_plan_secs: (f64, f64),
+    /// Wall seconds (report only): [pre-plan refresh+index_frontier, attempts
+    /// (parallel), post-merge upkeep, write_outputs, worker load_into (summed
+    /// over threads), worker attempt (summed)].
+    diag_secs: [f64; 6],
+    /// Route chains: per objective key, the best-route (`hot`) nodes where
+    /// it was met (ids ascending); rebuilt with `hot`.
+    route_met: HashMap<String, Vec<u32>>,
+    /// Rate sampler: the tree's new states and frames over all starts
+    /// (faded like each node's), and when last faded.
+    node_rate: (f64, f64, u64),
+    /// OBRRT_RATE_NOSTART_SKIP: live state ids at the round's start, the
+    /// node count then, and the re-check's round-robin cursor.
+    live: Vec<u32>,
+    live_upto: u32,
+    skip_rr: usize,
+    /// Dense adds (OBRRT_ADD, see dense.rs): settings and totals.
+    dense: Option<crate::dense::Settings>,
+    dstats: crate::dense::MergeStats,
+    /// Seeds from nearby starts (OBRRT_NEAR_SEED, see near.rs).
+    near: crate::near::NearSeed,
+    /// OBRRT_PICK=schema|schema_kin: start selection by schema cells (schemapick.rs).
+    spick: Option<crate::schemapick::SchemaPick>,
+    /// Sparse saves: rebuild frames already counted into total_frames.
+    rebuild_counted: u64,
 }
 
 /// Share of a round's plans the new-eligible queue may take, times a key
@@ -473,7 +627,30 @@ impl Engine {
         cells.insert(cell(&root), vec![0]);
         let root_zone = root.zone();
         let root_st = root.clone();
+        let rr = if cfg.reroute {
+            let key = match &cfg.reroute_schema {
+                Some(path) => crate::reroute::RerouteKey::Schema(Box::new(objective_scattershot::objective::Tree::load(&fs::read_to_string(path)?)?)),
+                None => crate::reroute::RerouteKey::Cell,
+            };
+            Some(crate::reroute::Reroute::new(key))
+        } else {
+            None
+        };
+        let mut zs = cfg.zone_share.then(|| crate::share::ZoneShare::new(cfg.zone_share_k, cfg.zone_share_cap, cfg.zone_share_bg, cfg.seed));
+        let mut rr = rr;
+        let rb = cfg.replay_budget.map(crate::replay::ReplayBudget::new);
+        if rb.is_some() {
+            if let Some(r) = rr.as_mut() {
+                r.lifo = true;
+            }
+            if let Some(z) = zs.as_mut() {
+                z.lifo = true;
+            }
+        }
         Ok(Engine {
+            rr,
+            zs,
+            rb,
             tree: Tree::new(root),
             pool: Pool::default(),
             diag: Diagnostics { chain_prob: cfg.chain_fixed.unwrap_or(cfg.chain_prob), ..Default::default() },
@@ -507,7 +684,18 @@ impl Engine {
                 ..Default::default()
             },
             diag_plan_secs: (0.0, 0.0),
+            diag_secs: [0.0; 6],
+            route_met: HashMap::new(),
+            node_rate: (0.0, 0.0, 0),
+            live: Vec::new(),
+            live_upto: 0,
+            skip_rr: 0,
             bc: crate::backchain::Backchain::new(cfg.seed),
+            dense: crate::dense::settings().filter(|d| d.modes.any()),
+            dstats: Default::default(),
+            near: crate::near::NearSeed::new(cfg.seed),
+            spick: crate::schemapick::from_env()?,
+            rebuild_counted: 0,
             cfg,
         })
     }
@@ -518,48 +706,52 @@ impl Engine {
     /// With `strict` (earliest-arrival boost), only objectives b itself can
     /// start (within its kind's cutoff), whatever `pick_by_b`.
     fn sample_entry(&mut self, b: u32, strict: bool) -> Option<usize> {
-        // Only objectives b (or its parent) can start: then b's kin set is
-        // sure to hold a start, and no pick is wasted (pick_by_b).
-        let eligible: Vec<bool> = if strict {
-            let b_st = &self.tree.nodes[b as usize].st;
-            let diag = &self.diag;
-            self.pool
-                .entries
-                .iter()
-                .map(|e| {
-                    let o = e.obj.as_ref();
-                    !o.modal()
-                        && o.exists_in(b_st)
-                        && o.base_criteria(b_st)
-                        && o.base_heuristic(b_st) <= diag.kinds.get(o.kind()).map_or(f64::INFINITY, |k| k.cutoff)
-                })
-                .collect()
-        } else if self.cfg.pick_by_b {
-            let b_st = &self.tree.nodes[b as usize].st;
-            let parent = self.tree.nodes[b as usize].parent.map(|p| &self.tree.nodes[p as usize]);
-            let ok = |o: &dyn Objective, s: &St| o.exists_in(s) && o.base_criteria(s);
-            self.pool
-                .entries
-                .iter()
-                .map(|e| {
-                    !e.obj.modal()
-                        && (ok(e.obj.as_ref(), b_st) || parent.is_some_and(|p| !p.retired && !p.st.modal() && ok(e.obj.as_ref(), &p.st)))
-                })
-                .collect()
-        } else {
-            self.pool.entries.iter().map(|e| !e.obj.modal()).collect()
-        };
-        let mut kind_weight: BTreeMap<&'static str, (f64, usize)> = BTreeMap::new();
-        for e in self.pool.entries.iter().zip(&eligible).filter(|(_, ok)| **ok).map(|(e, _)| e) {
-            let w = kind_weight.entry(e.obj.kind()).or_default();
-            w.0 += e.base_weight * e.decay;
-            w.1 += 1;
+        if strict || self.cfg.pick_by_b {
+            return self.sample_entry_scan(b, strict);
         }
-        let kinds: Vec<(&'static str, f64)> = kind_weight
-            .into_iter()
-            .filter(|(_, (w, _))| *w > 0.0)
-            .map(|(k, (w, n))| (k, w / n as f64 * self.diag.kind(k).multiplier))
+        // OBRRT_SAMPLE_CHECK=1: the scan on a copy of the RNG must agree
+        // (pick and RNG state) with the per-kind tables.
+        static CHECK: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        if *CHECK.get_or_init(|| std::env::var("OBRRT_SAMPLE_CHECK").is_ok_and(|v| v == "1")) {
+            let rng0 = self.rng.clone();
+            let want = self.sample_entry_scan(b, strict);
+            let mut rng1 = std::mem::replace(&mut self.rng, rng0);
+            let got = self.sample_entry_fast(b);
+            let mut rng2 = self.rng.clone();
+            assert!(got == want && rng1.random::<u64>() == rng2.random::<u64>(), "sample_entry tables {got:?} vs scan {want:?}");
+            return got;
+        }
+        self.sample_entry_fast(b)
+    }
+
+    /// `sample_entry` without b-dependent eligibility, from the pool's
+    /// per-kind tables (`SampleIdx`): the same sums, draws and pick as the
+    /// scan, without a pass over the pool.
+    fn sample_entry_fast(&mut self, b: u32) -> Option<usize> {
+        let idx = self.pool.sidx.get_or_insert_with(Default::default);
+        idx.sync(&self.pool.entries);
+        if idx.irregular > 0 {
+            return self.sample_entry_scan(b, false);
+        }
+        idx.refresh();
+        let idx = self.pool.sidx.as_ref().unwrap();
+        let kinds: Vec<(&'static str, f64)> = idx
+            .by_name
+            .iter()
+            .map(|(k, &t)| (*k, &idx.kinds[t as usize]))
+            .filter(|(_, t)| t.count > 0 && t.sum() > 0.0)
+            .map(|(k, t)| (k, t.sum() / t.count as f64 * self.diag.kind(k).multiplier))
             .collect();
+        let chosen = self.choose_kind(&kinds)?;
+        let idx = self.pool.sidx.as_ref().unwrap();
+        let t = &idx.kinds[idx.by_name[chosen] as usize];
+        let x = self.rng.random_range(0.0..t.sum());
+        Some(t.pick(x) as usize)
+    }
+
+    /// The kind stage of `sample_entry`: floor, cap and draw over `kinds`
+    /// (name, mean weight × multiplier; all positive), in name order.
+    fn choose_kind(&mut self, kinds: &[(&'static str, f64)]) -> Option<&'static str> {
         if kinds.is_empty() {
             return None;
         }
@@ -601,6 +793,55 @@ impl Engine {
             }
             x -= w;
         }
+        Some(chosen)
+    }
+
+    /// `sample_entry` by a pass over the whole pool (any eligibility).
+    fn sample_entry_scan(&mut self, b: u32, strict: bool) -> Option<usize> {
+        // Only objectives b (or its parent) can start: then b's kin set is
+        // sure to hold a start, and no pick is wasted (pick_by_b).
+        let eligible: Vec<bool> = if strict {
+            let b_st = &self.tree.nodes[b as usize].st;
+            let diag = &self.diag;
+            self.pool
+                .entries
+                .iter()
+                .map(|e| {
+                    let o = e.obj.as_ref();
+                    !o.modal()
+                        && o.exists_in(b_st)
+                        && o.base_criteria(b_st)
+                        && o.base_heuristic(b_st) <= diag.kinds.get(o.kind()).map_or(f64::INFINITY, |k| k.cutoff)
+                })
+                .collect()
+        } else if self.cfg.pick_by_b {
+            let b_st = &self.tree.nodes[b as usize].st;
+            let parent = self.tree.nodes[b as usize].parent.map(|p| &self.tree.nodes[p as usize]);
+            let ok = |o: &dyn Objective, s: &St| o.exists_in(s) && o.base_criteria(s);
+            self.pool
+                .entries
+                .iter()
+                .map(|e| {
+                    !e.obj.modal()
+                        && e.ns_upto == 0
+                        && (ok(e.obj.as_ref(), b_st) || parent.is_some_and(|p| !p.retired && !p.st.modal() && ok(e.obj.as_ref(), &p.st)))
+                })
+                .collect()
+        } else {
+            self.pool.entries.iter().map(|e| !e.obj.modal() && e.ns_upto == 0).collect()
+        };
+        let mut kind_weight: BTreeMap<&'static str, (f64, usize)> = BTreeMap::new();
+        for e in self.pool.entries.iter().zip(&eligible).filter(|(_, ok)| **ok).map(|(e, _)| e) {
+            let w = kind_weight.entry(e.obj.kind()).or_default();
+            w.0 += e.base_weight * e.decay;
+            w.1 += 1;
+        }
+        let kinds: Vec<(&'static str, f64)> = kind_weight
+            .into_iter()
+            .filter(|(_, (w, _))| *w > 0.0)
+            .map(|(k, (w, n))| (k, w / n as f64 * self.diag.kind(k).multiplier))
+            .collect();
+        let chosen = self.choose_kind(&kinds)?;
         let items: Vec<(usize, f64)> = self
             .pool
             .entries
@@ -636,6 +877,12 @@ impl Engine {
             && (self.cfg.arrival_mix >= 1.0 || self.rng.random::<f64>() < self.cfg.arrival_mix);
         let cutoff = self.diag.kind(obj.kind()).cutoff;
         let k = obj.kinship();
+        let k = if self.cfg.kinship_mult == 1.0 { k } else { ((k as f64) * self.cfg.kinship_mult).round().max(0.0) as u32 };
+        if let Some(sp) = self.spick.as_mut() {
+            let kin = (sp.mode == crate::schemapick::Mode::SchemaKin).then(|| self.tree.kin_set(b, k));
+            let cx = crate::schemapick::Ctx { obj, entry, b, cutoff, rrt_star: self.cfg.rrt_star, kin, epoch: (self.tree.nodes.len(), self.total_frames) };
+            return sp.pick(&self.tree, cx, &mut self.rng);
+        }
         let b_st = &self.tree.nodes[b as usize].st;
         let (b_keys, b_stars, b_lives) = (b_st.keys, b_st.stars, b_st.lives);
         // OBRRT_RETIRE_SUBSET: a start has everything b has, not just as many.
@@ -644,7 +891,9 @@ impl Engine {
         // Arrival band: each candidate's own heuristic, to keep only those
         // within `arrival_band` of the closest.
         let mut raw_h: Vec<f64> = Vec::new();
-        for i in self.tree.kin_set(b, k) {
+        // OBRRT_KIN_SOFT: each member's weight × λ^distance (else 1).
+        let kin = self.tree.kin_weighted(b, k);
+        for &(i, kw) in kin.iter() {
             let n = &self.tree.nodes[i as usize];
             let s = &n.st;
             // OBRRT_KEEP_WIP: a state kept for its work under way starts
@@ -684,7 +933,7 @@ impl Engine {
                 _ => 1.0,
             };
             let settle = if SETTLE_RANK.load(std::sync::atomic::Ordering::Relaxed) && !obj.modal() && s.vel[0].hypot(s.vel[2]) < 2.0 && s.vel[1].abs() < 1.0 { 0.5 } else { 1.0 };
-            cands.push((i as u32, h, u * n.stats.backoff * crowd * wear * settle));
+            cands.push((i as u32, h, u * self.start_mult(&n.stats) * crowd * wear * settle * kw as f64));
         }
         if cands.is_empty() {
             return None;
@@ -810,6 +1059,23 @@ impl Engine {
                 })
                 .collect();
             self.route.sort_unstable();
+            // Route chains: where the best routes met each objective.
+            if self.cfg.chain_route {
+                self.route_met.clear();
+                let mut ids: Vec<u32> = self.hot.iter().copied().collect();
+                ids.sort_unstable();
+                let mut known = 0;
+                for i in ids {
+                    let n = &self.tree.nodes[i as usize];
+                    let Some(m) = n.made_by.as_ref() else { continue };
+                    known += 1;
+                    if n.met {
+                        self.route_met.entry(m.key()).or_default().push(i);
+                    }
+                }
+                self.diag.route_chain.route_nodes = known;
+                self.diag.route_chain.route_keys = self.route_met.len() as u64;
+            }
         }
     }
 
@@ -847,7 +1113,7 @@ impl Engine {
         self.diag.kind(kind).samples += 1;
         self.diag.kind(kind).window_samples += 1;
         self.pool.entries[entry].unattemptable = 0;
-        Some(Plan { stages: vec![(entry, obj)], start: b, b, rewire: None })
+        Some(Plan { stages: vec![(entry, obj)], start: b, b, rewire: None, seed: None })
     }
 
     /// RRT*: the next rewiring attempt, if any is still valid.
@@ -866,7 +1132,7 @@ impl Engine {
                 }
             };
             self.diag.rewire.attempts += 1;
-            return Some(Plan { stages: vec![(entry, obj)], start: r.from, b: r.from, rewire: Some(r.target) });
+            return Some(Plan { stages: vec![(entry, obj)], start: r.from, b: r.from, rewire: Some(r.target), seed: None });
         }
         None
     }
@@ -985,7 +1251,7 @@ impl Engine {
                     self.pool.entries[entry].unattemptable = 0;
                     self.ne.planned += 1;
                     let stages = self.extend_chain(entry, obj, start);
-                    out = Some(Plan { stages, start, b, rewire: None });
+                    out = Some(Plan { stages, start, b, rewire: None, seed: None });
                     break;
                 }
                 None => {
@@ -1086,7 +1352,7 @@ impl Engine {
             self.diag.kind(kind).window_samples += 1;
             self.pool.entries[entry].unattemptable = 0;
             let stages = self.extend_chain(entry, obj, b);
-            return Some(Plan { stages, start: b, b, rewire: None });
+            return Some(Plan { stages, start: b, b, rewire: None, seed: None });
         }
         None
     }
@@ -1099,7 +1365,7 @@ impl Engine {
             if let Some((start, obj)) = self.bc.next(&self.tree) {
                 self.pool.insert(obj.clone(), &self.tree.nodes[start as usize].st);
                 let entry = self.pool.find(&obj.key()).unwrap();
-                return Some(Plan { stages: vec![(entry, obj)], start, b: start, rewire: None });
+                return Some(Plan { stages: vec![(entry, obj)], start, b: start, rewire: None, seed: None });
             }
         }
         if self.cfg.rrt_star
@@ -1150,16 +1416,22 @@ impl Engine {
         }
         // Steps 3-4, retrying a few times when a pick has no eligible start.
         for _ in 0..4 {
+            // Wall time per pick (diagnostics only, never decisions).
+            let pick_t = Instant::now();
             let entry = self.sample_entry(b, false)?;
+            self.pool.rate.sample_secs += pick_t.elapsed().as_secs_f64();
             let obj = self.pool.entries[entry].obj.clone();
             let kind = obj.kind();
             self.diag.kind(kind).samples += 1;
             self.diag.kind(kind).window_samples += 1;
-            match self.pick_start(entry, obj.as_ref(), b) {
+            let picked = self.pick_start(entry, obj.as_ref(), b);
+            let secs = pick_t.elapsed().as_secs_f64();
+            if picked.is_some() { self.pool.rate.pick_secs += secs } else { self.pool.rate.nostart_secs += secs }
+            match picked {
                 Some(start) => {
                     self.pool.entries[entry].unattemptable = 0;
                     let stages = self.extend_chain(entry, obj, start);
-                    return Some(Plan { stages, start, b, rewire: None });
+                    return Some(Plan { stages, start, b, rewire: None, seed: None });
                 }
                 None => {
                     self.diag.kind(kind).no_start += 1;
@@ -1169,15 +1441,94 @@ impl Engine {
                     // (the reset in merge).
                     let e = &mut self.pool.entries[entry];
                     e.unattemptable += 1;
-                    if self.cfg.entry_bandit {
+                    if self.cfg.sampler_rate {
+                        // Rate sampler: a pick with nowhere to start costs a
+                        // few frames' worth of rate (faded like the rest).
+                        let p = self.cfg.rate;
+                        if p.nostart_skip && !self.any_start(obj.as_ref(), 0, &mut { u64::MAX }).unwrap_or(true) {
+                            // No live state could start it, whatever b:
+                            // skipped (not charged) until a newer one can.
+                            self.pool.entries[entry].ns_upto = self.live_upto.max(1);
+                            self.pool.rate.nostart_global += 1;
+                        } else {
+                            self.pool.rate.nostart_kin += p.nostart_skip as u64;
+                            self.pool.rate_note(entry, 0.0, p.nostart_frames, self.total_frames, &p, true);
+                            self.pool.rate_one(entry, self.total_frames, &p);
+                            self.pool.rate.nostart_charges += 1;
+                        }
+                    } else if self.cfg.entry_bandit {
                         e.observe(false, self.cfg.bandit_gamma);
                     } else {
                         e.decay *= self.cfg.decay;
                     }
+                    if let Some(idx) = self.pool.sidx.as_mut() {
+                        idx.touch(&self.pool.entries, entry);
+                    }
                 }
             }
         }
+        self.pool.rate.plans_none += 1;
         None
+    }
+
+    /// OBRRT_RATE_NOSTART_SKIP: whether some live state with id >= `from`
+    /// could start `obj` for some b (pick_start's tests that don't depend on
+    /// b: live, not dominated, alive, modal alike, base criteria), spending
+    /// one of `budget` per state tried; None when the budget ran out first.
+    fn any_start(&self, obj: &dyn Objective, from: u32, budget: &mut u64) -> Option<bool> {
+        let at = self.live.partition_point(|&i| i < from);
+        for &i in &self.live[at..] {
+            if *budget == 0 {
+                return None;
+            }
+            *budget -= 1;
+            let n = &self.tree.nodes[i as usize];
+            if !n.retired && !(self.cfg.rrt_star && n.dominated) && n.st.modal() == obj.modal() && obj.base_criteria(&n.st) {
+                return Some(true);
+            }
+        }
+        Some(false)
+    }
+
+    /// OBRRT_RATE_NOSTART_SKIP, at the start of a round: the live states,
+    /// then skipped entries re-checked against the states added since their
+    /// check (round-robin, at most `skip_budget` states tried a round): one
+    /// a newer state could start is released. A skipped entry counts a
+    /// round unattemptable (so one dead everywhere expires).
+    fn nostart_recheck(&mut self) {
+        let t = Instant::now();
+        self.live = (0..self.tree.nodes.len() as u32)
+            .filter(|&i| {
+                let n = &self.tree.nodes[i as usize];
+                !n.retired && !(self.cfg.rrt_star && n.dominated) && n.st.alive()
+            })
+            .collect();
+        self.live_upto = self.tree.nodes.len() as u32;
+        let skipped: Vec<usize> = (0..self.pool.entries.len()).filter(|&i| self.pool.entries[i].ns_upto > 0).collect();
+        let mut budget = self.cfg.rate.skip_budget;
+        let n = skipped.len();
+        let start = if n == 0 { 0 } else { self.skip_rr % n };
+        let mut released = 0;
+        for j in 0..n {
+            let i = skipped[(start + j) % n];
+            self.pool.entries[i].unattemptable += 1;
+            if budget == 0 {
+                continue;
+            }
+            let obj = self.pool.entries[i].obj.clone();
+            match self.any_start(obj.as_ref(), self.pool.entries[i].ns_upto, &mut budget) {
+                Some(true) => {
+                    self.pool.entries[i].ns_upto = 0;
+                    released += 1;
+                }
+                Some(false) => self.pool.entries[i].ns_upto = self.live_upto.max(1),
+                None => self.skip_rr = start + j,
+            }
+        }
+        let r = &mut self.pool.rate;
+        r.released += released;
+        r.skipped = n - released as usize;
+        r.recheck_secs += t.elapsed().as_secs_f64();
     }
 
     /// Chains more objectives after `first` (step 3 again, for where the
@@ -1186,6 +1537,9 @@ impl Engine {
     /// target is within `chain_reach`. The kind is picked first, as in
     /// `sample_entry`, so many-entry kinds don't crowd the rest out.
     fn extend_chain(&mut self, entry: usize, first: Arc<dyn Objective>, start: u32) -> Vec<(usize, Arc<dyn Objective>)> {
+        if self.cfg.chain_route {
+            return self.extend_route(entry, first);
+        }
         let mut stages = vec![(entry, first)];
         if !matches!(stages[0].1.budget(), Budget::Ga { .. }) {
             return stages;
@@ -1227,6 +1581,139 @@ impl Engine {
         stages
     }
 
+    /// Route chains (`Config::chain_route`): after `first`, the objective the
+    /// best routes took next where they met it, if any (each follow-on with
+    /// probability `chain_follow`), up to `max_chain` stages. Nothing is
+    /// stacked that the routes didn't do, and nothing is learned from how
+    /// chained attempts fared.
+    fn extend_route(&mut self, entry: usize, first: Arc<dyn Objective>) -> Vec<(usize, Arc<dyn Objective>)> {
+        let mut stages = vec![(entry, first)];
+        if !matches!(stages[0].1.budget(), Budget::Ga { .. }) {
+            return stages;
+        }
+        self.diag.route_chain.considered += 1;
+        let mut key = stages[0].1.key();
+        let mut keys = vec![key.clone()];
+        while stages.len() < self.cfg.max_chain {
+            let Some(hs) = self.route_met.get(&key) else { break };
+            if stages.len() == 1 {
+                self.diag.route_chain.on_route += 1;
+            }
+            // The next distinct objective below each node where the routes
+            // met `key`, with the state it started from on the route.
+            let mut cands: Vec<(String, Arc<dyn Objective>, u32)> = Vec::new();
+            for &h in hs {
+                self.route_next(h, &key, &mut cands);
+            }
+            cands.retain(|(k, o, from)| {
+                let st = &self.tree.nodes[*from as usize].st;
+                !keys.contains(k) && !o.modal() && matches!(o.budget(), Budget::Ga { .. }) && o.exists_in(st) && o.base_criteria(st)
+            });
+            if cands.is_empty() {
+                break;
+            }
+            if stages.len() == 1 {
+                self.diag.route_chain.next_known += 1;
+            }
+            if !self.rng.random_bool(self.cfg.chain_follow) {
+                break;
+            }
+            let (k, obj, from) = cands.swap_remove(self.rng.random_range(0..cands.len()));
+            let next = match self.pool.find(&k) {
+                Some(e) => e,
+                None => {
+                    let st = self.tree.nodes[from as usize].st.clone();
+                    self.pool.insert(obj.clone(), &st);
+                    self.pool.entries.len() - 1
+                }
+            };
+            if stages.len() == 1 {
+                self.diag.route_chain.planned += 1;
+            }
+            self.diag.route_chain.appended += 1;
+            keys.push(k.clone());
+            stages.push((next, obj));
+            key = k;
+        }
+        stages
+    }
+
+    /// Route chains: from route node `h` (where `key` was met), down its
+    /// best-route children past further `key` nodes, the first other
+    /// objective each branch was made by (distinct keys, in id order), with
+    /// the node it started from. A branch through a node of unknown origin
+    /// (a graft of an unknown one, the root) ends there.
+    fn route_next(&self, h: u32, key: &str, out: &mut Vec<(String, Arc<dyn Objective>, u32)>) {
+        let mut stack = vec![h];
+        while let Some(at) = stack.pop() {
+            for &c in self.tree.children[at as usize].iter().rev() {
+                if !self.hot.contains(&c) {
+                    continue;
+                }
+                let Some(m) = self.tree.nodes[c as usize].made_by.as_ref() else { continue };
+                let k = m.key();
+                if k == key {
+                    stack.push(c);
+                } else if !out.iter().any(|o| o.0 == k) {
+                    out.push((k, m.clone(), at));
+                }
+            }
+        }
+    }
+
+    /// A start's sampling multiplier: its back-off, or with the rate
+    /// sampler, its trap back-off × its recent new states per frame over the
+    /// tree's (prior `node_prior` frames at the tree's rate), clamped to
+    /// [rate.floor, node_cap].
+    fn start_mult(&self, s: &crate::tree::NodeStats) -> f64 {
+        if !self.cfg.sampler_rate {
+            return s.backoff;
+        }
+        let (gy, gf, _) = self.node_rate;
+        if !(gf > 0.0) {
+            return s.backoff;
+        }
+        let r0 = (gy / gf).max(1e-9);
+        let k = (-(self.total_frames.saturating_sub(s.rate_t) as f64) / self.cfg.rate.tau).exp();
+        let r = (s.rate_y * k + r0 * self.cfg.node_prior) / (s.rate_f * k + self.cfg.node_prior);
+        s.backoff * (r / r0).clamp(self.cfg.rate.floor, self.cfg.node_cap)
+    }
+
+    /// Arrival credit (route chains, rate sampler): pool entries other than
+    /// the plan's own stages, worth more than 1, that `start` could start
+    /// (base criteria: a collectible's is just "in its zone and there", so
+    /// one passed on the way to something else counts) and `start` -> `end` met
+    /// (`success` over the two states) or whose object was there at the
+    /// start and gone at the end in the same zone.
+    ///
+    /// Only the two end states are seen, so an objective whose success is
+    /// generic (a door's is "left the zone") would match every objective of
+    /// its kind: a kind with more than one hit in a segment is ambiguous and
+    /// credits none.
+    fn arrivals(&self, plan: &Plan, start: &St, end: &St) -> Vec<usize> {
+        let pair = [start.clone(), end.clone()];
+        let same_zone = start.zone() == end.zone();
+        let hits: Vec<usize> = self.pool
+            .entries
+            .iter()
+            .enumerate()
+            .filter(|(i, e)| {
+                e.base_weight > 1.0
+                    && !e.obj.modal()
+                    && !plan.stages.iter().any(|s| s.0 == *i)
+                    && e.obj.exists_in(start)
+                    && e.obj.base_criteria(start)
+                    && (e.obj.success(&pair).is_some() || (same_zone && !e.obj.exists_in(end)))
+            })
+            .map(|(i, _)| i)
+            .collect();
+        let mut per_kind: BTreeMap<&'static str, u32> = BTreeMap::new();
+        for &i in &hits {
+            *per_kind.entry(self.pool.entries[i].obj.kind()).or_default() += 1;
+        }
+        hits.into_iter().filter(|&i| per_kind[self.pool.entries[i].obj.kind()] == 1).collect()
+    }
+
     fn write_m64(&self, id: u32, name: &str) -> Result<String> {
         let mut path = self.boot.clone();
         path.extend(self.tree.path(id));
@@ -1265,6 +1752,7 @@ impl Engine {
     /// is merged against its own objective, entry and start; each added
     /// state is the parent of the next segment's.
     fn merge(&mut self, plan: &Plan, att: Attempt<Delta>) -> Result<()> {
+        let dense = att.dense;
         self.total_frames += att.frames;
         let chain = self.attempts_merged;
         self.attempts_merged += 1;
@@ -1299,7 +1787,7 @@ impl Engine {
             let mut end_k = (f64::INFINITY, None);
             carry.extend(seg.inputs);
             if let Some((st, packed)) = seg.end {
-                if self.cfg.start_wear || self.cfg.decay_route || self.cfg.entry_bandit {
+                if self.cfg.start_wear || self.cfg.decay_route || self.cfg.entry_bandit || self.cfg.sampler_rate {
                     end_k = self.keys_of(obj.as_ref(), &st);
                 }
                 // Progress alone counts only for objectives worth at least 1:
@@ -1341,6 +1829,11 @@ impl Engine {
                     let progress = st.progress();
                     let zone_now = st.zone();
                     let (id, adv) = self.tree.add(parent, std::mem::take(&mut carry), st, delta, kind);
+                    if self.cfg.chain_route {
+                        let n = &mut self.tree.nodes[id as usize];
+                        n.made_by = Some(obj.clone());
+                        n.met = seg.success;
+                    }
                     if self.cfg.new_eligible {
                         self.ne_note(id, parent);
                     }
@@ -1401,9 +1894,16 @@ impl Engine {
                         self.tree.nodes[id as usize].stats.crowd = crowd;
                     }
                     self.cells.entry(c).or_default().push(id);
+                    if let Some(rr) = self.rr.as_mut() {
+                        rr.note(id, &self.tree.nodes[id as usize].st, &c, &self.tree, &self.hot, self.cfg.reroute_margin, 0);
+                    }
                     added = Some(id);
                     advanced = adv;
                     parent = id;
+                    if i == 0 && self.near.on.is_some() {
+                        let rank = if seg.success { (frame - seg_start.frame) as f64 } else { obj.base_heuristic(&self.tree.nodes[id as usize].st) };
+                        self.near.note(obj.key(), plan.start, id, seg.success, rank);
+                    }
                     if seg.success && self.bc.on() {
                         self.bc.note_success(&self.tree, id, &obj, weight, adv);
                     }
@@ -1478,7 +1978,10 @@ impl Engine {
                 if let Some(f) = start_k.1 {
                     e.best_arrival = e.best_arrival.min(f);
                 }
-                if self.cfg.entry_bandit {
+                if self.cfg.sampler_rate {
+                    // Rate sampler: credited below, no decay.
+                    e.successes += seg.success as u32;
+                } else if self.cfg.entry_bandit {
                     e.successes += seg.success as u32;
                     e.observe((seg.success && novel) || improved, self.cfg.bandit_gamma);
                 } else if seg.success && novel {
@@ -1489,10 +1992,91 @@ impl Engine {
                     e.successes += seg.success as u32;
                     e.decay *= self.cfg.decay;
                 }
-                if recover && !self.cfg.entry_bandit && e.decay < 0.5 {
+                if recover && !self.cfg.entry_bandit && !self.cfg.sampler_rate && e.decay < 0.5 {
                     e.decay = 0.5;
                     e.recoveries -= 1;
                     self.diag.kind(kind).route_recoveries += 1;
+                }
+            }
+            let end_frame = next_start.as_ref().map(|s| s.frame);
+            if self.cfg.sampler_rate {
+                // Improvement: a new state, the first success, frames saved
+                // on its soonest success (1 per second, at most 5), or a
+                // kept end closer (or sooner) than any before (0.5).
+                let p = self.cfg.rate;
+                let e = &mut self.pool.entries[entry];
+                let (mut imp, mut first, mut sooner, mut closer) = (0.0, 0.0, 0.0, 0.0);
+                let novel_i = if novel { 1.0 } else { 0.0 };
+                if let (true, Some(f)) = (seg.success, end_frame) {
+                    if e.best_hit == u32::MAX {
+                        first = 1.0;
+                    } else if f + 10 <= e.best_hit {
+                        sooner = ((e.best_hit - f) as f64 / 30.0).min(5.0);
+                    }
+                    e.best_hit = e.best_hit.min(f);
+                } else if added.is_some() && improves(&self.cfg, end_k, e.best_end) {
+                    closer = 0.5;
+                }
+                if added.is_some() {
+                    e.best_end = (e.best_end.0.min(end_k.0), match (e.best_end.1, end_k.1) {
+                        (Some(a), Some(b)) => Some(a.min(b)),
+                        (a, b) => a.or(b),
+                    });
+                }
+                imp += novel_i + first + sooner + closer;
+                let r = &mut self.pool.rate;
+                r.imp_novel += novel_i;
+                r.imp_first += first;
+                r.imp_sooner += sooner;
+                r.imp_closer += closer;
+                self.pool.rate_note(entry, imp, share as f64, self.total_frames, &p, false);
+            }
+            if self.cfg.chain_route && i > 0 {
+                let rc = &mut self.diag.route_chain;
+                rc.tried += 1;
+                if seg.success {
+                    rc.met += 1;
+                    let route_best = self.route_met.get(&obj.key()).and_then(|hs| hs.iter().map(|&h| self.tree.nodes[h as usize].st.frame).min());
+                    if let (Some(f), Some(r)) = (end_frame, route_best) {
+                        if f < r {
+                            rc.sooner += 1;
+                            rc.frames_saved += (r - f) as u64;
+                        }
+                    }
+                }
+            }
+            // Arrival credit: other objectives this kept segment met on the
+            // way (an attempt chases one objective; what it passes counts).
+            if (self.cfg.chain_route || self.cfg.sampler_rate) && added.is_some() {
+                if let Some(end) = next_start.as_ref() {
+                    let hits = self.arrivals(plan, &seg_start, end);
+                    let f = end.frame;
+                    for j in hits {
+                        let k = self.pool.entries[j].obj.kind();
+                        self.diag.route_chain.arrivals += 1;
+                        *self.diag.route_chain.arrivals_by_kind.entry(k).or_default() += 1;
+                        let e = &mut self.pool.entries[j];
+                        e.successes += 1;
+                        if self.cfg.sampler_rate {
+                            let p = self.cfg.rate;
+                            let imp = if e.best_hit == u32::MAX {
+                                1.0
+                            } else if f + 10 <= e.best_hit {
+                                ((e.best_hit - f) as f64 / 30.0).min(5.0)
+                            } else {
+                                0.0
+                            };
+                            e.best_hit = e.best_hit.min(f);
+                            if imp > 0.0 {
+                                self.pool.rate.imp_first += imp;
+                                self.pool.rate_note(j, imp, 0.0, self.total_frames, &p, false);
+                            }
+                        } else if !self.cfg.entry_bandit && novel {
+                            // Met for the first time from a new state: as a
+                            // stage's novel success would.
+                            e.decay = 1.0;
+                        }
+                    }
                 }
             }
             if i == 0 {
@@ -1524,7 +2108,7 @@ impl Engine {
                 // and with `arrival_decay_either` also closer).
                 let st = &self.tree.nodes[id as usize].st;
                 let cfg = &self.cfg;
-                for e in self.pool.entries.iter_mut().filter(|_| !cfg.entry_bandit) {
+                for e in self.pool.entries.iter_mut().filter(|_| !cfg.entry_bandit && !cfg.sampler_rate) {
                     if e.decay < 1.0 && e.obj.exists_in(st) && e.obj.base_criteria(st) && {
                         let h = e.obj.base_heuristic(st);
                         let f = arrival_est(cfg, e.obj.as_ref(), st, h);
@@ -1548,7 +2132,30 @@ impl Engine {
                 seg_start = st;
             }
         }
-        {
+        if let Some(d) = dense {
+            self.merge_dense(plan, d)?;
+        }
+        if self.cfg.sampler_rate {
+            // Rate sampler: the start's yield per frame (see start_mult);
+            // its back-off only carries emulator traps, cleared by a yield.
+            let (now, tau) = (self.total_frames, self.cfg.rate.tau);
+            let fade = |t: u64| (-(now.saturating_sub(t) as f64) / tau).exp();
+            let g = &mut self.node_rate;
+            let k = fade(g.2);
+            *g = (g.0 * k + chain_added as f64, g.1 * k + att.frames as f64, now);
+            let ns = &mut self.tree.nodes[plan.start as usize].stats;
+            let k = fade(ns.rate_t);
+            ns.rate_y = ns.rate_y * k + chain_added as f64;
+            ns.rate_f = ns.rate_f * k + att.frames as f64;
+            ns.rate_t = now;
+            if chain_added > 0 {
+                ns.added += chain_added;
+                ns.barren = 0;
+                ns.backoff = 1.0;
+            } else {
+                ns.barren += 1;
+            }
+        } else {
             let ns = &mut self.tree.nodes[plan.start as usize].stats;
             if chain_added > 0 {
                 ns.added += chain_added;
@@ -1595,6 +2202,135 @@ impl Engine {
         Ok(())
     }
 
+    /// Dense adds: an attempt's candidates (see dense.rs), in order, each
+    /// added if still new (dense key and cell, against the tree as it is now)
+    /// under the previous kept candidate of its chain (or the start), with
+    /// the inputs of those dropped carried on. Bookkeeping as for a kept
+    /// segment end; yield, decay and kind statistics don't count them.
+    fn merge_dense(&mut self, plan: &Plan, out: Box<crate::dense::Out>) -> Result<()> {
+        let obj = plan.stages[0].1.clone();
+        let via = crate::dense::via(obj.kind());
+        let out = *out;
+        self.dstats.attempts += 1;
+        self.dstats.worker.add(&out.stats);
+        let n = out.cands.iter().map(|c| c.chain as usize + 1).max().unwrap_or(0);
+        let mut last = vec![plan.start; n];
+        let mut carry: Vec<Vec<GamePad>> = vec![Vec::new(); n];
+        let ne = self.cfg.new_eligible && self.dense.is_none_or(|d| d.ne);
+        for c in out.cands {
+            let ci = c.chain as usize;
+            carry[ci].extend(c.inputs);
+            let parent = last[ci];
+            let st = c.st;
+            let cc = cell(&st);
+            let dup = !self.tree.dense_novel(c.key, st.frame)
+                || self.cells.get(&cc).is_some_and(|ids| ids.iter().any(|&i| self.tree.nodes[i as usize].st.frame <= st.frame));
+            if dup {
+                self.dstats.dup += 1;
+                continue;
+            }
+            if c.save.is_none() && !self.tree.can_anchor(parent) {
+                self.dstats.no_anchor += 1;
+                continue;
+            }
+            let zone = st.zone();
+            let delta = match c.save {
+                Some(packed) => {
+                    let base = match self.zone_base.get(&zone) {
+                        Some(&b) => b,
+                        None => {
+                            self.bases.push(packed.apply(&self.bases)?.into_bytes());
+                            let b = (self.bases.len() - 1) as u16;
+                            self.zone_base.insert(zone, b);
+                            b
+                        }
+                    };
+                    if packed.base == base { packed } else { Delta::new(base, &self.bases[base as usize], &packed.apply(&self.bases)?) }
+                }
+                None => Delta::none(),
+            };
+            if self.zones.insert(zone) {
+                println!("new zone {zone:?} via {via} at node {}", self.tree.nodes.len());
+            }
+            let (modal, frame, progress) = (st.modal(), st.frame, st.progress());
+            let (id, adv) = self.tree.add(parent, std::mem::take(&mut carry[ci]), st, delta, via);
+            if self.cfg.chain_route || self.cfg.rrt_star {
+                self.tree.nodes[id as usize].made_by = Some(obj.clone());
+            }
+            if ne {
+                self.ne_note(id, parent);
+            }
+            if self.cfg.earliest {
+                self.ea_note(id);
+            }
+            self.diag.note_best(progress, zone, frame);
+            if modal {
+                self.modal_queue.push(id);
+            }
+            if self.cfg.soft_dedup {
+                let mut crowd = 0;
+                for &o in self.cells.get(&cc).map_or(&[][..], |v| v.as_slice()) {
+                    if self.tree.nodes[o as usize].st.frame <= frame {
+                        crowd += 1;
+                    } else {
+                        self.tree.nodes[o as usize].stats.crowd += 1;
+                    }
+                }
+                self.tree.nodes[id as usize].stats.crowd = crowd;
+            }
+            self.cells.entry(cc).or_default().push(id);
+            if let Some(rr) = self.rr.as_mut() {
+                rr.note(id, &self.tree.nodes[id as usize].st, &cc, &self.tree, &self.hot, self.cfg.reroute_margin, 0);
+            }
+            self.dstats.added += 1;
+            last[ci] = id;
+            if adv {
+                self.dstats.frontier += 1;
+                let (keys, stars) = self.tree.frontier_progress;
+                let f = self.write_m64(id, &format!("frontier-k{keys}-s{stars}"))?;
+                println!("FRONTIER keys {keys} stars {stars} at node {id} via {via}: {f}");
+            }
+        }
+        Ok(())
+    }
+
+    /// Bytes the soft-dedupe memory budget is checked against: saves, and
+    /// with dense adds (OBRRT_DENSE_MEMOBJ, on) the nodes' object lists too.
+    fn mem_used(&self) -> usize {
+        match self.dense {
+            Some(d) if d.mem_objects => self.tree.delta_bytes + self.tree.obj_bytes,
+            _ => self.tree.delta_bytes,
+        }
+    }
+
+    /// OBRRT_SPARSE_CHECK: rebuilds up to `n` live save-less nodes (spread
+    /// over the ids) and compares each with the state recorded when it was
+    /// added. Returns (checked, mismatched).
+    fn check_rebuilds(&mut self, n: usize) -> Result<(usize, usize)> {
+        let ids: Vec<u32> = (1..self.tree.nodes.len() as u32)
+            .filter(|&i| !self.tree.nodes[i as usize].retired && !self.tree.has_save(i) && self.tree.can_anchor(i))
+            .collect();
+        if ids.is_empty() || n == 0 {
+            return Ok((0, 0));
+        }
+        let step = (ids.len() as f64 / n as f64).max(1.0);
+        let pick: Vec<u32> = (0..n.min(ids.len())).map(|k| ids[((k as f64 * step) as usize).min(ids.len() - 1)]).collect();
+        let w = self.workers[0].get_mut().unwrap();
+        let mut bad = 0;
+        for &i in &pick {
+            self.tree.load_into(i, &mut w.base, &self.bases)?;
+            let rec = &self.tree.nodes[i as usize].st;
+            let st = read_state(&w.base, rec.frame, rec.objects.is_some());
+            if !same_state(rec, &st) {
+                bad += 1;
+                if bad <= 5 {
+                    eprintln!("sparse check: node {i} rebuilt differently: pos {:?} vs {:?}, action {:#x} vs {:#x}", rec.pos, st.pos, rec.action, st.action);
+                }
+            }
+        }
+        Ok((pick.len(), bad))
+    }
+
     /// Automatic tuning, tier 1: each kind's multiplier follows its yield
     /// relative to the mean.
     fn tune(&mut self) {
@@ -1610,7 +2346,8 @@ impl Engine {
             multi.new_zones += c.new_zones;
             multi.value += c.value;
         }
-        if let Some(single) = single.filter(|_| multi.attempts >= 20 && self.cfg.chain_fixed.is_none()) {
+        // Route chains learn nothing from how chains fared.
+        if let Some(single) = single.filter(|_| multi.attempts >= 20 && self.cfg.chain_fixed.is_none() && !self.cfg.chain_route) {
             let ratio = (multi.yield_per_kframe() + 0.05) / (single + 0.05);
             self.diag.chain_prob = (0.7 * self.diag.chain_prob + 0.3 * (0.5 * ratio)).clamp(0.1, 0.9);
         }
@@ -1747,7 +2484,108 @@ impl Engine {
             });
         }
         summary["decay_resets"] = serde_json::json!(self.decay_resets);
-        summary["timing"] = serde_json::json!({"plan_secs": self.diag_plan_secs.0, "merge_secs": self.diag_plan_secs.1});
+        if let Some(rr) = &self.rr {
+            summary["reroute"] = rr.summary();
+            let st = &rr.stats;
+            let extra = self.rb.as_ref().map_or(String::new(), |rb| format!("; {}", crate::replay::ReplayBudget::kind_line(&rb.stats.grafts)));
+            println!("   reroute: {} queued ({} waiting), {} tried, {} ok, {} diverged, {} not faster, {} dup, {} died; {} frames replayed, {} saved, depth {}{extra}",
+                st.queued, rr.queue_len(), st.tried, st.ok, st.diverged, st.not_faster, st.duplicate, st.died, st.frames, st.frames_saved, st.max_depth);
+        }
+        if let Some(zs) = &self.zs {
+            summary["zone_share"] = zs.summary();
+            let extra = self.rb.as_ref().map_or(String::new(), |rb| format!("; {}", crate::replay::ReplayBudget::kind_line(&rb.stats.shares)));
+            println!("   {}{extra}", zs.line());
+        }
+        if let Some(rb) = &self.rb {
+            summary["replay_budget"] = rb.summary();
+            println!("   {}", rb.line());
+        }
+        if let Some(sp) = &self.tree.sparse {
+            use std::sync::atomic::Ordering::Relaxed;
+            let n = self.tree.nodes.len();
+            let saved = sp.saved.iter().filter(|&&x| x).count();
+            let (rb, rf) = (sp.rebuilds.load(Relaxed), sp.rebuild_frames.load(Relaxed));
+            println!(
+                "   sparse saves (cap {}): {saved} of {n} nodes hold a save; dropped {} kept {} overshoot {} held {} max dist {}; {rb} rebuilds, {rf} frames; mem {} MB ({} B/node; saves {} MB, objects {} MB)",
+                sp.cap, sp.dropped, sp.kept, sp.overshoot, sp.held, sp.max_dist,
+                self.tree.mem_bytes() / 1_000_000, self.tree.mem_bytes() / n.max(1), self.tree.delta_bytes / 1_000_000, self.tree.obj_bytes / 1_000_000
+            );
+            summary["sparse"] = serde_json::json!({
+                "cap": sp.cap, "nodes": n, "saved": saved, "dropped": sp.dropped, "kept": sp.kept, "overshoot": sp.overshoot,
+                "held": sp.held, "max_dist": sp.max_dist, "rebuilds": rb, "rebuild_frames": rf,
+                "mem_bytes": self.tree.mem_bytes(), "delta_bytes": self.tree.delta_bytes, "obj_bytes": self.tree.obj_bytes,
+            });
+        }
+        if self.dense.is_some() {
+            let d = &self.dstats;
+            println!(
+                "   dense adds: {} attempts, {} added ({} frontier), {} dup at merge, {} no anchor, {} pruned; worker seen {} novel {} beaten {} capped {} returned {} saves {} replay {} frames; keys {}",
+                d.attempts, d.added, d.frontier, d.dup, d.no_anchor, d.pruned, d.worker.seen, d.worker.novel, d.worker.beaten, d.worker.capped, d.worker.returned, d.worker.saves, d.worker.replay_frames, self.tree.dkeys.len()
+            );
+            summary["dense"] = serde_json::json!(d);
+            summary["dense"]["keys"] = serde_json::json!(self.tree.dkeys.len());
+        }
+        if let Some(sp) = self.spick.as_mut() {
+            summary["pick"] = sp.summary();
+            println!("   {}", sp.line());
+        }
+        if self.near.on.is_some() {
+            let s = &self.near.stats;
+            println!("   near seed: recorded {} asked {} no record {} skipped {} seeded {} (from successes {}) seed met {} successes {}", s.recorded, s.asked, s.no_record, s.skipped_p, s.seeded, s.seeded_success, s.seed_met, s.successes);
+            summary["near_seed"] = serde_json::json!(s);
+        }
+        if let Some(l) = self.tree.kin_line() {
+            println!("   {l}");
+        }
+        summary["timing"] =serde_json::json!({"plan_secs": self.diag_plan_secs.0, "merge_secs": self.diag_plan_secs.1});
+        {
+            let d = &self.diag_secs;
+            for (k, v) in ["pre_secs", "run_secs", "post_secs", "write_secs", "worker_load_secs", "worker_attempt_secs"].iter().zip(d) {
+                summary["timing"][*k] = serde_json::json!(v);
+            }
+            println!("   timing: pre {:.1}s plan {:.1}s run {:.1}s merge {:.1}s post {:.1}s write {:.1}s; workers load {:.1}s attempt {:.1}s",
+                d[0], self.diag_plan_secs.0, d[1], self.diag_plan_secs.1, d[2], d[3], d[4], d[5]);
+        }
+        if crate::movegenome::enabled() {
+            println!("   {}", crate::movegenome::stats_line());
+        }
+        let d = crate::diag::door_overshoots();
+        if d.attempts > 0 {
+            println!("   door attempts {} met {} overshoots {} (of met {})", d.attempts, d.met, d.overshoots, d.overshoots_met);
+        }
+        if self.cfg.chain_route || self.cfg.sampler_rate {
+            println!("   {}", self.diag.route_chain.line());
+            summary["chain_route"] = serde_json::json!(&self.diag.route_chain);
+        }
+        if self.cfg.sampler_rate {
+            let r = &self.pool.rate;
+            // Start multipliers over live, non-modal states.
+            let mut m: Vec<f64> = self.tree.nodes.iter().filter(|n| !n.retired && !n.st.modal()).map(|n| self.start_mult(&n.stats)).collect();
+            m.sort_by(f64::total_cmp);
+            let q = |f: f64| if m.is_empty() { 0.0 } else { m[((m.len() - 1) as f64 * f).round() as usize] };
+            let floor = self.cfg.rate.floor;
+            let node_floor = m.iter().filter(|&&x| x <= floor + 1e-12).count();
+            println!(
+                "   rate sampler: entries {} weight min {:.2} p25 {:.2} median {:.2} p75 {:.2} max {:.2}, at floor {} at cap {}; r0 {:.2}/Mframe median {:.2}/Mframe; imp novel {:.0} first {:.0} sooner {:.1} closer {:.1}; no-start charges {}; starts {} mult min {:.2} median {:.2} max {:.2}, at floor {}",
+                r.entries, r.min, r.p25, r.p50, r.p75, r.max, r.at_floor, r.at_cap, r.r0 * 1e6, r.median * 1e6,
+                r.imp_novel, r.imp_first, r.imp_sooner, r.imp_closer, r.nostart_charges, m.len(), q(0.0), q(0.5), q(1.0), node_floor
+            );
+            println!(
+                "   rate sampler: weight p10 {:.2} p90 {:.2}; kinds {} rate/median min {:.2} median {:.2} max {:.2}; picks {:.1}s started {:.1}s no start (sampling {:.1}s), plans none {}; skip: no-start global {} kin {}, skipped {} released {} recheck {:.1}s",
+                r.p10, r.p90, r.kinds, r.kind_min, r.kind_p50, r.kind_max, r.pick_secs, r.nostart_secs, r.sample_secs, r.plans_none,
+                r.nostart_global, r.nostart_kin, r.skipped, r.released, r.recheck_secs
+            );
+            summary["rate"] = serde_json::json!({
+                "entries": r, "starts": {"n": m.len(), "min": q(0.0), "p25": q(0.25), "median": q(0.5), "p75": q(0.75), "max": q(1.0), "at_floor": node_floor},
+            });
+            if self.cfg.rate.hier {
+                // Each kind's rate over the median entry's, and its frames.
+                let med = r.median.max(1e-12);
+                let kinds: serde_json::Map<String, serde_json::Value> =
+                    self.pool.kind_rate.iter().map(|(k, v)| (k.to_string(), serde_json::json!({"rel": v.r / med, "frames": v.f, "imp": v.i}))).collect();
+                summary["rate"]["kinds"] = serde_json::Value::Object(kinds);
+            }
+        }
         if self.cfg.new_eligible {
             summary["new_eligible"] = serde_json::json!({
                 "queued": self.ne.queued, "dropped": self.ne.dropped, "stale": self.ne.stale, "used": self.ne.used,
@@ -1771,6 +2609,10 @@ impl Engine {
                 .collect();
             summary["kind_bandit"] = serde_json::json!(kb);
         }
+        if crate::movegenome::enabled() {
+            summary["move_ga"] = crate::movegenome::stats_json();
+        }
+        summary["door_overshoot"] = serde_json::json!(crate::diag::door_overshoots());
         fs::write(format!("{}/summary.json", self.cfg.out_dir), serde_json::to_string_pretty(&summary)?)?;
         self.diag.window_starts.clear();
         Ok(())
@@ -1858,16 +2700,25 @@ impl Engine {
                 })
             };
             let worker = self.workers[0].get_mut().unwrap();
-            let mut replay = |save: &Delta, bases: &[Vec<u8>]| -> Result<(St, SaveState)> {
-                worker.base.load_state(&save.apply(bases)?)?;
+            let tree = &self.tree;
+            // From the parent (`Tree::load_into`: its save, or with sparse
+            // saves its anchor's and the inputs), or from the root's save.
+            let mut replay = |from: Option<u32>, bases: &[Vec<u8>]| -> Result<(St, SaveState)> {
+                match from {
+                    Some(p) => {
+                        tree.load_into(p, &mut worker.base, bases)?;
+                    }
+                    None => worker.base.load_state(&Delta::default().apply(bases)?)?,
+                }
                 for p in &inputs {
                     worker.base.step_game(*p)?;
                 }
                 Ok((read_state(&worker.base, frame, true), worker.base.save_state()))
             };
-            let (mut st, mut save) = replay(&pnode.save, &self.bases)?;
+            let _ = pnode;
+            let (mut st, mut save) = if tree.sparse.is_some() && !tree.can_anchor(parent) { replay(None, &self.bases)? } else { replay(Some(parent), &self.bases)? };
             if !matches(&st) && parent != 0 {
-                let (st0, save0) = replay(&Delta::default(), &self.bases)?;
+                let (st0, save0) = replay(None, &self.bases)?;
                 if matches(&st0) {
                     (st, save) = (st0, save0);
                     via_root += 1;
@@ -1944,19 +2795,341 @@ impl Engine {
             .iter()
             .enumerate()
             .filter(|(i, n)| *i > 0 && !n.retired && n.stats.crowd > 0 && !self.hot.contains(&(*i as u32)))
-            .map(|(i, n)| (n.stats.backoff * 0.5f64.powi(n.stats.crowd as i32), i as u32))
+            .map(|(i, n)| (self.start_mult(&n.stats) * 0.5f64.powi(n.stats.crowd as i32), i as u32))
             .collect();
         cands.sort_by(|a, b| a.0.total_cmp(&b.0));
         let target = self.cfg.mem_budget / 10 * 9;
         let mut freed = 0;
         for (_, i) in cands {
-            if self.tree.delta_bytes <= target {
+            if self.mem_used() <= target {
                 break;
             }
             self.tree.retire_one(i);
             freed += 1;
         }
-        println!("soft dedupe: retired {freed} repeated states; saves now {} MB", self.tree.delta_bytes / 1_000_000);
+        // Dense adds: still over, dense nodes go too (never a start first,
+        // then the lowest start weight, the latest first among equals), not
+        // on the best routes or kept for work under way. Their object lists
+        // are most of the memory (about 10 KB a node).
+        if self.dense.is_some() && self.mem_used() > target {
+            let mut cands: Vec<(bool, f64, std::cmp::Reverse<u32>)> = self
+                .tree
+                .nodes
+                .iter()
+                .enumerate()
+                .filter(|(i, n)| *i > 0 && !n.retired && n.via.ends_with("~d") && !self.hot.contains(&(*i as u32)) && !self.tree.is_wip(*i as u32))
+                .map(|(i, n)| (n.stats.as_start > 0, self.start_mult(&n.stats) * 0.5f64.powi(n.stats.crowd as i32), std::cmp::Reverse(i as u32)))
+                .collect();
+            cands.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.total_cmp(&b.1)).then(a.2.cmp(&b.2)));
+            let mut dense = 0;
+            for (_, _, std::cmp::Reverse(i)) in cands {
+                if self.mem_used() <= target {
+                    break;
+                }
+                self.tree.retire_one(i);
+                dense += 1;
+            }
+            freed += dense;
+            self.dstats.pruned += dense as u64;
+        }
+        println!("soft dedupe: retired {freed} repeated states; saves now {} MB", self.mem_used() / 1_000_000);
+    }
+
+    /// Replays each graft's child inputs from its faster start in parallel, then
+    /// merges the results in order (see `reroute`).
+    /// Replay jobs, in parallel, then merged in order: reroute grafts first
+    /// (see `reroute`), then zone-share jobs (see `share`).
+    /// `checked`: the jobs' starts were checked loadable when taken (replay
+    /// budget), so a retired one is rebuilt from its anchor, not skipped.
+    fn run_replays(&mut self, grafts: &[crate::reroute::Graft], shares: &[crate::share::ShareJob], checked: bool) -> Result<()> {
+        // A share job's start may have been retired by this round's merges.
+        let mut share_jobs: Vec<(crate::share::ShareJob, Vec<u32>)> = Vec::new();
+        if let Some(zs) = self.zs.as_mut() {
+            for j in shares {
+                if !checked && j.from != 0 && self.tree.nodes[j.from as usize].retired {
+                    zs.stats.stale += 1;
+                    continue;
+                }
+                share_jobs.push((*j, zs.path(&self.tree, j.donor)));
+            }
+        }
+        // So may a graft's faster start: its save is then freed (the
+        // default delta, the root's state), so it is skipped as stale.
+        let grafts: Vec<crate::reroute::Graft> = match self.rr.as_mut() {
+            Some(rr) => grafts
+                .iter()
+                .copied()
+                .filter(|g| {
+                    let ok = checked || g.from == 0 || !self.tree.nodes[g.from as usize].retired;
+                    rr.stats.stale += !ok as u64;
+                    ok
+                })
+                .collect(),
+            None => grafts.to_vec(),
+        };
+        let grafts = grafts.as_slice();
+        let jobs: Vec<(u32, &[u32], bool)> = (grafts.iter().map(|g| (g.from, std::slice::from_ref(&g.child), false)))
+            .chain(share_jobs.iter().map(|(j, p)| (j.from, p.as_slice(), true)))
+            .collect();
+        let (tree, bases, workers) = (&self.tree, &self.bases, &self.workers);
+        let mut outs: Vec<Result<Replayed>> = jobs
+            .par_iter()
+            .map(|&(from, edges, stay)| {
+                let mut w = loop {
+                    if let Some(w) = workers.iter().find_map(|w| w.try_lock().ok()) {
+                        break w;
+                    }
+                    std::thread::yield_now();
+                };
+                replay_edges(&mut w.base, tree, bases, from, edges, stay)
+            })
+            .collect();
+        let share_outs = outs.split_off(grafts.len());
+        for (g, r) in grafts.iter().zip(outs) {
+            let r = r.map(|mut r| if r.end == ReplayEnd::Died { None } else { r.states.pop() });
+            self.merge_graft(*g, r)?;
+        }
+        for ((j, path), r) in share_jobs.into_iter().zip(share_outs) {
+            self.merge_share(j, &path, r)?;
+        }
+        Ok(())
+    }
+
+    /// Adds a zone-share job's boundary states as a chain under its start:
+    /// each that has no earlier state at its place (the duplicate check, in
+    /// both dedupe modes) is added as merge adds a kept state, its parent the
+    /// previous one added; one that does is skipped and its inputs carried
+    /// on to the next added state (as merge carries a segment's).
+    fn merge_share(&mut self, j: crate::share::ShareJob, path: &[u32], r: Result<Replayed>) -> Result<()> {
+        let zs = self.zs.as_mut().expect("share jobs only with zone share on");
+        zs.stats.run += 1;
+        let r = match r {
+            Ok(r) => r,
+            Err(_) => {
+                zs.stats.traps += 1;
+                // Charged as if replayed whole: the trap's frame is unknown.
+                let n: u64 = path.iter().map(|&e| self.tree.nodes[e as usize].inputs.len() as u64).sum();
+                zs.stats.frames += n;
+                self.total_frames += n;
+                return Ok(());
+            }
+        };
+        zs.stats.frames += r.frames;
+        zs.stats.boundaries += r.states.len() as u64;
+        match r.end {
+            ReplayEnd::Died => zs.stats.died += 1,
+            ReplayEnd::LeftZone => zs.stats.left_zone += 1,
+            ReplayEnd::Done => {}
+        }
+        self.total_frames += r.frames;
+        let mut parent = j.from;
+        let mut carry: Vec<GamePad> = Vec::new();
+        let mut chain = 0u64;
+        for (k, (st, packed)) in r.states.into_iter().enumerate() {
+            let e = path[k];
+            let (via, donor_cell, donor_frame) = {
+                let n = &self.tree.nodes[e as usize];
+                carry.extend_from_slice(&n.inputs);
+                (n.via, cell(&n.st), n.st.frame)
+            };
+            let c = cell(&st);
+            let earlier = self.cells.get(&c);
+            if earlier.is_some_and(|ids| ids.iter().any(|&i| self.tree.nodes[i as usize].st.frame <= st.frame)) {
+                self.zs.as_mut().unwrap().stats.duplicate += 1;
+                continue;
+            }
+            let sooner = earlier.is_some_and(|ids| !ids.is_empty());
+            let zone = st.zone();
+            let base = match self.zone_base.get(&zone) {
+                Some(&b) => b,
+                None => {
+                    self.bases.push(packed.apply(&self.bases)?.into_bytes());
+                    let b = (self.bases.len() - 1) as u16;
+                    self.zone_base.insert(zone, b);
+                    b
+                }
+            };
+            let delta = if packed.base == base { packed } else { Delta::new(base, &self.bases[base as usize], &packed.apply(&self.bases)?) };
+            let new_zone = self.zones.insert(zone);
+            if new_zone {
+                self.diag.kind(via).new_zones += 1;
+                println!("new zone {zone:?} via zone share of {via} at node {}", self.tree.nodes.len());
+            }
+            let (modal, frame, progress) = (st.modal(), st.frame, st.progress());
+            let (id, adv) = self.tree.add(parent, std::mem::take(&mut carry), st, delta, via);
+            if self.cfg.new_eligible {
+                self.ne_note(id, parent);
+            }
+            if self.cfg.earliest {
+                self.ea_note(id);
+            }
+            self.diag.note_best(progress, zone, frame);
+            if modal {
+                self.modal_queue.push(id);
+            }
+            if self.cfg.soft_dedup {
+                let mut crowd = 0;
+                for &o in self.cells.get(&c).map_or(&[][..], |v| v.as_slice()) {
+                    if self.tree.nodes[o as usize].st.frame <= frame {
+                        crowd += 1;
+                    } else {
+                        self.tree.nodes[o as usize].stats.crowd += 1;
+                    }
+                }
+                self.tree.nodes[id as usize].stats.crowd = crowd;
+            }
+            self.cells.entry(c).or_default().push(id);
+            if let Some(rr) = self.rr.as_mut() {
+                rr.note(id, &self.tree.nodes[id as usize].st, &c, &self.tree, &self.hot, self.cfg.reroute_margin, 0);
+            }
+            let zs = self.zs.as_mut().unwrap();
+            zs.stats.added += 1;
+            zs.stats.sooner += sooner as u64;
+            zs.stats.new_zones += new_zone as u64;
+            if c == donor_cell && frame < donor_frame {
+                zs.stats.matched_sooner += 1;
+                zs.stats.matched_frames_saved += (donor_frame - frame) as u64;
+            }
+            zs.note_added(id);
+            // OBRRT_KIN_UNIT=attempt: the chain is one generation (its
+            // last node, set below).
+            self.tree.gen_step[id as usize] = false;
+            chain += 1;
+            parent = id;
+            if adv {
+                let (keys, stars) = self.tree.frontier_progress;
+                let f = self.write_m64(id, &format!("frontier-k{keys}-s{stars}"))?;
+                println!("FRONTIER keys {keys} stars {stars} at node {id} via zone share of {via}: {f}");
+            }
+        }
+        if chain > 0 {
+            self.tree.gen_step[parent as usize] = true;
+        }
+        let zs = self.zs.as_mut().unwrap();
+        if chain > 0 {
+            zs.stats.jobs_ok += 1;
+            zs.stats.max_chain = zs.stats.max_chain.max(chain);
+        }
+        Ok(())
+    }
+
+    /// Keeps a graft's end if it is the same as the child (same key) and at
+    /// least the margin sooner, as a node under the faster start; its own
+    /// children then follow (`Reroute::note`).
+    fn merge_graft(&mut self, g: crate::reroute::Graft, r: Result<Option<(St, Delta)>>) -> Result<()> {
+        let child = &self.tree.nodes[g.child as usize];
+        let (n, child_frame, kind) = (child.inputs.len() as u64, child.st.frame, child.via);
+        let inputs = child.inputs.clone();
+        self.total_frames += n;
+        let rr = self.rr.as_mut().expect("grafts only with reroute on");
+        rr.stats.tried += 1;
+        rr.stats.frames += n;
+        let (st, packed) = match r {
+            Ok(Some(x)) => x,
+            Ok(None) => {
+                rr.stats.died += 1;
+                return Ok(());
+            }
+            Err(_) => {
+                rr.stats.traps += 1;
+                return Ok(());
+            }
+        };
+        let c = cell(&st);
+        if !rr.accept(g, &st, &c, &self.tree, self.cfg.reroute_margin) {
+            return Ok(());
+        }
+        let dup = self.cells.get(&c).is_some_and(|ids| ids.iter().any(|&i| self.tree.nodes[i as usize].st.frame <= st.frame));
+        if dup && !self.cfg.soft_dedup {
+            rr.stats.duplicate += 1;
+            return Ok(());
+        }
+        // Added as merge adds a kept state.
+        let zone = st.zone();
+        let base = match self.zone_base.get(&zone) {
+            Some(&b) => b,
+            None => {
+                self.bases.push(packed.apply(&self.bases)?.into_bytes());
+                let b = (self.bases.len() - 1) as u16;
+                self.zone_base.insert(zone, b);
+                b
+            }
+        };
+        let delta = if packed.base == base { packed } else { Delta::new(base, &self.bases[base as usize], &packed.apply(&self.bases)?) };
+        if self.zones.insert(zone) {
+            self.diag.kind(kind).new_zones += 1;
+            println!("new zone {zone:?} via reroute of {kind} at node {}", self.tree.nodes.len());
+        }
+        let (modal, frame, progress) = (st.modal(), st.frame, st.progress());
+        let (id, _adv) = self.tree.add(g.from, inputs, st, delta, kind);
+        // OBRRT_KIN_UNIT=attempt: a graft is the generation its child was.
+        self.tree.gen_step[id as usize] = self.tree.gen_step[g.child as usize];
+        if self.cfg.chain_route {
+            // The same inputs from a faster start: the same objective.
+            let (m, met) = (self.tree.nodes[g.child as usize].made_by.clone(), self.tree.nodes[g.child as usize].met);
+            let n = &mut self.tree.nodes[id as usize];
+            n.made_by = m;
+            n.met = met;
+        }
+        if self.cfg.new_eligible {
+            self.ne_note(id, g.from);
+        }
+        if self.cfg.earliest {
+            self.ea_note(id);
+        }
+        self.diag.note_best(progress, zone, frame);
+        if modal {
+            self.modal_queue.push(id);
+        }
+        if self.cfg.soft_dedup {
+            let mut crowd = 0;
+            for &o in self.cells.get(&c).map_or(&[][..], |v| v.as_slice()) {
+                if self.tree.nodes[o as usize].st.frame <= frame {
+                    crowd += 1;
+                } else {
+                    self.tree.nodes[o as usize].stats.crowd += 1;
+                }
+            }
+            self.tree.nodes[id as usize].stats.crowd = crowd;
+        }
+        self.cells.entry(c).or_default().push(id);
+        let rr = self.rr.as_mut().unwrap();
+        rr.stats.ok += 1;
+        rr.stats.frames_saved += child_frame.saturating_sub(frame) as u64;
+        rr.stats.max_depth = rr.stats.max_depth.max(g.depth + 1);
+        rr.note(id, &self.tree.nodes[id as usize].st, &c, &self.tree, &self.hot, self.cfg.reroute_margin, g.depth + 1);
+        Ok(())
+    }
+
+    /// Replay budget: after the round's plans (frames since `round_t0`, plus
+    /// their start rebuilds), replay jobs in waves until their frames reach
+    /// the budget's fraction of the plans' (see `replay`).
+    fn budget_replays(&mut self, round: u64, round_t0: u64) -> Result<()> {
+        let rebuilt = |t: &Tree| t.sparse.as_ref().map_or(0, |sp| sp.rebuild_frames.load(std::sync::atomic::Ordering::Relaxed));
+        let r0 = rebuilt(&self.tree);
+        let plan_frames = self.total_frames - round_t0 + (r0 - self.rebuild_counted);
+        if let Some(zs) = self.zs.as_mut() {
+            zs.round(&self.tree, &self.hot);
+        }
+        let budget = (plan_frames as f64 * self.rb.as_ref().unwrap().fraction) as u64;
+        let t0 = self.total_frames;
+        let mut spent = 0u64;
+        let (mut waves, mut ng, mut ns) = (0u32, 0u32, 0u32);
+        while spent < budget && (waves as usize) < crate::replay::MAX_WAVES {
+            let rb = self.rb.as_mut().unwrap();
+            let (grafts, shares) = rb.select(self.rr.as_mut(), self.zs.as_mut(), &self.tree, &self.hot, budget - spent);
+            if grafts.is_empty() && shares.is_empty() {
+                break;
+            }
+            waves += 1;
+            ng += grafts.len() as u32;
+            ns += shares.len() as u32;
+            self.run_replays(&grafts, &shares, true)?;
+            spent = self.total_frames - t0 + (rebuilt(&self.tree) - r0);
+        }
+        let queue = self.rr.as_ref().map_or(0, |r| r.queue_len()) + self.zs.as_ref().map_or(0, |z| z.queue_len());
+        self.rb.as_mut().unwrap().end_round(round, plan_frames, spent, waves, ng, ns, queue as u64);
+        Ok(())
     }
 
     pub fn run(&mut self) -> Result<()> {
@@ -1970,7 +3143,14 @@ impl Engine {
             && self.cfg.max_frames.is_none_or(|m| self.total_frames < m)
         {
             round += 1;
-            if self.cfg.entry_bandit {
+            let pre_t = Instant::now();
+            if self.cfg.sampler_rate {
+                let p = self.cfg.rate;
+                if p.nostart_skip {
+                    self.nostart_recheck();
+                }
+                self.pool.rate_refresh(self.total_frames, &p);
+            } else if self.cfg.entry_bandit {
                 self.pool.redraw(&mut self.rng);
             }
             self.tree.wip_refresh();
@@ -1980,6 +3160,7 @@ impl Engine {
                 self.ea.budget = ((self.cfg.round_plans as f64 * self.cfg.earliest_share).ceil() as usize).max(1);
                 self.ea.round_used.clear();
             }
+            self.diag_secs[0] += pre_t.elapsed().as_secs_f64();
             let plan_t = Instant::now();
             // More attempts than workers, so a slow attempt doesn't leave the
             // others idle: each takes whichever game is free.
@@ -1987,9 +3168,52 @@ impl Engine {
             // count: the tree only updates between rounds, so the round size
             // shapes the search (how stale planning is); 64 = 16 threads × 4.
             self.bc.begin_round(self.cfg.round_plans);
-            let plans: Vec<Plan> = (0..self.cfg.round_plans).filter_map(|_| self.plan().inspect(|_| self.bc.made += 1)).collect();
+            obrrt_core::mover::publish(); // movers see caches observed before this round only
+            // Grafts take up to reroute_share of the round's slots (none when off).
+            let grafts = match self.rr.as_mut() {
+                Some(rr) => {
+                    // Key the nodes made before the engine ran (the root, a resumed tree).
+                    for id in rr.keys.len()..self.tree.nodes.len() {
+                        let st = &self.tree.nodes[id].st;
+                        rr.note(id as u32, st, &cell(st), &self.tree, &self.hot, self.cfg.reroute_margin, 0);
+                    }
+                    if self.rb.is_some() {
+                        Vec::new()
+                    } else {
+                        rr.take((self.cfg.round_plans as f64 * self.cfg.reroute_share).ceil() as usize)
+                    }
+                }
+                None => Vec::new(),
+            };
+            // Zone-share jobs take up to zone_share_share of them (none when off).
+            let shares = match self.zs.as_mut() {
+                // Replay budget: jobs are noted and taken after the plans.
+                Some(_) if self.rb.is_some() => Vec::new(),
+                Some(zs) => {
+                    zs.round(&self.tree, &self.hot);
+                    let n = (self.cfg.round_plans as f64 * self.cfg.zone_share_share).ceil() as usize;
+                    zs.take(n.min(self.cfg.round_plans.saturating_sub(grafts.len())))
+                }
+                None => Vec::new(),
+            };
+            // sample_entry's tables get this round's weights (kept between
+            // rounds only for their kinds and members).
+            if let Some(idx) = self.pool.sidx.as_mut() {
+                idx.reweigh(&self.pool.entries);
+            }
+            let mut plans: Vec<Plan> =
+                (0..self.cfg.round_plans - grafts.len() - shares.len()).filter_map(|_| self.plan().inspect(|_| self.bc.made += 1)).collect();
+            if self.near.on.is_some() {
+                for (i, p) in plans.iter_mut().enumerate() {
+                    let o = &p.stages[0].1;
+                    if self.bc.is_pending(i) || p.rewire.is_some() || o.modal() || !matches!(o.budget(), Budget::Ga { .. }) {
+                        continue;
+                    }
+                    p.seed = self.near.pick(&self.tree, &o.key(), p.start);
+                }
+            }
             self.diag_plan_secs.0 += plan_t.elapsed().as_secs_f64();
-            if plans.is_empty() {
+            if plans.is_empty() && grafts.is_empty() && shares.is_empty() {
                 continue;
             }
             let bases = &self.bases;
@@ -1998,6 +3222,11 @@ impl Engine {
             let workers = &self.workers;
             let bc = &self.bc;
             let params = crate::ga::GaParams { scale: self.cfg.ga_scale, fitness: self.cfg.fitness, new_ops: self.cfg.ga_new_ops, pink: self.cfg.ga_pink, per_objective_budget: self.cfg.ga_per_objective_budget };
+            let dense = self.dense;
+            let replay_max = self.tree.sparse.as_ref().map_or(0, |sp| sp.cap);
+            let round_t0 = self.total_frames;
+            let run_t = Instant::now();
+            let (load_ns, att_ns) = (std::sync::atomic::AtomicU64::new(0), std::sync::atomic::AtomicU64::new(0));
             let results: Vec<Result<Attempt<Delta>>> = plans
                 .par_iter()
                 .zip(seeds.par_iter())
@@ -2010,13 +3239,29 @@ impl Engine {
                         std::thread::yield_now();
                     };
                     let node = &tree.nodes[plan.start as usize];
-                    let save = node.save.apply(bases)?;
+                    // The start's state into the worker's base game: its save,
+                    // or (sparse saves) its anchor's and the inputs since.
+                    let lt = Instant::now();
+                    tree.load_into(plan.start, &mut w.base, bases)?;
+                    load_ns.fetch_add(lt.elapsed().as_nanos() as u64, std::sync::atomic::Ordering::Relaxed);
                     let mut rng = SmallRng::seed_from_u64(*seed);
                     let stages: Vec<&dyn Objective> = plan.stages.iter().map(|(_, o)| o.as_ref()).collect();
-                    let packed = w.attempt_seeded(&stages, &node.st, &save, &mut rng, params, bc.seed(i)).map(|a| {
-                        let base = node.save.base;
-                        a.map_saves(|s| Delta::new(base, &bases[base as usize], &s))
+                    let base = tree.base_of(plan.start);
+                    let pack = |s: &SaveState| Delta::new(base, &bases[base as usize], s);
+                    let novel = |k: u64, f: u32| tree.dense_novel(k, f);
+                    let req = dense.map(|d| crate::ga::DenseReq {
+                        modes: d.modes,
+                        grid: d.grid,
+                        cap: d.cap,
+                        novel: &novel,
+                        replay_max,
+                        start_dist: tree.dist(plan.start),
+                        pack: &pack,
                     });
+                    let seed_in = bc.seed(i).or(plan.seed.as_deref());
+                    let at = Instant::now();
+                    let packed = w.attempt_full(&stages, &node.st, None, &mut rng, params, seed_in, req.as_ref()).map(|a| a.map_saves(|s| pack(&s)));
+                    att_ns.fetch_add(at.elapsed().as_nanos() as u64, std::sync::atomic::Ordering::Relaxed);
                     anyhow::Context::with_context(packed, || {
                         format!(
                             "attempt from node {} (via {}, retired {}, frame {}, zone {:?}, base {}) for {}",
@@ -2025,15 +3270,24 @@ impl Engine {
                             node.retired,
                             node.st.frame,
                             node.st.zone(),
-                            node.save.base,
+                            tree.base_of(plan.start),
                             plan.stages.iter().map(|(_, o)| o.key()).collect::<Vec<_>>().join(" then ")
                         )
                     })
                 })
                 .collect();
+            self.diag_secs[1] += run_t.elapsed().as_secs_f64();
+            self.diag_secs[4] += load_ns.into_inner() as f64 * 1e-9;
+            self.diag_secs[5] += att_ns.into_inner() as f64 * 1e-9;
             let merge_t = Instant::now();
             for (i, (plan, r)) in plans.iter().zip(results).enumerate() {
                 let bc = self.bc.is_pending(i).then(|| (self.tree.nodes.len(), r.as_ref().ok().map(crate::backchain::outcome)));
+                if plan.seed.is_some() {
+                    if let Ok(att) = r.as_ref() {
+                        self.near.stats.seed_met += att.ga.and_then(|g| g.seed).is_some_and(|s| s.0) as u64;
+                        self.near.stats.successes += att.segments.first().is_some_and(|s| s.success) as u64;
+                    }
+                }
                 match r {
                     Ok(att) => self.merge(plan, att)?,
                     // The emulated game itself can trap (an out-of-bounds
@@ -2052,7 +3306,10 @@ impl Engine {
                             self.tree.retire_one(plan.start);
                         }
                         for (entry, obj) in &plan.stages {
-                            if let Some(e) = self.pool.entries.get_mut(*entry) {
+                            if self.cfg.sampler_rate && *entry < self.pool.entries.len() {
+                                let p = self.cfg.rate;
+                                self.pool.rate_note(*entry, 0.0, p.nostart_frames, self.total_frames, &p, true);
+                            } else if let Some(e) = self.pool.entries.get_mut(*entry) {
                                 if self.cfg.entry_bandit {
                                     e.observe(false, self.cfg.bandit_gamma);
                                 } else {
@@ -2071,7 +3328,27 @@ impl Engine {
                 }
             }
             self.diag_plan_secs.1 += merge_t.elapsed().as_secs_f64();
-            if self.cfg.soft_dedup && self.tree.delta_bytes > self.cfg.mem_budget {
+            let post_t = Instant::now();
+            if !grafts.is_empty() || !shares.is_empty() {
+                self.run_replays(&grafts, &shares, false)?;
+            }
+            if self.rb.is_some() {
+                self.budget_replays(round, round_t0)?;
+            }
+            // Sparse saves: frames replayed to rebuild starts count as
+            // emulated frames.
+            if let Some(sp) = &self.tree.sparse {
+                let f = sp.rebuild_frames.load(std::sync::atomic::Ordering::Relaxed);
+                self.total_frames += f - self.rebuild_counted;
+                self.rebuild_counted = f;
+            }
+            if self.dense.is_some() {
+                let mark = (self.dstats.curve.len() as u64 + 1) * 10_000_000;
+                if self.total_frames >= mark {
+                    self.dstats.curve.push((self.total_frames, self.tree.nodes.len(), self.dstats.added));
+                }
+            }
+            if self.cfg.soft_dedup && self.mem_used() > self.cfg.mem_budget {
                 self.prune_repeats();
             }
             if self.cfg.new_eligible && round % 10 == 0 {
@@ -2087,12 +3364,46 @@ impl Engine {
                 last_tune = self.total_frames;
                 self.tune();
             }
+            self.diag_secs[2] += post_t.elapsed().as_secs_f64();
             if last_report.elapsed() > self.cfg.report_every {
                 last_report = Instant::now();
                 self.write_outputs(begin.elapsed().as_secs_f64())?;
+                self.diag_secs[3] += last_report.elapsed().as_secs_f64();
             }
+        }
+        if self.cfg.rebuild_check > 0 && self.tree.sparse.is_some() {
+            let (n, bad) = self.check_rebuilds(self.cfg.rebuild_check)?;
+            println!("sparse check: rebuilt {n} save-less nodes, {bad} differ from their recorded state");
         }
         self.write_outputs(begin.elapsed().as_secs_f64())?;
         Ok(())
     }
+}
+
+/// Whether a rebuilt state is the recorded one (sparse-save check): Mario's
+/// fields bit for bit, and each object's identity, position and action.
+fn same_state(a: &St, b: &St) -> bool {
+    let f = |x: &[f32], y: &[f32]| x.iter().zip(y).all(|(p, q)| p.to_bits() == q.to_bits());
+    let objs = match (&a.objects, &b.objects) {
+        (Some(x), Some(y)) => {
+            x.len() == y.len()
+                && x.iter().zip(y.iter()).all(|(o, p)| o.slot == p.slot && o.bhv == p.bhv && f(&o.pos, &p.pos) && o.action == p.action && o.health == p.health)
+        }
+        (None, None) => true,
+        _ => false,
+    };
+    a.frame == b.frame
+        && f(&a.pos, &b.pos)
+        && f(&a.vel, &b.vel)
+        && a.forward_vel.to_bits() == b.forward_vel.to_bits()
+        && a.yaw == b.yaw
+        && a.action == b.action
+        && a.action_timer == b.action_timer
+        && a.health == b.health
+        && a.coins == b.coins
+        && a.stars == b.stars
+        && a.cam_yaw == b.cam_yaw
+        && a.level == b.level
+        && a.area == b.area
+        && objs
 }

@@ -123,6 +123,10 @@ impl PosTime {
 }
 
 impl Objective for PosTime {
+    /// Dense adds (`OBRRT_DENSE_EVERY=obj`): exploration: a state every 30 frames, none mid-arc.
+    fn dense_keep(&self) -> obrrt_core::DenseKeep {
+        obrrt_core::DenseKeep::Every { n: 30, air: false }
+    }
     fn kind(&self) -> &'static str {
         "Mario::PosTime"
     }

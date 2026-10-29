@@ -44,6 +44,10 @@ impl Press {
 }
 
 impl Objective for Press {
+    /// Dense adds (`OBRRT_DENSE_EVERY=obj`): collecting and fighting: a state every 15 frames, none mid-arc.
+    fn dense_keep(&self) -> obrrt_core::DenseKeep {
+        obrrt_core::DenseKeep::Every { n: 15, air: false }
+    }
     fn kind(&self) -> &'static str {
         "BlueCoinSwitch::Press"
     }
@@ -89,6 +93,9 @@ impl Objective for Press {
     fn needs_objects(&self) -> bool {
         true
     }
+    fn arrival(&self, _s: &St) -> obrrt_core::Arrival {
+        obrrt_core::Arrival::Stop
+    }
     fn steer_target(&self, s: &St) -> Option<[f32; 3]> {
         Some(self.idle(s).map_or(self.pos, |o| o.pos))
     }
@@ -122,6 +129,10 @@ impl Collect {
 }
 
 impl Objective for Collect {
+    /// Dense adds (`OBRRT_DENSE_EVERY=obj`): collecting and fighting: a state every 15 frames, none mid-arc.
+    fn dense_keep(&self) -> obrrt_core::DenseKeep {
+        obrrt_core::DenseKeep::Every { n: 15, air: false }
+    }
     fn kind(&self) -> &'static str {
         "HiddenBlueCoin::Collect"
     }

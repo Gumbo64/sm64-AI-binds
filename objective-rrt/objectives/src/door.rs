@@ -48,6 +48,10 @@ impl Enter {
 }
 
 impl Objective for Enter {
+    /// Dense adds (`OBRRT_DENSE_EVERY=obj`): doors: only the end matters.
+    fn dense_keep(&self) -> obrrt_core::DenseKeep {
+        obrrt_core::DenseKeep::EndOnly
+    }
     fn kind(&self) -> &'static str {
         "Door::Enter"
     }
@@ -83,6 +87,9 @@ impl Objective for Enter {
     }
     fn budget(&self) -> Budget {
         Budget::Ga { population: 16, generations: 5, horizon: 180 }
+    }
+    fn arrival(&self, _s: &St) -> obrrt_core::Arrival {
+        obrrt_core::Arrival::Door
     }
     fn steer_target(&self, _s: &St) -> Option<[f32; 3]> {
         Some(self.pos)

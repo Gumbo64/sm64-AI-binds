@@ -172,6 +172,10 @@ impl Open {
 }
 
 impl Objective for Open {
+    /// Dense adds (`OBRRT_DENSE_EVERY=obj`): collecting and fighting: a state every 15 frames, none mid-arc.
+    fn dense_keep(&self) -> obrrt_core::DenseKeep {
+        obrrt_core::DenseKeep::Every { n: 15, air: false }
+    }
     fn kind(&self) -> &'static str {
         "Chest::Open"
     }
@@ -215,6 +219,9 @@ impl Objective for Open {
     }
     fn needs_objects(&self) -> bool {
         true
+    }
+    fn arrival(&self, _s: &St) -> obrrt_core::Arrival {
+        obrrt_core::Arrival::Stop
     }
     fn steer_target(&self, s: &St) -> Option<[f32; 3]> {
         // To the front first, then walk into it (so Mario faces it).

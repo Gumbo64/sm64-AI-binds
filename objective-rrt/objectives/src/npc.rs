@@ -24,6 +24,10 @@ impl Talk {
 }
 
 impl Objective for Talk {
+    /// Dense adds (`OBRRT_DENSE_EVERY=obj`): talking: only the end matters.
+    fn dense_keep(&self) -> obrrt_core::DenseKeep {
+        obrrt_core::DenseKeep::EndOnly
+    }
     fn kind(&self) -> &'static str {
         "Npc::Talk"
     }
@@ -65,6 +69,9 @@ impl Objective for Talk {
     }
     fn needs_objects(&self) -> bool {
         true
+    }
+    fn arrival(&self, _s: &St) -> obrrt_core::Arrival {
+        obrrt_core::Arrival::Stop
     }
     fn steer_target(&self, s: &St) -> Option<[f32; 3]> {
         self.pos_in(s)

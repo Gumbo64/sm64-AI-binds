@@ -78,14 +78,136 @@ fn facing(painting: &Painting, centre: [f32; 3], p: [f32; 3]) -> (f32, f32) {
     (rx * nx + rz * nz, (rx * nz - rz * nx).abs())
 }
 
+/// OBRRT_PAINTING_FAST=1 (off by default): faster painting (re-)entries.
+/// - Staged castle navigation: a painting behind a door ([`gate`]) is
+///   steered to in two stages, the door first (as `Door::Enter` would:
+///   Arrival::Door), then the painting; progress counts the stage, then the
+///   straight-line distance to the stage's waypoint. Without it the attempt
+///   steered straight at a painting behind walls (WF behind the 1-star door
+///   and down the stairs) and 300-frame attempts ended at walls; the routes'
+///   lobby -> other painting legs took 609-1579 f (138-210 straight).
+///   Horizon 300 -> 420 (door + room in one attempt).
+/// - One objective per progress level: the key carries the collected set
+///   (St::progress_set) and only states with that set may start it. A new
+///   star makes a new key, so the new-eligible queue (OBRRT_NEW_ELIGIBLE,
+///   at most 2 queueings per key per run) tries the painting from the first
+///   post-exit state every time, not just after the first two exits, and
+///   failures at earlier levels don't decay it.
+/// - Mario::GoToCastle loses its post-star boost (mario/exit.rs).
+pub fn painting_fast() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("OBRRT_PAINTING_FAST").is_ok_and(|v| v == "1"))
+}
+
+/// A door between the lobby and a painting's room (levels/castle_inside/
+/// areas/1/collision.inc.c special objects: the 0-star door to BoB's room,
+/// the 1-star door to WF's, the 3-star doors to CCM's and JRB's; yaw in
+/// degrees, from the preset's 0-255): (door position, unit normal pointing
+/// to the lobby side, half width of the room across the normal, top of the
+/// room above the door's floor). A painting in a room has no gate.
+struct Gate {
+    pos: [f32; 3],
+    normal: [f32; 2],
+    half: f32,
+    top: f32,
+}
+
+fn gate(name: &str) -> Option<Gate> {
+    let g = |pos: [f32; 3], yaw: f32, half: f32, top: f32| {
+        let y = yaw.to_radians();
+        Some(Gate { pos, normal: [y.sin(), y.cos()], half, top })
+    };
+    match name {
+        // Yaw 64 (90): the lobby is east of it; the room runs to x -5222.
+        "bob" => g([-3122.0, 205.0, -793.0], 90.0, 1500.0, 1500.0),
+        // Yaw 0: the lobby is north (+z). WF's room (x ~ -500..1000) and
+        // the hallway above it (y 614); CCM's mirrors it about x -1023.
+        "wf" => g([256.0, 0.0, -1074.0], 0.0, 900.0, 900.0),
+        "ccm" => g([-2303.0, 0.0, -1074.0], 0.0, 900.0, 900.0),
+        // Yaw 192 (270): the lobby is west (-x).
+        "jrb" => g([1075.0, 205.0, -229.0], 270.0, 1500.0, 1500.0),
+        _ => None,
+    }
+}
+
+impl Gate {
+    /// Whether `p` is past the door, in the painting's room.
+    fn past(&self, p: [f32; 3]) -> bool {
+        let (rx, rz) = (p[0] - self.pos[0], p[2] - self.pos[2]);
+        let front = rx * self.normal[0] + rz * self.normal[1];
+        let across = (rx * self.normal[1] - rz * self.normal[0]).abs();
+        front < 0.0 && across < self.half && p[1] < self.pos[1] + self.top
+    }
+}
+
 pub struct Enter {
     painting: &'static Painting,
     centre: [f32; 3],
+    /// OBRRT_PAINTING_FAST: the door on the way, the other rooms' doors
+    /// in its area (out of another room first: BoB's exit puts Mario in
+    /// BoB's room), and the collected set the objective belongs to.
+    gate: Option<Gate>,
+    others: Vec<Gate>,
+    progress: Option<u64>,
 }
 
 impl Enter {
-    pub fn new(_b: &St, p: &'static Painting) -> Enter {
-        Enter { painting: p, centre: p.centre() }
+    pub fn new(b: &St, p: &'static Painting) -> Enter {
+        let fast = painting_fast();
+        // OBRRT_PAINTING_FAST: a wall painting is aimed at 150 above its
+        // bottom edge, not its centre: the warp floor is touched anywhere
+        // in the painting's plane above it (the routes' triggers: BoB's at
+        // y 446-566, bottom 410, centre 716; WF's at -177..174, bottom
+        // -205), and the centre of a 614-high painting hung 200 above the
+        // floor is a double jump up.
+        let mut centre = p.centre();
+        if fast && p.pitch == 0.0 {
+            centre[1] = centre[1].min(p.corner[1] + 150.0);
+        }
+        Enter {
+            painting: p,
+            centre,
+            gate: if fast && p.area == 1 { gate(p.name) } else { None },
+            others: if fast && p.area == 1 {
+                crate::painting_table::PAINTINGS
+                    .iter()
+                    .filter(|q| q.area == 1 && q.name != p.name)
+                    .filter_map(|q| gate(q.name))
+                    .collect()
+            } else {
+                Vec::new()
+            },
+            progress: fast.then(|| b.progress_set()),
+        }
+    }
+
+    /// The stage `s` is in and its waypoint: 0, in another painting's room:
+    /// its door; 1, before this painting's door: the door; 2: the painting.
+    fn stage(&self, s: &St) -> (u32, [f32; 3]) {
+        if let Some(g) = self.others.iter().find(|g| g.past(s.pos)) {
+            return (0, g.pos);
+        }
+        match &self.gate {
+            Some(g) if !g.past(s.pos) => (1, g.pos),
+            _ => (2, self.centre),
+        }
+    }
+
+    /// Straight-line distance from `s` through the waypoints left.
+    fn to_go(&self, s: &St) -> f32 {
+        let (k, w) = self.stage(s);
+        let mut d = s.dist(w);
+        let mut at = w;
+        if k == 0 {
+            if let Some(g) = &self.gate {
+                d += dist(at, g.pos);
+                at = g.pos;
+            }
+        }
+        if k < 2 {
+            d += dist(at, self.centre);
+        }
+        d
     }
 
     fn in_room(&self, s: &St) -> bool {
@@ -94,11 +216,18 @@ impl Enter {
 }
 
 impl Objective for Enter {
+    /// Dense adds (`OBRRT_DENSE_EVERY=obj`): paintings: only the end matters.
+    fn dense_keep(&self) -> obrrt_core::DenseKeep {
+        obrrt_core::DenseKeep::EndOnly
+    }
     fn kind(&self) -> &'static str {
         "Painting::Enter"
     }
     fn key(&self) -> String {
-        format!("Painting {}", self.painting.name)
+        match self.progress {
+            Some(p) => format!("Painting {} p{:016x}", self.painting.name, p),
+            None => format!("Painting {}", self.painting.name),
+        }
     }
     fn obj_weight(&self, _b: &St) -> f64 {
         15.0
@@ -107,6 +236,9 @@ impl Objective for Enter {
         // A course whose stars are all collected isn't worth entering, and a
         // painting behind a star door can't be reached without the stars.
         if !(self.in_room(s) && !s.course_done(obrrt_core::course_of_level(self.painting.dest))) {
+            return false;
+        }
+        if self.progress.is_some_and(|p| p != s.progress_set()) {
             return false;
         }
         if !paint_front() {
@@ -129,7 +261,8 @@ impl Objective for Enter {
         }
     }
     fn base_heuristic(&self, s: &St) -> f64 {
-        s.dist(self.centre) as f64 / 400.0
+        // Staged: straight lines through the doors left.
+        if self.progress.is_some() { self.to_go(s) as f64 / 400.0 } else { s.dist(self.centre) as f64 / 400.0 }
     }
     fn arrival_scale(&self) -> Option<f64> {
         Some(400.0)
@@ -142,19 +275,33 @@ impl Objective for Enter {
             .iter()
             .enumerate()
             .filter(|(_, s)| self.in_room(s))
-            .map(|(i, s)| (i, dist(s.pos, self.centre)))
+            .map(|(i, s)| {
+                if self.progress.is_none() {
+                    return (i, dist(s.pos, self.centre) as f64);
+                }
+                // Staged: a later stage beats any distance in an earlier one.
+                let (k, w) = self.stage(s);
+                (i, dist(s.pos, w) as f64 - 1e5 * k as f64)
+            })
             .min_by(|a, b| a.1.total_cmp(&b.1))
-            .unwrap_or((0, f32::MAX));
-        Progress { score: -(d as f64), at }
+            .unwrap_or((0, f32::MAX as f64));
+        Progress { score: -d, at }
     }
     fn success_value(&self) -> f64 {
         5.0
     }
     fn budget(&self) -> Budget {
-        Budget::Ga { population: 20, generations: 6, horizon: 300 }
+        let horizon = if self.progress.is_some() && self.painting.area == 1 { 420 } else { 300 };
+        Budget::Ga { population: 20, generations: 6, horizon }
     }
-    fn steer_target(&self, _s: &St) -> Option<[f32; 3]> {
-        Some(self.centre)
+    fn steer_target(&self, s: &St) -> Option<[f32; 3]> {
+        Some(self.stage(s).1)
+    }
+    fn arrival(&self, s: &St) -> obrrt_core::Arrival {
+        match self.stage(s) {
+            (2, _) => obrrt_core::Arrival::Pass,
+            _ => obrrt_core::Arrival::Door,
+        }
     }
     fn kinship(&self) -> u32 {
         10

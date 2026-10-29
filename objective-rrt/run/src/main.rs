@@ -55,6 +55,8 @@ fn read_m64(path: &str) -> Result<Vec<GamePad>> {
 }
 
 fn main() -> Result<()> {
+    // The steering controller (objectives/src/moves; move library off).
+    obrrt_objectives::moves::install_controller();
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 2 {
         bail!("usage: obrrt <rom> [out_dir=runs/obrrt] [seed=1] [minutes=30] [<start.m64>]");
@@ -110,6 +112,95 @@ fn main() -> Result<()> {
     }
     if let Ok(v) = std::env::var("OBRRT_KEEP_WIP_FRAMES") {
         obrrt_search::tree::KEEP_WIP_FRAMES.store(v.parse()?, std::sync::atomic::Ordering::Relaxed);
+    }
+    // Dense adds and sparse saves (search/src/dense.rs, tree.rs; all off by
+    // default). OBRRT_ADD=winner|winner_all|last_gen|all (comma-separated):
+    // which sampled states become candidate nodes; OBRRT_DENSE_GRID (64)
+    // units of the dense key, OBRRT_DENSE_CAP (256 with all, else 0 = none) candidates per
+    // attempt, OBRRT_DENSE_NE=0 keeps dense nodes out of the new-eligible
+    // queue, OBRRT_DENSE_MEMOBJ=0 leaves object lists out of the memory
+    // budget. OBRRT_DENSE_EVERY=<n> (1): winner_all/all candidates only every
+    // n frames along a rollout (plus its end); OBRRT_DENSE_AIR=0: no mid-air
+    // ones (take-off frames and ends still count). OBRRT_DENSE_EVERY=obj[:n]:
+    // each objective chooses (Objective::dense_keep; n, 15, for the rest). OBRRT_REPLAY_MAX=<frames>: a node keeps a save only beyond
+    // that many frames from its saved ancestor (150 with dense adds on,
+    // off otherwise; "off" forces every save). OBRRT_SPARSE_CHECK=<n>:
+    // rebuild n save-less nodes at the end and compare.
+    // OBRRT_KINSHIP_MULT (1): kinship × this (OBRRT_KIN_UNIT below). OBRRT_NEAR_SEED=1: seed the
+    // GA from a nearby start's attempt of the objective (OBRRT_NEAR_R 300
+    // units, OBRRT_NEAR_P 0.5, OBRRT_NEAR_KEEP 32 records per objective).
+    {
+        let get = |k: &str| std::env::var(k).ok();
+        let modes = match get("OBRRT_ADD") {
+            Some(v) => obrrt_search::dense::Modes::parse(&v).map_err(anyhow::Error::msg)?,
+            None => Default::default(),
+        };
+        let replay = match get("OBRRT_REPLAY_MAX").as_deref() {
+            Some("off") => None,
+            Some(v) => Some(v.parse::<u32>()?),
+            None if modes.any() => Some(150),
+            None => None,
+        };
+        if let Some(r) = replay {
+            obrrt_search::tree::REPLAY_MAX.store(r, std::sync::atomic::Ordering::Relaxed);
+        }
+        if modes.any() {
+            anyhow::ensure!(replay.is_some(), "OBRRT_ADD needs sparse saves (OBRRT_REPLAY_MAX=0 saves every node)");
+            let grid: u32 = get("OBRRT_DENSE_GRID").map_or(Ok(64), |v| v.parse())?;
+            anyhow::ensure!(grid >= 64 && grid % 64 == 0, "OBRRT_DENSE_GRID: a multiple of 64");
+            obrrt_search::tree::DENSE_GRID.store(grid, std::sync::atomic::Ordering::Relaxed);
+            obrrt_search::dense::configure(Some(obrrt_search::dense::Settings {
+                modes,
+                grid: grid as f32,
+                cap: get("OBRRT_DENSE_CAP").map_or(Ok(if modes.all { 256 } else { 0 }), |v| v.parse())?,
+                ne: get("OBRRT_DENSE_NE").is_none_or(|v| v != "0"),
+                mem_objects: get("OBRRT_DENSE_MEMOBJ").is_none_or(|v| v != "0"),
+                every: match get("OBRRT_DENSE_EVERY").as_deref() {
+                    None => 1,
+                    Some("obj") => 15,
+                    Some(v) => v.strip_prefix("obj:").unwrap_or(v).parse()?,
+                },
+                per_obj: get("OBRRT_DENSE_EVERY").is_some_and(|v| v == "obj" || v.starts_with("obj:")),
+                air: get("OBRRT_DENSE_AIR").is_none_or(|v| v != "0"),
+            }));
+        }
+        if let Some(v) = get("OBRRT_KINSHIP_MULT") {
+            cfg.kinship_mult = v.parse()?;
+        }
+        // OBRRT_KIN_UNIT=attempt: kinship generations in attempts (dense
+        // intermediates and replay-chain nodes cost none; tree.rs
+        // KIN_ATTEMPT); unset or "node": every node is one; "frames": tree-path
+        // game frames / OBRRT_KIN_FRAMES (150) per generation.
+        // OBRRT_KIN_SOFT=λ: continuous kinship, start weight × λ^distance
+        // (in the unit) instead of the hard set.
+        // OBRRT_KIN_CAP (0 = none): most kin-set members, nearest first.
+        match get("OBRRT_KIN_UNIT").as_deref() {
+            None | Some("") | Some("node") => {}
+            Some("attempt") => obrrt_search::tree::KIN_ATTEMPT.store(true, std::sync::atomic::Ordering::Relaxed),
+            Some("frames") => obrrt_search::tree::KIN_FRAMES_UNIT.store(true, std::sync::atomic::Ordering::Relaxed),
+            Some(v) => anyhow::bail!("OBRRT_KIN_UNIT={v}: expected node, attempt or frames"),
+        }
+        if let Some(v) = get("OBRRT_KIN_FRAMES") {
+            obrrt_search::tree::KIN_FRAMES.store(v.parse()?, std::sync::atomic::Ordering::Relaxed);
+        }
+        if let Some(v) = get("OBRRT_KIN_SOFT") {
+            let l: f64 = v.parse()?;
+            anyhow::ensure!(l > 0.0 && l <= 1.0, "OBRRT_KIN_SOFT: 0 < λ <= 1");
+            obrrt_search::tree::KIN_SOFT.store(l.to_bits(), std::sync::atomic::Ordering::Relaxed);
+        }
+        if let Some(v) = get("OBRRT_KIN_CAP") {
+            obrrt_search::tree::KIN_CAP.store(v.parse()?, std::sync::atomic::Ordering::Relaxed);
+        }
+        if let Some(v) = get("OBRRT_SPARSE_CHECK") {
+            cfg.rebuild_check = v.parse()?;
+        }
+        if get("OBRRT_NEAR_SEED").is_some_and(|v| v == "1") {
+            obrrt_search::near::configure(Some(obrrt_search::near::Settings {
+                radius: get("OBRRT_NEAR_R").map_or(Ok(300.0), |v| v.parse())?,
+                p: get("OBRRT_NEAR_P").map_or(Ok(0.5), |v| v.parse())?,
+                per_key: get("OBRRT_NEAR_KEEP").map_or(Ok(32), |v| v.parse())?,
+            }));
+        }
     }
     // OBRRT_FAST_MODAL=0: the old dialog/menu macros (A every 4th frame)
     // instead of the frame-optimal policies (objectives/src/menu.rs).
@@ -188,8 +279,114 @@ fn main() -> Result<()> {
     if let Ok(v) = std::env::var("OBRRT_VALUE_ZONES") {
         cfg.value_zones = v == "1";
     }
+    // OBRRT_REROUTE=1: graft slower duplicates' subtrees onto faster ones by
+    // replaying their inputs; OBRRT_REROUTE_SCHEMA=<objective-scattershot
+    // schema> keys "the same state" by its objectives (default: the duplicate
+    // cell); OBRRT_REROUTE_SHARE (0.25) of a round's slots at most;
+    // OBRRT_REROUTE_MARGIN (10) frames saved at least.
+    if std::env::var("OBRRT_REROUTE").is_ok_and(|v| v == "1") {
+        cfg.reroute = true;
+    }
+    if let Ok(v) = std::env::var("OBRRT_REROUTE_SCHEMA") {
+        cfg.reroute_schema = Some(v);
+    }
+    if let Ok(v) = std::env::var("OBRRT_REROUTE_SHARE") {
+        cfg.reroute_share = v.parse()?;
+    }
+    if let Ok(v) = std::env::var("OBRRT_REROUTE_MARGIN") {
+        cfg.reroute_margin = v.parse()?;
+    }
+    // OBRRT_ZONE_SHARE=1: replay the inputs states took since entering
+    // their zone from other entries of it (search/src/share.rs);
+    // OBRRT_ZONE_SHARE_K (4) top donors per entry, OBRRT_ZONE_SHARE_CAP
+    // (3000) frames per path, OBRRT_ZONE_SHARE_SHARE (0.2) of a round's
+    // slots at most, OBRRT_ZONE_SHARE_BG (2) background jobs per round.
+    if std::env::var("OBRRT_ZONE_SHARE").is_ok_and(|v| v == "1") {
+        cfg.zone_share = true;
+    }
+    if let Ok(v) = std::env::var("OBRRT_ZONE_SHARE_K") {
+        cfg.zone_share_k = v.parse()?;
+    }
+    if let Ok(v) = std::env::var("OBRRT_ZONE_SHARE_CAP") {
+        cfg.zone_share_cap = v.parse()?;
+    }
+    if let Ok(v) = std::env::var("OBRRT_ZONE_SHARE_SHARE") {
+        cfg.zone_share_share = v.parse()?;
+    }
+    if let Ok(v) = std::env::var("OBRRT_ZONE_SHARE_BG") {
+        cfg.zone_share_bg = v.parse()?;
+    }
+    // OBRRT_REPLAY_BUDGET=<fraction> (e.g. 0.1): replay jobs (reroute,
+    // zone share) take no plan slots; after each round's plans they run
+    // until their frames reach this fraction of the plans' (search/src/replay.rs).
+    // Unset or 0: off.
+    if let Ok(v) = std::env::var("OBRRT_REPLAY_BUDGET") {
+        let f: f64 = v.parse()?;
+        if f > 0.0 {
+            cfg.replay_budget = Some(f);
+        }
+    }
     if std::env::var("OBRRT_STAR").is_ok_and(|v| v == "1") {
         cfg.rrt_star = true;
+    }
+    // OBRRT_MOVES=1: steering's ground/air mode through the movement library
+    // (objectives/src/moves).
+    if std::env::var("OBRRT_MOVES").is_ok_and(|v| v == "1") {
+        obrrt_objectives::moves::install();
+    }
+    // OBRRT_MOVE_GA=1: the GA's first generation also simulates the
+    // library's moves as forced policies and combinations of them
+    // (search/src/movegenome.rs); without OBRRT_MOVES the library offers
+    // only its policies, the default steering stays generic.
+    let on = |k: &str| std::env::var(k).is_ok_and(|v| v == "1");
+    if on("OBRRT_MOVE_GA") && !on("OBRRT_MOVES") {
+        obrrt_objectives::moves::install_policies();
+    }
+    // OBRRT_CHAIN=route: one objective per attempt, a follow-on only along
+    // the best route (OBRRT_CHAIN_FOLLOW, 0.5). OBRRT_SAMPLER=rate: entry and
+    // start weights from improvement per frame (OBRRT_RATE_FLOOR 0.15, _CAP
+    // 4, _TAU 5e7 frames, _PRIOR 2e5 frames, _NOSTART 5000 frames, _NODE_PRIOR
+    // 3e5 frames, _NODE_CAP 2) instead of the failure decay.
+    match std::env::var("OBRRT_CHAIN").as_deref() {
+        Ok("route") => cfg.chain_route = true,
+        Ok("stack") | Err(_) => {}
+        Ok(v) => bail!("OBRRT_CHAIN: route or stack, not {v}"),
+    }
+    if let Ok(v) = std::env::var("OBRRT_CHAIN_FOLLOW") {
+        cfg.chain_follow = v.parse()?;
+    }
+    match std::env::var("OBRRT_SAMPLER").as_deref() {
+        Ok("rate") => cfg.sampler_rate = true,
+        Ok("decay") | Err(_) => {}
+        Ok(v) => bail!("OBRRT_SAMPLER: rate or decay, not {v}"),
+    }
+    for (k, f) in [
+        ("FLOOR", &mut cfg.rate.floor),
+        ("CAP", &mut cfg.rate.cap),
+        ("TAU", &mut cfg.rate.tau),
+        ("PRIOR", &mut cfg.rate.prior_frames),
+        ("NOSTART", &mut cfg.rate.nostart_frames),
+        ("NODE_PRIOR", &mut cfg.node_prior),
+        ("NODE_CAP", &mut cfg.node_cap),
+        ("KIND_SCALE", &mut cfg.rate.kind_scale),
+    ] {
+        if let Ok(v) = std::env::var(format!("OBRRT_RATE_{k}")) {
+            *f = v.parse()?;
+        }
+    }
+    // OBRRT_RATE_MODE=hier: hierarchical shrinkage (entry rate toward its
+    // kind's, prior OBRRT_RATE_PRIOR frames; kind rate toward the pool's,
+    // prior OBRRT_RATE_KIND_SCALE (10) × that). OBRRT_RATE_NOSTART_SKIP=1:
+    // entries no live state could start are skipped, not charged
+    // (re-checked against new states, OBRRT_RATE_SKIP_BUDGET 2e6 a round).
+    match std::env::var("OBRRT_RATE_MODE").as_deref() {
+        Ok("hier") => cfg.rate.hier = true,
+        Ok("flat") | Err(_) => {}
+        Ok(v) => bail!("OBRRT_RATE_MODE: hier or flat, not {v}"),
+    }
+    cfg.rate.nostart_skip = on("OBRRT_RATE_NOSTART_SKIP");
+    if let Ok(v) = std::env::var("OBRRT_RATE_SKIP_BUDGET") {
+        cfg.rate.skip_budget = v.parse()?;
     }
     // OBRRT_ARRIVAL=1: rank starts (and judge improvement) by estimated
     // arrival, for distance objectives; pace (u/frame, default 20), temperature (s), band (h units).

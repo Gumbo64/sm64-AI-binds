@@ -12,6 +12,8 @@ use obrrt_search::route::{self, Bench, methods};
 use sm64_binds::SM64GameGenerator;
 
 fn main() -> Result<()> {
+    // The steering controller (objectives/src/moves; move library off).
+    obrrt_objectives::moves::install_controller();
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 3 {
         bail!("usage: obrrt-route <rom> <run dir> [method=full] [minutes=5] [seed=1] [node] [out dir]\nmethods: {}", methods::NAMES.join(", "));

@@ -81,6 +81,8 @@ fn wing_cap(game: &mut sm64_binds::SM64Game) -> Result<()> {
 }
 
 fn main() -> Result<()> {
+    // The steering controller (objectives/src/moves; move library off).
+    obrrt_objectives::moves::install_controller();
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 5 {
         bail!("usage: steertest <rom> <run_dir> <node id> <phase>...");

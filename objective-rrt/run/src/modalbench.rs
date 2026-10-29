@@ -73,6 +73,8 @@ fn play_act(game: &mut SM64Game, save: &SaveState, start: &St, obj: &dyn Objecti
 }
 
 fn main() -> Result<()> {
+    // The steering controller (objectives/src/moves; move library off).
+    obrrt_objectives::moves::install_controller();
     let args: Vec<String> = std::env::args().collect();
     ensure!(args.len() >= 3, "usage: modalbench <rom> <run dir> [node] [trace.csv]");
     let dir = args[2].trim_end_matches('/');

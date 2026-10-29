@@ -380,6 +380,10 @@ impl Climb {
 }
 
 impl Objective for Climb {
+    /// Dense adds (`OBRRT_DENSE_EVERY=obj`): technique setups are frame-precise: every state, mid-air too.
+    fn dense_keep(&self) -> obrrt_core::DenseKeep {
+        obrrt_core::DenseKeep::Every { n: 1, air: true }
+    }
     fn kind(&self) -> &'static str {
         match self.mode {
             Mode::WallKick => "WallKick::Climb",
@@ -560,6 +564,10 @@ impl Redirect {
 }
 
 impl Objective for Redirect {
+    /// Dense adds (`OBRRT_DENSE_EVERY=obj`): technique setups are frame-precise: every state, mid-air too.
+    fn dense_keep(&self) -> obrrt_core::DenseKeep {
+        obrrt_core::DenseKeep::Every { n: 1, air: true }
+    }
     fn kind(&self) -> &'static str {
         "WallKick::Redirect"
     }
@@ -706,6 +714,10 @@ impl Chain {
 }
 
 impl Objective for Chain {
+    /// Dense adds (`OBRRT_DENSE_EVERY=obj`): technique setups are frame-precise: every state, mid-air too.
+    fn dense_keep(&self) -> obrrt_core::DenseKeep {
+        obrrt_core::DenseKeep::Every { n: 1, air: true }
+    }
     fn kind(&self) -> &'static str {
         "WallKick::Chain"
     }

@@ -51,6 +51,10 @@ impl HitFromBehind {
 }
 
 impl Objective for HitFromBehind {
+    /// Dense adds (`OBRRT_DENSE_EVERY=obj`): collecting and fighting: a state every 15 frames, none mid-arc.
+    fn dense_keep(&self) -> obrrt_core::DenseKeep {
+        obrrt_core::DenseKeep::Every { n: 15, air: false }
+    }
     fn kind(&self) -> &'static str {
         "Boo::HitFromBehind"
     }

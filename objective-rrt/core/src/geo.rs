@@ -581,10 +581,19 @@ fn rd_f32(m: &[u8], a: usize) -> Option<f32> {
 /// Every static floor triangle in the partition, deduplicated, with their
 /// addresses.
 pub fn read_floors(m: &[u8]) -> (Vec<Tri>, HashSet<u32>) {
+    read_list(m, crate::layout::SPATIAL_PARTITION_FLOORS as usize)
+}
+
+/// Every static wall triangle in the partition, deduplicated.
+pub fn read_walls(m: &[u8]) -> Vec<Tri> {
+    read_list(m, crate::layout::SPATIAL_PARTITION_WALLS as usize).0
+}
+
+fn read_list(m: &[u8], list: usize) -> (Vec<Tri>, HashSet<u32>) {
     let mut seen = HashSet::new();
     let mut tris = Vec::new();
     for cell in 0..CELLS * CELLS {
-        let head = PARTITION + cell * 24;
+        let head = PARTITION + cell * 24 + list * crate::layout::SURFACE_NODE_SIZE;
         let mut node = rd_u32(m, head).unwrap_or(0);
         let mut guard = 0;
         while node != 0 && guard < 100_000 {
@@ -777,6 +786,23 @@ pub fn static_floors(zone: Zone) -> Option<Arc<[Tri]>> {
     floor_cache().read().unwrap().get(&zone).cloned()
 }
 
+fn wall_cache() -> &'static RwLock<HashMap<Zone, Arc<[Tri]>>> {
+    static C: OnceLock<RwLock<HashMap<Zone, Arc<[Tri]>>>> = OnceLock::new();
+    C.get_or_init(|| RwLock::new(HashMap::new()))
+}
+
+/// The zone's static wall triangles, stored with its floors.
+pub fn static_walls(zone: Zone) -> Option<Arc<[Tri]>> {
+    wall_cache().read().unwrap().get(&zone).cloned()
+}
+
+/// The zones whose static floors are stored, sorted.
+pub fn static_floor_zones() -> Vec<Zone> {
+    let mut z: Vec<Zone> = floor_cache().read().unwrap().keys().copied().collect();
+    z.sort();
+    z
+}
+
 /// Stores `st`'s zone's static floors from memory `m` if asked for, not
 /// stored yet, and Mario is in control on a static floor of the area (so
 /// the partition is this area's).
@@ -795,8 +821,78 @@ pub fn observe_floors(m: &[u8], st: &St) {
     }
     let (tris, seen) = read_floors(m);
     if seen.contains(&floor) {
+        // Walls first: whoever sees the floors stored sees the walls too.
+        wall_cache().write().unwrap().entry(zone).or_insert_with(|| read_walls(m).into());
+        // Ceilings and water boxes likewise (read-only, for water-warp probes).
+        ceil_cache().write().unwrap().entry(zone).or_insert_with(|| read_ceils(m).into());
+        water_cache().write().unwrap().entry(zone).or_insert_with(|| read_water(m).into());
         floor_cache().write().unwrap().entry(zone).or_insert_with(|| tris.into());
     }
+}
+
+/// Every static ceiling triangle in the partition, deduplicated.
+pub fn read_ceils(m: &[u8]) -> Vec<Tri> {
+    read_list(m, crate::layout::SPATIAL_PARTITION_CEILS as usize).0
+}
+
+/// One environment box of `gEnvironmentRegions` (load_environmental_regions,
+/// surface_load.c): `id` < 50 is water (find_water_level), multiples of 10
+/// from 50 poison gas; the box is `lo < x < hi`, `lo < z < hi` (exclusive)
+/// with its surface at `y`, and has no bottom.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct EnvBox {
+    pub id: i16,
+    pub lo: [f32; 2],
+    pub hi: [f32; 2],
+    pub y: f32,
+}
+
+impl EnvBox {
+    pub fn is_water(&self) -> bool {
+        self.id < 50
+    }
+    /// Whether (x, z) is inside, as find_water_level tests it.
+    pub fn contains(&self, x: f32, z: f32) -> bool {
+        self.lo[0] < x && x < self.hi[0] && self.lo[1] < z && z < self.hi[1]
+    }
+}
+
+/// The current area's environment boxes, in the game's order (the first
+/// water box containing (x, z) gives find_water_level's answer).
+pub fn read_water(m: &[u8]) -> Vec<EnvBox> {
+    let Some(p) = rd_u32(m, crate::layout::ADDR_gEnvironmentRegions as usize).filter(|&p| p != 0) else {
+        return Vec::new();
+    };
+    let p = p as usize;
+    let n = rd_i16(m, p).unwrap_or(0).clamp(0, 64) as usize;
+    (0..n)
+        .filter_map(|i| {
+            let q = p + 2 + i * 12;
+            let v = |k: usize| rd_i16(m, q + 2 * k);
+            Some(EnvBox { id: v(0)?, lo: [v(1)? as f32, v(2)? as f32], hi: [v(3)? as f32, v(4)? as f32], y: v(5)? as f32 })
+        })
+        .collect()
+}
+
+fn ceil_cache() -> &'static RwLock<HashMap<Zone, Arc<[Tri]>>> {
+    static C: OnceLock<RwLock<HashMap<Zone, Arc<[Tri]>>>> = OnceLock::new();
+    C.get_or_init(|| RwLock::new(HashMap::new()))
+}
+
+fn water_cache() -> &'static RwLock<HashMap<Zone, Arc<[EnvBox]>>> {
+    static C: OnceLock<RwLock<HashMap<Zone, Arc<[EnvBox]>>>> = OnceLock::new();
+    C.get_or_init(|| RwLock::new(HashMap::new()))
+}
+
+/// The zone's static ceiling triangles, stored with its floors.
+pub fn static_ceils(zone: Zone) -> Option<Arc<[Tri]>> {
+    ceil_cache().read().unwrap().get(&zone).cloned()
+}
+
+/// The zone's environment boxes as they were when its floors were stored
+/// (WDW's water level moves later; St::water_level has the current one).
+pub fn static_water(zone: Zone) -> Option<Arc<[EnvBox]>> {
+    water_cache().read().unwrap().get(&zone).cloned()
 }
 
 /// The highest floor of `tris` under (x, z) at most `y_max` high (by the

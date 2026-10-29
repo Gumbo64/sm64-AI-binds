@@ -25,6 +25,8 @@ use serde_json::{Map, Value};
 use sm64_binds::SM64GameGenerator;
 
 fn main() -> Result<()> {
+    // The steering controller (objectives/src/moves; move library off).
+    obrrt_objectives::moves::install_controller();
     let path = std::env::args().nth(1).ok_or_else(|| anyhow!("usage: tree <config.json>"))?;
     let text = std::fs::read_to_string(&path).with_context(|| format!("reading {path}"))?;
     let root: Map<String, Value> = serde_json::from_str(&text).with_context(|| format!("parsing {path}"))?;

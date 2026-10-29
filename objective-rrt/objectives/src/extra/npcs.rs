@@ -211,6 +211,10 @@ impl Approach {
 }
 
 impl Objective for Approach {
+    /// Dense adds (`OBRRT_DENSE_EVERY=obj`): collecting and fighting: a state every 15 frames, none mid-arc.
+    fn dense_keep(&self) -> obrrt_core::DenseKeep {
+        obrrt_core::DenseKeep::Every { n: 15, air: false }
+    }
     fn precision(&self) -> obrrt_core::Precision {
         if matches!(self.kind(), "KoopaRace::Claim" | "PenguinRace::Claim" | "Mips::Catch" | "Ukiki::Catch") { obrrt_core::Precision::Precise } else { obrrt_core::Precision::Explore }
     }
@@ -248,6 +252,9 @@ impl Objective for Approach {
     }
     fn needs_objects(&self) -> bool {
         true
+    }
+    fn arrival(&self, _s: &St) -> obrrt_core::Arrival {
+        obrrt_core::Arrival::Stop
     }
     fn steer_target(&self, s: &St) -> Option<[f32; 3]> {
         s.find(self.id).map(|o| self.target(s, o))
@@ -586,6 +593,10 @@ impl Race {
 }
 
 impl Objective for Race {
+    /// Dense adds (`OBRRT_DENSE_EVERY=obj`): collecting and fighting: a state every 15 frames, none mid-arc.
+    fn dense_keep(&self) -> obrrt_core::DenseKeep {
+        obrrt_core::DenseKeep::Every { n: 15, air: false }
+    }
     fn precision(&self) -> obrrt_core::Precision {
         obrrt_core::Precision::Precise
     }
@@ -682,6 +693,10 @@ impl ReturnBaby {
 }
 
 impl Objective for ReturnBaby {
+    /// Dense adds (`OBRRT_DENSE_EVERY=obj`): collecting and fighting: a state every 15 frames, none mid-arc.
+    fn dense_keep(&self) -> obrrt_core::DenseKeep {
+        obrrt_core::DenseKeep::Every { n: 15, air: false }
+    }
     fn precision(&self) -> obrrt_core::Precision {
         obrrt_core::Precision::Precise
     }
@@ -718,6 +733,9 @@ impl Objective for ReturnBaby {
     }
     fn needs_objects(&self) -> bool {
         true
+    }
+    fn arrival(&self, _s: &St) -> obrrt_core::Arrival {
+        obrrt_core::Arrival::Stop
     }
     fn steer_target(&self, s: &St) -> Option<[f32; 3]> {
         if self.holding_baby(s) { s.find(self.mother).map(|m| m.pos) } else { self.baby(s).map(|b| b.pos) }
@@ -759,6 +777,10 @@ impl LeadBody {
 }
 
 impl Objective for LeadBody {
+    /// Dense adds (`OBRRT_DENSE_EVERY=obj`): collecting and fighting: a state every 15 frames, none mid-arc.
+    fn dense_keep(&self) -> obrrt_core::DenseKeep {
+        obrrt_core::DenseKeep::Every { n: 15, air: false }
+    }
     fn precision(&self) -> obrrt_core::Precision {
         obrrt_core::Precision::Precise
     }

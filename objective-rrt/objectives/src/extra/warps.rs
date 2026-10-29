@@ -49,7 +49,7 @@ pub fn generate(b: &St, o: &Obj, out: &mut Vec<Arc<dyn Objective>>) {
     let castle = b.level as u32 == LEVEL_CASTLE;
     match o.interact_type {
         INTERACT_WARP => out.push(Arc::new(WarpEnter::new(b, o))),
-        INTERACT_CANNON_BASE if o.bhv_name() == "bhvCannon" => {
+        INTERACT_CANNON_BASE if o.bhv_name() == "bhvCannon" && !cannon_grilled(b) => {
             out.push(Arc::new(CannonEnter::new(b, o)));
             out.push(Arc::new(CannonFire::far(b, o)));
             if let Some(aim) = cannon_aim_yaw(o) {
@@ -158,7 +158,18 @@ pub struct WarpEnter {
 impl WarpEnter {
     pub fn new(b: &St, o: &Obj) -> WarpEnter {
         let bhv = o.bhv_name();
-        let info = table::find(b.level, b.area, bhv, o.home);
+        // bhvWarp has no SET_HOME, so its oHome is (0, 0, 0) (core/src/read.rs
+        // gives such objects the id home (i32::MIN, slot, 0): the castle
+        // grounds' VCUTM warp is `bhvWarp@-2147483648,93,0`): with
+        // OBRRT_GROUNDS_FIX=1 that home is replaced by the position (warps
+        // don't move), so the table finds it and the steering aims at it.
+        // Before, its WarpHole::Enter steered at (0, 0, 0), the plateau by
+        // the castle (its nodes end at (-2, 810, 4)): 8-19% of the grounds
+        // frames before the first castle entry, its only "successes" walks
+        // through the castle door (any zone change counts without a table
+        // entry).
+        let home = if grounds_fix() && o.home == [0.0, 0.0, 0.0] { o.pos } else { o.home };
+        let info = table::find(b.level, b.area, bhv, home);
         let fading = bhv == "bhvFadingWarp";
         let kind = match info.map(|w| w.class) {
             Some(Class::Secret) => "SecretEntrance::Enter",
@@ -179,7 +190,7 @@ impl WarpEnter {
             (_, r) => r as f32 * 10.0,
         };
         let name = info.map_or_else(|| format!("{:?} {}", b.zone(), o.id), |w| w.name.to_string());
-        WarpEnter { id: o.id, zone: b.zone(), pos: o.home, kind, name, info, radius, fading }
+        WarpEnter { id: o.id, zone: b.zone(), pos: home, kind, name, info, radius, fading }
     }
 
     fn dest(&self) -> Option<(u16, u8)> {
@@ -193,6 +204,10 @@ impl WarpEnter {
 }
 
 impl Objective for WarpEnter {
+    /// Dense adds (`OBRRT_DENSE_EVERY=obj`): warps and entrances: only the end matters.
+    fn dense_keep(&self) -> obrrt_core::DenseKeep {
+        obrrt_core::DenseKeep::EndOnly
+    }
     fn kind(&self) -> &'static str {
         self.kind
     }
@@ -203,6 +218,10 @@ impl Objective for WarpEnter {
         let base = match self.info.map(|w| w.class) {
             Some(Class::Bowser) => 15.0,
             // VCUTM may well be behind the undrained moat's grills (NEEDS).
+            // OBRRT_GROUNDS_FIX=1: behind the grills (moat_grill.inc.c: solid
+            // until SAVE_FLAG_MOAT_DRAINED), so only the moat drain or the
+            // moat-bank BLJ (Tech::MoatWarpBlj) gets there: low.
+            Some(Class::Secret) if self.name == "vcutm" && grounds_fix() => 1.0,
             Some(Class::Secret) if self.name == "vcutm" => 6.0,
             Some(Class::Secret) => 12.0,
             Some(Class::Area) if self.kind == "Pipe::Enter" => 5.0,
@@ -283,6 +302,10 @@ impl BbhEnter {
 }
 
 impl Objective for BbhEnter {
+    /// Dense adds (`OBRRT_DENSE_EVERY=obj`): warps and entrances: only the end matters.
+    fn dense_keep(&self) -> obrrt_core::DenseKeep {
+        obrrt_core::DenseKeep::EndOnly
+    }
     fn kind(&self) -> &'static str {
         "BbhEntrance::Enter"
     }
@@ -347,6 +370,10 @@ impl TornadoEnter {
 }
 
 impl Objective for TornadoEnter {
+    /// Dense adds (`OBRRT_DENSE_EVERY=obj`): warps and entrances: only the end matters.
+    fn dense_keep(&self) -> obrrt_core::DenseKeep {
+        obrrt_core::DenseKeep::EndOnly
+    }
     fn kind(&self) -> &'static str {
         "Tornado::Enter"
     }
@@ -421,6 +448,10 @@ impl StarDoor {
 }
 
 impl Objective for StarDoor {
+    /// Dense adds (`OBRRT_DENSE_EVERY=obj`): warps and entrances: only the end matters.
+    fn dense_keep(&self) -> obrrt_core::DenseKeep {
+        obrrt_core::DenseKeep::EndOnly
+    }
     fn kind(&self) -> &'static str {
         "StarDoor::Enter"
     }
@@ -459,6 +490,9 @@ impl Objective for StarDoor {
     fn success_value(&self) -> f64 {
         3.0
     }
+    fn arrival(&self, _s: &St) -> obrrt_core::Arrival {
+        obrrt_core::Arrival::Door
+    }
     fn steer_target(&self, _s: &St) -> Option<[f32; 3]> {
         Some(self.pos)
     }
@@ -485,6 +519,10 @@ impl KeyDoor {
 }
 
 impl Objective for KeyDoor {
+    /// Dense adds (`OBRRT_DENSE_EVERY=obj`): warps and entrances: only the end matters.
+    fn dense_keep(&self) -> obrrt_core::DenseKeep {
+        obrrt_core::DenseKeep::EndOnly
+    }
     fn kind(&self) -> &'static str {
         "KeyDoor::Enter"
     }
@@ -515,6 +553,9 @@ impl Objective for KeyDoor {
     fn success_value(&self) -> f64 {
         4.0
     }
+    fn arrival(&self, _s: &St) -> obrrt_core::Arrival {
+        obrrt_core::Arrival::Door
+    }
     fn steer_target(&self, _s: &St) -> Option<[f32; 3]> {
         Some(self.pos)
     }
@@ -524,6 +565,29 @@ impl Objective for KeyDoor {
 }
 
 // ----------------------------------------------------------------- cannons
+
+/// `OBRRT_GROUNDS_FIX=1`: the castle grounds' cannon is grilled until 120
+/// stars (see [`cannon_grilled`]); bhvWarp's unset oHome is replaced by its
+/// position and the grilled VCUTM warp weighs 1 (WarpEnter::new); the
+/// grounds' trees weigh a quarter (switches.rs). Off by default: it changes
+/// runs.
+pub fn grounds_fix() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("OBRRT_GROUNDS_FIX").is_ok_and(|v| v == "1"))
+}
+
+/// Whether this zone's cannon is covered (`OBRRT_GROUNDS_FIX=1` only). The
+/// castle grounds' cannon is placed open (macro_cannon_open, behaviour
+/// param 0x40, at (2384, 70, 1961)), so a bhvCannon exists from the start,
+/// but castle_grounds/script.c puts a grill over it (MODEL_CASTLE_GROUNDS_
+/// CANNON_GRILL, bhvHiddenAt120Stars, a solid surface object) that
+/// castle_cannon_grate.inc.c only deactivates at load once the save has 120
+/// stars. Before that Mario stands on the grill (y 65) and never touches the
+/// cannon: in runs before this fix Cannon::Enter there was 22-30% of the
+/// grounds frames before the first castle entry with 0 successes ever.
+fn cannon_grilled(b: &St) -> bool {
+    grounds_fix() && b.level as u32 == LEVEL_CASTLE_GROUNDS && b.stars < 120
+}
 
 /// `Cannon::Enter`: drop into an open cannon (bhvCannon only exists once a
 /// Bob-omb Buddy has opened the course's cannons: cannon_door.inc.c spawns it
@@ -543,6 +607,10 @@ impl CannonEnter {
 }
 
 impl Objective for CannonEnter {
+    /// Dense adds (`OBRRT_DENSE_EVERY=obj`): warps and entrances: only the end matters.
+    fn dense_keep(&self) -> obrrt_core::DenseKeep {
+        obrrt_core::DenseKeep::EndOnly
+    }
     fn precision(&self) -> obrrt_core::Precision {
         obrrt_core::Precision::Precise
     }
@@ -723,6 +791,10 @@ impl CannonFire {
 }
 
 impl Objective for CannonFire {
+    /// Dense adds (`OBRRT_DENSE_EVERY=obj`): warps and entrances: only the end matters.
+    fn dense_keep(&self) -> obrrt_core::DenseKeep {
+        obrrt_core::DenseKeep::EndOnly
+    }
     fn precision(&self) -> obrrt_core::Precision {
         obrrt_core::Precision::Precise
     }
@@ -802,6 +874,10 @@ impl PillarPound {
 }
 
 impl Objective for PillarPound {
+    /// Dense adds (`OBRRT_DENSE_EVERY=obj`): warps and entrances: only the end matters.
+    fn dense_keep(&self) -> obrrt_core::DenseKeep {
+        obrrt_core::DenseKeep::EndOnly
+    }
     fn precision(&self) -> obrrt_core::Precision {
         obrrt_core::Precision::Precise
     }
@@ -846,6 +922,9 @@ impl Objective for PillarPound {
     fn needs_objects(&self) -> bool {
         true
     }
+    fn arrival(&self, _s: &St) -> obrrt_core::Arrival {
+        obrrt_core::Arrival::Stop
+    }
     fn steer_target(&self, _s: &St) -> Option<[f32; 3]> {
         Some(self.pos)
     }
@@ -881,6 +960,10 @@ fn on_sun_spot(s: &St) -> bool {
 pub struct SunStand;
 
 impl Objective for SunStand {
+    /// Dense adds (`OBRRT_DENSE_EVERY=obj`): warps and entrances: only the end matters.
+    fn dense_keep(&self) -> obrrt_core::DenseKeep {
+        obrrt_core::DenseKeep::EndOnly
+    }
     fn kind(&self) -> &'static str {
         "SunSpot::Stand"
     }
@@ -940,6 +1023,10 @@ impl Objective for SunStand {
 pub struct SunLookUp;
 
 impl Objective for SunLookUp {
+    /// Dense adds (`OBRRT_DENSE_EVERY=obj`): warps and entrances: only the end matters.
+    fn dense_keep(&self) -> obrrt_core::DenseKeep {
+        obrrt_core::DenseKeep::EndOnly
+    }
     fn kind(&self) -> &'static str {
         "SecretEntrance::Enter"
     }

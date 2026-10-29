@@ -116,6 +116,10 @@ impl Dialog {
 }
 
 impl Objective for Dialog {
+    /// Dense adds (`OBRRT_DENSE_EVERY=obj`): dialogs and menus: only the end matters.
+    fn dense_keep(&self) -> obrrt_core::DenseKeep {
+        obrrt_core::DenseKeep::EndOnly
+    }
     fn kind(&self) -> &'static str {
         match self.answer {
             Answer::Read => "Dialog::Read",
@@ -201,6 +205,10 @@ impl SaveMenu {
 }
 
 impl Objective for SaveMenu {
+    /// Dense adds (`OBRRT_DENSE_EVERY=obj`): dialogs and menus: only the end matters.
+    fn dense_keep(&self) -> obrrt_core::DenseKeep {
+        obrrt_core::DenseKeep::EndOnly
+    }
     fn kind(&self) -> &'static str {
         if self.option == MENU_OPT_SAVE_AND_CONTINUE { "Menu::SaveAndContinue" } else { "Menu::ContinueNoSave" }
     }
@@ -303,6 +311,10 @@ impl SelectAct {
 }
 
 impl Objective for SelectAct {
+    /// Dense adds (`OBRRT_DENSE_EVERY=obj`): dialogs and menus: only the end matters.
+    fn dense_keep(&self) -> obrrt_core::DenseKeep {
+        obrrt_core::DenseKeep::EndOnly
+    }
     fn kind(&self) -> &'static str {
         "Menu::SelectAct"
     }

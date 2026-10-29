@@ -14,6 +14,7 @@ mod grab;
 mod menu;
 mod npc;
 pub mod mario;
+pub mod moves;
 mod painting;
 mod painting_table;
 mod star;
@@ -27,6 +28,11 @@ use rand::rngs::SmallRng;
 
 pub use menu::set_fast as set_fast_modal;
 pub use painting::Painting;
+
+/// Every castle painting (painting_table.rs), for labs.
+pub fn paintings() -> &'static [Painting] {
+    painting_table::PAINTINGS
+}
 
 /// Objects further than this from Mario in `b` don't generate objectives.
 const OBJECT_RADIUS: f32 = 5000.0;
@@ -85,6 +91,8 @@ pub struct Registry;
 impl Generator for Registry {
     fn generate(&self, b: &St, rng: &mut SmallRng) -> Vec<Arc<dyn Objective>> {
         let mut out: Vec<Arc<dyn Objective>> = Vec::new();
+        // OBRRT_TWOSTAR: the coin count as work under way (St::wip).
+        extra::missions::twostar::install();
         // In a dialog or menu, its options are the only objectives.
         if b.modal() {
             if b.in_dialog() {
@@ -103,6 +111,12 @@ impl Generator for Registry {
             let dy = rng.random_range(-300.0..900.0f32);
             let p = [b.pos[0] + r * a.sin(), b.pos[1] + dy, b.pos[2] + r * a.cos()];
             out.push(Arc::new(mario::PosDist::new(b, p)));
+        }
+        // OBRRT_SWIM_TARGETS=1: and one in the water column from water.
+        if mario::swim_targets() {
+            if let Some(p) = mario::underwater_point(b, rng) {
+                out.push(Arc::new(mario::PosDist::new_swim(b, p)));
+            }
         }
         // A faster route to where b is.
         out.push(Arc::new(mario::PosTime::new(b)));

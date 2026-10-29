@@ -159,8 +159,48 @@ pub struct RewireStats {
     pub frames_saved: u64,
 }
 
+/// Route chains (`Config::chain_route`, OBRRT_CHAIN=route) and the arrival
+/// credit both new modes use.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct RouteChainStats {
+    /// GA plans whose first objective was looked up on the best routes, and
+    /// those the routes had met it on.
+    pub considered: u64,
+    pub on_route: u64,
+    /// ... with a known next objective there (before the coin flip).
+    pub next_known: u64,
+    /// Plans given follow-on stages, and the stages appended.
+    pub planned: u64,
+    pub appended: u64,
+    /// Follow-on stages attempted (the GA got that far), met, and met
+    /// sooner than the route had (with the frames saved).
+    pub tried: u64,
+    pub met: u64,
+    pub sooner: u64,
+    pub frames_saved: u64,
+    /// Hot nodes with a known objective at the last index, and keys.
+    pub route_nodes: u64,
+    pub route_keys: u64,
+    /// Arrival credit: objectives other than the attempt's own stages met
+    /// (or their object consumed in the same zone) between a kept
+    /// segment's start and end state, and per kind.
+    pub arrivals: u64,
+    pub arrivals_by_kind: BTreeMap<&'static str, u64>,
+}
+
+impl RouteChainStats {
+    pub fn line(&self) -> String {
+        format!(
+            "route chains: considered {} on-route {} next-known {} planned {} (+{} stages)  follow-ons tried {} met {} sooner {} (saved {} frames)  route nodes {} keys {}  arrivals credited {}",
+            self.considered, self.on_route, self.next_known, self.planned, self.appended, self.tried, self.met, self.sooner,
+            self.frames_saved, self.route_nodes, self.route_keys, self.arrivals
+        )
+    }
+}
+
 #[derive(Default)]
 pub struct Diagnostics {
+    pub route_chain: RouteChainStats,
     pub rewire: RewireStats,
     /// Earliest game frame reaching each (keys, stars) and each zone, and
     /// how many times it improved.
@@ -326,7 +366,11 @@ impl Diagnostics {
             );
         }
         // Milestones: the earliest game time for each, and how often it improved.
-        let clock = |f: u32| format!("{}:{:04.1}", f / 1800, (f % 1800) as f64 / 30.0);
+        // In whole tenths, so 59.97 s shows as 1:00.0 rather than 0:60.0.
+        let clock = |f: u32| {
+            let t = (f as u64 + 1) / 3;
+            format!("{}:{:02}.{}", t / 600, t % 600 / 10, t % 10)
+        };
         let _ = writeln!(
             s,
             "best times: {}",
@@ -365,4 +409,30 @@ impl Diagnostics {
         );
         s
     }
+}
+
+/// Door-target GA attempts (objectives with `Arrival::Door`): how many,
+/// how many winners met the door, and how many came within 150 of it
+/// airborne or in a landing first (overshooting it). Diagnostics only.
+#[derive(Debug, Default, Clone, Copy, serde::Serialize)]
+pub struct DoorOvershoot {
+    pub attempts: u64,
+    pub met: u64,
+    pub overshoots: u64,
+    pub overshoots_met: u64,
+}
+
+static DOOR: std::sync::Mutex<DoorOvershoot> =
+    std::sync::Mutex::new(DoorOvershoot { attempts: 0, met: 0, overshoots: 0, overshoots_met: 0 });
+
+pub fn door_overshoot(over: bool, met: bool) {
+    let mut d = DOOR.lock().unwrap();
+    d.attempts += 1;
+    d.met += met as u64;
+    d.overshoots += over as u64;
+    d.overshoots_met += (over && met) as u64;
+}
+
+pub fn door_overshoots() -> DoorOvershoot {
+    *DOOR.lock().unwrap()
 }

@@ -11,6 +11,7 @@ pub const ADDR_gCurrSaveFileNum: u32 = 0x7ba0a0;
 pub const ADDR_gDialogBoxState: u32 = 0xb09ff5;
 pub const ADDR_gDialogID: u32 = 0x7bd208;
 pub const ADDR_gDialogLineNum: u32 = 0x7bd20a;
+pub const ADDR_gEnvironmentRegions: u32 = 0xbb08c4;
 pub const ADDR_gHudDisplay: u32 = 0xb0a0fa;
 pub const ADDR_gLakituState: u32 = 0xb097e8;
 pub const ADDR_gLastDialogPageStrPos: u32 = 0xb09ffa;
