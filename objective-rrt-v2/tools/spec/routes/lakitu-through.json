@@ -1,0 +1,69 @@
+{
+ "budget": {
+  "generations": 60,
+  "population": 128
+ },
+ "doc": "fast-king-walk with bob-king's walked landmarks as in the run that solved them (legs-bob-king-qd4-s1, 3452 frames), each BoB leg referenced to and seeded from that run's route.m64; arrival Done (no ground requirement; done_requires_next guards against doomed ends). [Landmarks snapped by legs --check to stable flat ground on the references (LANDMARK_TIPS.md 1-2).]",
+ "legs": [
+  {
+   "doc": "Hill Lakitu skip through the door as one leg: run with OBRRT_LAKITU_THROUGH_DOOR=1.",
+   "key_contains": "hill",
+   "name": "LakituHill",
+   "native": "Tech::LakituSkip",
+   "reference": {
+    "node": 2257,
+    "run": "runs/q8-g995-s1"
+   },
+   "zones": [
+    "grounds",
+    "castle:1"
+   ]
+  },
+  {
+   "name": "BobPainting",
+   "phases": [
+    {
+     "done": {
+      "any": [
+       {
+        "action_class": "cutscene",
+        "hdist": {
+         "lt": 250
+        }
+       },
+       {
+        "zone": "bob"
+       }
+      ]
+     },
+     "name": "painting",
+     "target": {
+      "metric": "h",
+      "point": [
+       -5222,
+       600,
+       -461
+      ]
+     }
+    },
+    {
+     "done": {
+      "zone": "bob"
+     },
+     "frames": 70,
+     "name": "warp"
+    }
+   ],
+   "reference": {
+    "node": 2257,
+    "run": "runs/q8-g995-s1"
+   },
+   "zone": "castle:1"
+  }
+ ],
+ "name": "lakitu-door",
+ "seed_ref": true,
+ "start": {
+  "boot": "tas"
+ }
+}

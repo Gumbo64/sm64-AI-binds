@@ -1,0 +1,10 @@
+[package]
+name = "obrrt-core"
+description = "The contract between Objective-based RRT's search and its objectives: game snapshots and the Objective trait."
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+rand.workspace = true
+sm64-binds.workspace = true

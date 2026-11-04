@@ -1,0 +1,398 @@
+{
+ "budget": {
+  "generations": 60,
+  "population": 128
+ },
+ "doc": "As -a, with the BLJ for speed (Tech::BljRun) and the superjump as its own Spec leg aimed at the summit (hyper-walk, hyper-launch policies).",
+ "legs": [
+  {
+   "doc": "Tech::LakituSkip's Hill mode (objectives/src/extra/tech/lakituskip.rs): the slope superjump over Lakitu's box to the door.",
+   "key_contains": "hill",
+   "name": "LakituHill",
+   "native": "Tech::LakituSkip",
+   "reference": {
+    "node": 2257,
+    "run": "runs/q8-g995-s1"
+   },
+   "zones": [
+    "grounds",
+    "castle:1"
+   ]
+  },
+  {
+   "name": "BobPainting",
+   "phases": [
+    {
+     "done": {
+      "any": [
+       {
+        "action_class": "cutscene",
+        "hdist": {
+         "lt": 250
+        }
+       },
+       {
+        "zone": "bob"
+       }
+      ]
+     },
+     "name": "painting",
+     "target": {
+      "metric": "h",
+      "point": [
+       -5222,
+       600,
+       -461
+      ]
+     }
+    },
+    {
+     "done": {
+      "zone": "bob"
+     },
+     "frames": 70,
+     "name": "warp"
+    }
+   ],
+   "reference": {
+    "node": 2257,
+    "run": "runs/q8-g995-s1"
+   },
+   "zone": "castle:1"
+  },
+  {
+   "name": "Ramp",
+   "zone": "bob",
+   "phases": [
+    {
+     "name": "ramp",
+     "target": {
+      "sphere": {
+       "center": [
+        1600,
+        300,
+        4550
+       ],
+       "r": 400
+      }
+     }
+    }
+   ],
+   "reference": {
+    "run": "runs/q6-rrfobnb-s3",
+    "node": 32609
+   },
+   "stable_frames": 0
+  },
+  {
+   "name": "Blj",
+   "native": "Tech::BljRun",
+   "key_contains": "bob-elevator",
+   "zone": "bob",
+   "done_requires_next": false,
+   "stable_frames": 0
+  },
+  {
+   "name": "SuperJump",
+   "zone": "bob",
+   "stable_frames": 0,
+   "done_requires_next": false,
+   "hints": {
+    "precision": "precise"
+   },
+   "phases": [
+    {
+     "name": "up",
+     "target": {
+      "point": [
+       1636,
+       4293,
+       -5300
+      ]
+     },
+     "done": {
+      "y": {
+       "ge": 4000
+      }
+     }
+    }
+   ]
+  },
+  {
+   "dialogs": "stop",
+   "name": "Summit",
+   "phases": [
+    {
+     "name": "summit",
+     "target": {
+      "sphere": {
+       "center": [
+        1653,
+        4022,
+        -5727
+       ],
+       "r": 300
+      }
+     }
+    }
+   ],
+   "reference": {
+    "m64": "oss2/runs/legs-bob-king-qd4-s1/route.m64"
+   },
+   "zone": "bob"
+  },
+  {
+   "name": "KingIntro",
+   "zone": "bob",
+   "dialogs": "stop",
+   "stable_frames": 0,
+   "hints": {
+    "precision": "precise"
+   },
+   "lost": {
+    "y": {
+     "lt": 2500
+    }
+   },
+   "doc": "Reach the King until his intro dialog opens: the only leg of the fight where a dialog ends the leg.",
+   "phases": [
+    {
+     "done": {
+      "held": "target"
+     },
+     "frames": 10,
+     "name": "intro",
+     "steer_button": {
+      "button": "B",
+      "within": 200
+     },
+     "target": {
+      "object": {
+       "bhv": "bhvKingBobomb"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "KingHit1",
+   "zone": "bob",
+   "stable_frames": 0,
+   "hints": {
+    "precision": "precise"
+   },
+   "lost": {
+    "y": {
+     "lt": 2500
+    }
+   },
+   "doc": "One hit. No \"dialogs\": \"stop\": a dialog here (his return after a throw off the summit) is not Done.",
+   "phases": [
+    {
+     "done": {
+      "held": "target"
+     },
+     "frames": 10,
+     "name": "grab1",
+     "steer_button": {
+      "button": "B",
+      "within": 200
+     },
+     "target": {
+      "object": {
+       "bhv": "bhvKingBobomb"
+      }
+     }
+    },
+    {
+     "doc": "Holding him: steer at the summit's middle; a throw predicted to land off the hill (or him off it) costs his way back (~105), DIALOG_128 (~90) and the regrab (~35).",
+     "done": {
+      "field": {
+       "le": 2,
+       "name": "health"
+      }
+     },
+     "frames": 60,
+     "name": "hit1",
+     "penalty": [
+      {
+       "frames": 230,
+       "when": {
+        "thrown_off": true
+       }
+      }
+     ],
+     "steer": {
+      "point": [
+       2600,
+       4293,
+       -4800
+      ]
+     },
+     "target": {
+      "object": {
+       "bhv": "bhvKingBobomb"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "KingHit2",
+   "zone": "bob",
+   "stable_frames": 0,
+   "hints": {
+    "precision": "precise"
+   },
+   "lost": {
+    "y": {
+     "lt": 2500
+    }
+   },
+   "doc": "One hit. No \"dialogs\": \"stop\": a dialog here (his return after a throw off the summit) is not Done.",
+   "phases": [
+    {
+     "done": {
+      "held": "target"
+     },
+     "frames": 10,
+     "name": "grab2",
+     "steer_button": {
+      "button": "B",
+      "within": 200
+     },
+     "target": {
+      "object": {
+       "bhv": "bhvKingBobomb"
+      }
+     }
+    },
+    {
+     "doc": "Holding him: steer at the summit's middle; a throw predicted to land off the hill (or him off it) costs his way back (~105), DIALOG_128 (~90) and the regrab (~35).",
+     "done": {
+      "field": {
+       "le": 1,
+       "name": "health"
+      }
+     },
+     "frames": 60,
+     "name": "hit2",
+     "penalty": [
+      {
+       "frames": 230,
+       "when": {
+        "thrown_off": true
+       }
+      }
+     ],
+     "steer": {
+      "point": [
+       2600,
+       4293,
+       -4800
+      ]
+     },
+     "target": {
+      "object": {
+       "bhv": "bhvKingBobomb"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "KingHit3",
+   "zone": "bob",
+   "stable_frames": 0,
+   "hints": {
+    "precision": "precise"
+   },
+   "lost": {
+    "y": {
+     "lt": 2500
+    }
+   },
+   "doc": "One hit. No \"dialogs\": \"stop\": a dialog here (his return after a throw off the summit) is not Done.",
+   "phases": [
+    {
+     "done": {
+      "held": "target"
+     },
+     "frames": 10,
+     "name": "grab3",
+     "steer_button": {
+      "button": "B",
+      "within": 200
+     },
+     "target": {
+      "object": {
+       "bhv": "bhvKingBobomb"
+      }
+     }
+    },
+    {
+     "doc": "Holding him: steer at the summit's middle; a throw predicted to land off the hill (or him off it) costs his way back (~105), DIALOG_128 (~90) and the regrab (~35).",
+     "done": {
+      "field": {
+       "le": 0,
+       "name": "health"
+      }
+     },
+     "frames": 60,
+     "name": "hit3",
+     "penalty": [
+      {
+       "frames": 230,
+       "when": {
+        "thrown_off": true
+       }
+      }
+     ],
+     "steer": {
+      "point": [
+       2600,
+       4293,
+       -4800
+      ]
+     },
+     "target": {
+      "object": {
+       "bhv": "bhvKingBobomb"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "KingStar",
+   "phases": [
+    {
+     "done": {
+      "star_got": [
+       1,
+       1
+      ]
+     },
+     "name": "star",
+     "target": {
+      "point": [
+       2000,
+       4500,
+       -4500
+      ]
+     }
+    }
+   ],
+   "reference": {
+    "m64": "oss2/runs/legs-bob-king-qd4-s1/route.m64"
+   },
+   "zone": "bob",
+   "stable_frames": 0
+  }
+ ],
+ "name": "fast-king-superjump-b",
+ "seed_ref": true,
+ "start": {
+  "boot": "tas"
+ }
+}

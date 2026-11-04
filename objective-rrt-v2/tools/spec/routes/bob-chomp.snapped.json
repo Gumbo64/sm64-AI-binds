@@ -1,0 +1,278 @@
+{
+  "doc": "Castle-grounds root (obrrt2's TAS boot) -> BoB star 6 the intended way: the bridge, the castle door, the BoB painting, the foot of the ramp, the elevator top, the Chomp's hill, the Chomp's post pounded 3 times, the gate broken by the freed Chomp, the star. Landmarks follow runs/q2-star-s2's route (the obrrt2 route that pounds the post). [Landmarks snapped by legs --check to stable flat ground on the references (LANDMARK_TIPS.md 1-2).]",
+  "legs": [
+    {
+      "name": "Bridge",
+      "phases": [
+        {
+          "done": {
+            "action_class": [
+              "stationary",
+              "moving"
+            ],
+            "controllable": true,
+            "dist": {
+              "le": 0
+            }
+          },
+          "name": "bridge",
+          "target": {
+            "sphere": {
+              "center": [
+                -573.0,
+                807.0,
+                424.0
+              ],
+              "r": 120
+            }
+          }
+        }
+      ],
+      "zone": "grounds"
+    },
+    {
+      "dialogs": "stop",
+      "doc": "Lakitu's dialog opens on the way unless the route skips it: 'dialogs': 'stop' presses it through and goes on.",
+      "name": "CastleDoor",
+      "phases": [
+        {
+          "arrival": "door",
+          "done": {
+            "zone": "castle"
+          },
+          "frames": 30,
+          "name": "door",
+          "target": {
+            "point": [
+              0,
+              803,
+              -3155
+            ]
+          }
+        }
+      ],
+      "zone": "grounds"
+    },
+    {
+      "name": "BobPainting",
+      "phases": [
+        {
+          "done": {
+            "any": [
+              {
+                "action_class": "cutscene",
+                "hdist": {
+                  "lt": 250
+                }
+              },
+              {
+                "zone": "bob"
+              }
+            ]
+          },
+          "name": "painting",
+          "target": {
+            "metric": "h",
+            "point": [
+              -5222,
+              600,
+              -461
+            ]
+          }
+        },
+        {
+          "done": {
+            "zone": "bob"
+          },
+          "frames": 70,
+          "name": "warp"
+        }
+      ],
+      "zone": "castle:1"
+    },
+    {
+      "name": "Ramp",
+      "phases": [
+        {
+          "done": {
+            "action_class": [
+              "stationary",
+              "moving"
+            ],
+            "controllable": true,
+            "dist": {
+              "le": 0
+            }
+          },
+          "name": "ramp",
+          "target": {
+            "sphere": {
+              "center": [
+                1666.0,
+                204.0,
+                4560.0
+              ],
+              "r": 120
+            }
+          }
+        }
+      ],
+      "zone": "bob"
+    },
+    {
+      "doc": "The checkerboard elevator's top (q2-star-s2 rides it up to y ~1058 by the ramp).",
+      "name": "Elevator",
+      "phases": [
+        {
+          "done": {
+            "action_class": [
+              "stationary",
+              "moving"
+            ],
+            "controllable": true,
+            "dist": {
+              "le": 0
+            }
+          },
+          "name": "top",
+          "target": {
+            "sphere": {
+              "center": [
+                1740.0,
+                644.0,
+                4466.0
+              ],
+              "r": 120
+            }
+          }
+        }
+      ],
+      "zone": "bob"
+    },
+    {
+      "name": "ChompHill",
+      "phases": [
+        {
+          "done": {
+            "action_class": [
+              "stationary",
+              "moving"
+            ],
+            "controllable": true,
+            "dist": {
+              "le": 0
+            }
+          },
+          "name": "hill",
+          "target": {
+            "sphere": {
+              "center": [
+                893.0,
+                768.0,
+                2924.0
+              ],
+              "r": 120
+            }
+          }
+        }
+      ],
+      "zone": "bob"
+    },
+    {
+      "hints": {
+        "precision": "precise"
+      },
+      "name": "ChompPost",
+      "phases": [
+        {
+          "arrival": "stop",
+          "frames": 25,
+          "name": "posts",
+          "repeat": {
+            "count": {
+              "field": "home_dy",
+              "per": 60
+            },
+            "frames": 35,
+            "n": 3
+          },
+          "steer_button": {
+            "button": "Z",
+            "within": 120
+          },
+          "target": {
+            "object": {
+              "bhv": "bhvWoodenPost",
+              "near": [
+                260,
+                735,
+                1920
+              ],
+              "offset": [
+                0,
+                80,
+                0
+              ],
+              "within": 400
+            }
+          }
+        }
+      ],
+      "zone": "bob"
+    },
+    {
+      "name": "GateStar",
+      "phases": [
+        {
+          "done": {
+            "absent": "bhvChainChompGate"
+          },
+          "frames": 180,
+          "name": "gate",
+          "steer": {
+            "point": [
+              1550,
+              1200,
+              300
+            ]
+          }
+        },
+        {
+          "done": {
+            "star_got": [
+              1,
+              6
+            ]
+          },
+          "name": "star",
+          "target": {
+            "point": [
+              1550,
+              1200,
+              300
+            ]
+          }
+        }
+      ],
+      "zone": "bob"
+    }
+  ],
+  "name": "bob-chomp",
+  "reference": [
+    {
+      "node": 12430,
+      "run": "runs/q2-star-s2"
+    },
+    {
+      "node": 15157,
+      "run": "runs/q6-p-s1"
+    },
+    {
+      "frames": 12000,
+      "m64": "ref/tas/full-120star-2026-U.m64"
+    }
+  ],
+  "start": {
+    "boot": "tas"
+  }
+}

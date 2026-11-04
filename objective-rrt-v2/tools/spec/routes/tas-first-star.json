@@ -1,0 +1,282 @@
+{
+ "name": "tas-first-star",
+ "doc": "The 2026 120-star TAS's first star: VCutM at frame 2569 (1:25.6), from its own frame 1646, every leg seeded from it.",
+ "start": {
+  "boot": "tas"
+ },
+ "seed_ref": true,
+ "budget": {
+  "population": 256,
+  "generations": 150
+ },
+ "legs": [
+  {
+   "name": "HillToSlope",
+   "zone": "grounds",
+   "stable_frames": 0,
+   "done_requires_next": false,
+   "reference": {
+    "m64": "ref/tas/full-120star-2026-U.m64",
+    "frames": 2600
+   },
+   "hints": {
+    "precision": "precise"
+   },
+   "phases": [
+    {
+     "name": "slope",
+     "target": {
+      "sphere": {
+       "center": [
+        3445,
+        -170,
+        788
+       ],
+       "r": 120
+      }
+     },
+     "done": {
+      "action_class": [
+       "stationary",
+       "moving"
+      ],
+      "controllable": true,
+      "dist": {
+       "le": 0
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "BljToWarp",
+   "zones": [
+    "grounds",
+    "vcutm"
+   ],
+   "stable_frames": 0,
+   "done_requires_next": false,
+   "reference": {
+    "m64": "ref/tas/full-120star-2026-U.m64",
+    "frames": 2600
+   },
+   "hints": {
+    "precision": "precise"
+   },
+   "doc": "Slope BLJ to about -6100, one walking frame into the moat warp (TAS 1760-1852). Seeded from the TAS, pause buffering included.",
+   "phases": [
+    {
+     "name": "warp",
+     "target": {
+      "point": [
+       -3482,
+       -765,
+       -1977
+      ]
+     },
+     "frames": 20,
+     "done": {
+      "zone": "vcutm"
+     }
+    }
+   ]
+  },
+  {
+   "name": "Course1",
+   "zone": "vcutm",
+   "stable_frames": 0,
+   "done_requires_next": false,
+   "reference": {
+    "m64": "ref/tas/full-120star-2026-U.m64",
+    "frames": 2600
+   },
+   "hints": {
+    "precision": "precise"
+   },
+   "phases": [
+    {
+     "name": "course1",
+     "target": {
+      "sphere": {
+       "center": [
+        -6047,
+        5022,
+        -5216
+       ],
+       "r": 220
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "Course2",
+   "zone": "vcutm",
+   "stable_frames": 0,
+   "done_requires_next": false,
+   "reference": {
+    "m64": "ref/tas/full-120star-2026-U.m64",
+    "frames": 2600
+   },
+   "hints": {
+    "precision": "precise"
+   },
+   "phases": [
+    {
+     "name": "course2",
+     "target": {
+      "sphere": {
+       "center": [
+        -4672,
+        -227,
+        -1019
+       ],
+       "r": 220
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "Course3",
+   "zone": "vcutm",
+   "stable_frames": 0,
+   "done_requires_next": false,
+   "reference": {
+    "m64": "ref/tas/full-120star-2026-U.m64",
+    "frames": 2600
+   },
+   "hints": {
+    "precision": "precise"
+   },
+   "phases": [
+    {
+     "name": "course3",
+     "target": {
+      "sphere": {
+       "center": [
+        -2211,
+        -2866,
+        -2929
+       ],
+       "r": 220
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "Course4",
+   "zone": "vcutm",
+   "stable_frames": 0,
+   "done_requires_next": false,
+   "reference": {
+    "m64": "ref/tas/full-120star-2026-U.m64",
+    "frames": 2600
+   },
+   "hints": {
+    "precision": "precise"
+   },
+   "phases": [
+    {
+     "name": "course4",
+     "target": {
+      "sphere": {
+       "center": [
+        290,
+        -1817,
+        -6424
+       ],
+       "r": 220
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "Course5",
+   "zone": "vcutm",
+   "stable_frames": 0,
+   "done_requires_next": false,
+   "reference": {
+    "m64": "ref/tas/full-120star-2026-U.m64",
+    "frames": 2600
+   },
+   "hints": {
+    "precision": "precise"
+   },
+   "phases": [
+    {
+     "name": "course5",
+     "target": {
+      "sphere": {
+       "center": [
+        4468,
+        0,
+        -5671
+       ],
+       "r": 220
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "Course6",
+   "zone": "vcutm",
+   "stable_frames": 0,
+   "done_requires_next": false,
+   "reference": {
+    "m64": "ref/tas/full-120star-2026-U.m64",
+    "frames": 2600
+   },
+   "hints": {
+    "precision": "precise"
+   },
+   "phases": [
+    {
+     "name": "course6",
+     "target": {
+      "sphere": {
+       "center": [
+        4716,
+        0,
+        -5742
+       ],
+       "r": 220
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "VcutmStar",
+   "zone": "vcutm",
+   "stable_frames": 0,
+   "reference": {
+    "m64": "ref/tas/full-120star-2026-U.m64",
+    "frames": 2600
+   },
+   "hints": {
+    "precision": "precise"
+   },
+   "phases": [
+    {
+     "name": "star",
+     "target": {
+      "point": [
+       4564,
+       17,
+       -4599
+      ]
+     },
+     "done": {
+      "stars_gained": {
+       "ge": 1
+      }
+     }
+    }
+   ]
+  }
+ ]
+}

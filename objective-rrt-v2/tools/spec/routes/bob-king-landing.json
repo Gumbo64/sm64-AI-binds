@@ -1,0 +1,482 @@
+{
+ "name": "bob-king-landing",
+ "doc": "BoB spawn (runs/q8-g995-s3 node 2426, after the act select and the intro dialog) -> up the mountain path (landmarks from that run's route, which gets the King's star at 6660; it BLJs once near ChompSide, these legs walk) -> the summit -> King Bob-omb grabbed and thrown 3 times (health 3 -> 0) -> his star at (2000, 4500, -4500) (king_bobomb.inc.c spawn_default_star). A template for a fight leg: object targets that follow the King, grab/hit phases read from his health; the King's dialogs are pressed through ('dialogs': 'stop'). This variant adds the King-throw fix: in the hit phases a `thrown_off` penalty (core/src/king.rs: his flight predicted against the summit's floor) and steering at the summit's middle while holding him.",
+ "start": {
+  "run": "runs/q8-g995-s3",
+  "node": 2426
+ },
+ "reference": [
+  {
+   "run": "runs/q8-g995-s3",
+   "node": 51783
+  }
+ ],
+ "legs": [
+  {
+   "name": "Hill1",
+   "zone": "bob",
+   "phases": [
+    {
+     "name": "hill1",
+     "target": {
+      "sphere": {
+       "center": [
+        2966,
+        761,
+        3262
+       ],
+       "r": 300
+      }
+     },
+     "done": {
+      "dist": {
+       "le": 0
+      },
+      "action_class": [
+       "stationary",
+       "moving"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "name": "ChompSide",
+   "zone": "bob",
+   "phases": [
+    {
+     "name": "chompside",
+     "target": {
+      "sphere": {
+       "center": [
+        5339,
+        927,
+        1098
+       ],
+       "r": 300
+      }
+     },
+     "done": {
+      "dist": {
+       "le": 0
+      },
+      "action_class": [
+       "stationary",
+       "moving"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "name": "PoleBase",
+   "zone": "bob",
+   "phases": [
+    {
+     "name": "polebase",
+     "target": {
+      "sphere": {
+       "center": [
+        7397,
+        1250,
+        -4564
+       ],
+       "r": 300
+      }
+     },
+     "done": {
+      "dist": {
+       "le": 0
+      },
+      "action_class": [
+       "stationary",
+       "moving"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "name": "Ledge1",
+   "zone": "bob",
+   "phases": [
+    {
+     "name": "ledge1",
+     "target": {
+      "sphere": {
+       "center": [
+        7781,
+        1864,
+        -5264
+       ],
+       "r": 300
+      }
+     },
+     "done": {
+      "dist": {
+       "le": 0
+      },
+      "action_class": [
+       "stationary",
+       "moving"
+      ]
+     }
+    }
+   ],
+   "moves": "policies"
+  },
+  {
+   "name": "Ledge1b",
+   "zone": "bob",
+   "doc": "Up the east slope first (the reference's path turns at (8046, 2126, -5779)); the straight line from Ledge1 to Ledge2 crosses the steep slope, where rollouts dive and slide back.",
+   "phases": [
+    {
+     "name": "ledge1b",
+     "target": {
+      "sphere": {
+       "center": [
+        8040,
+        2100,
+        -5780
+       ],
+       "r": 400
+      },
+      "metric": "h"
+     },
+     "done": {
+      "dist": {
+       "le": 0
+      },
+      "action_class": [
+       "stationary",
+       "moving"
+      ]
+     }
+    }
+   ],
+   "moves": "policies"
+  },
+  {
+   "name": "Ledge1c",
+   "zone": "bob",
+   "phases": [
+    {
+     "name": "ledge1c",
+     "target": {
+      "sphere": {
+       "center": [
+        7813,
+        2055,
+        -6260
+       ],
+       "r": 400
+      },
+      "metric": "h"
+     },
+     "done": {
+      "dist": {
+       "le": 0
+      },
+      "action_class": [
+       "stationary",
+       "moving"
+      ]
+     }
+    }
+   ],
+   "moves": "policies"
+  },
+  {
+   "name": "Ledge2",
+   "zone": "bob",
+   "phases": [
+    {
+     "name": "ledge2",
+     "target": {
+      "sphere": {
+       "center": [
+        6689,
+        2137,
+        -6599
+       ],
+       "r": 300
+      }
+     },
+     "done": {
+      "dist": {
+       "le": 0
+      },
+      "action_class": [
+       "stationary",
+       "moving"
+      ]
+     }
+    }
+   ],
+   "moves": "policies"
+  },
+  {
+   "name": "BackPath",
+   "zone": "bob",
+   "phases": [
+    {
+     "name": "backpath",
+     "target": {
+      "sphere": {
+       "center": [
+        2937,
+        2722,
+        -7213
+       ],
+       "r": 300
+      }
+     },
+     "done": {
+      "dist": {
+       "le": 0
+      },
+      "action_class": [
+       "stationary",
+       "moving"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "name": "UpperPath",
+   "zone": "bob",
+   "phases": [
+    {
+     "name": "upperpath",
+     "target": {
+      "sphere": {
+       "center": [
+        449,
+        3229,
+        -5721
+       ],
+       "r": 300
+      }
+     },
+     "done": {
+      "dist": {
+       "le": 0
+      },
+      "action_class": [
+       "stationary",
+       "moving"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "name": "Summit",
+   "zone": "bob",
+   "phases": [
+    {
+     "name": "summit",
+     "target": {
+      "sphere": {
+       "center": [
+        1653,
+        4022,
+        -5727
+       ],
+       "r": 300
+      }
+     },
+     "done": {
+      "dist": {
+       "le": 0
+      },
+      "action_class": [
+       "stationary",
+       "moving"
+      ]
+     }
+    }
+   ],
+   "dialogs": "stop"
+  },
+  {
+   "name": "KingThrows",
+   "zone": "bob",
+   "dialogs": "stop",
+   "phases": [
+    {
+     "name": "grab1",
+     "target": {
+      "object": {
+       "bhv": "bhvKingBobomb"
+      }
+     },
+     "done": {
+      "held": "target"
+     },
+     "frames": 10,
+     "steer_button": {
+      "button": "B",
+      "within": 200
+     }
+    },
+    {
+     "name": "hit1",
+     "target": {
+      "object": {
+       "bhv": "bhvKingBobomb"
+      }
+     },
+     "done": {
+      "field": {
+       "name": "health",
+       "le": 2
+      }
+     },
+     "frames": 60,
+     "steer": {
+      "point": [
+       2600,
+       4293,
+       -4800
+      ]
+     },
+     "penalty": [
+      {
+       "when": {
+        "thrown_off": true
+       },
+       "frames": 230
+      }
+     ],
+     "doc": "Holding him: steer at the summit's middle; a throw predicted to land off the hill (or him off it) costs his way back (~105), DIALOG_128 (~90) and the regrab (~35)."
+    },
+    {
+     "name": "grab2",
+     "target": {
+      "object": {
+       "bhv": "bhvKingBobomb"
+      }
+     },
+     "done": {
+      "held": "target"
+     },
+     "frames": 10,
+     "steer_button": {
+      "button": "B",
+      "within": 200
+     }
+    },
+    {
+     "name": "hit2",
+     "target": {
+      "object": {
+       "bhv": "bhvKingBobomb"
+      }
+     },
+     "done": {
+      "field": {
+       "name": "health",
+       "le": 1
+      }
+     },
+     "frames": 60,
+     "steer": {
+      "point": [
+       2600,
+       4293,
+       -4800
+      ]
+     },
+     "penalty": [
+      {
+       "when": {
+        "thrown_off": true
+       },
+       "frames": 230
+      }
+     ],
+     "doc": "Holding him: steer at the summit's middle; a throw predicted to land off the hill (or him off it) costs his way back (~105), DIALOG_128 (~90) and the regrab (~35)."
+    },
+    {
+     "name": "grab3",
+     "target": {
+      "object": {
+       "bhv": "bhvKingBobomb"
+      }
+     },
+     "done": {
+      "held": "target"
+     },
+     "frames": 10,
+     "steer_button": {
+      "button": "B",
+      "within": 200
+     }
+    },
+    {
+     "name": "hit3",
+     "target": {
+      "object": {
+       "bhv": "bhvKingBobomb"
+      }
+     },
+     "done": {
+      "field": {
+       "name": "health",
+       "le": 0
+      }
+     },
+     "frames": 60,
+     "steer": {
+      "point": [
+       2600,
+       4293,
+       -4800
+      ]
+     },
+     "penalty": [
+      {
+       "when": {
+        "thrown_off": true
+       },
+       "frames": 230
+      }
+     ],
+     "doc": "Holding him: steer at the summit's middle; a throw predicted to land off the hill (or him off it) costs his way back (~105), DIALOG_128 (~90) and the regrab (~35)."
+    }
+   ],
+   "lost": {
+    "y": {
+     "lt": 2500
+    }
+   },
+   "hints": {
+    "precision": "precise"
+   }
+  },
+  {
+   "name": "KingStar",
+   "zone": "bob",
+   "phases": [
+    {
+     "name": "star",
+     "target": {
+      "point": [
+       2000,
+       4500,
+       -4500
+      ]
+     },
+     "done": {
+      "star_got": [
+       1,
+       1
+      ]
+     }
+    }
+   ]
+  }
+ ]
+}

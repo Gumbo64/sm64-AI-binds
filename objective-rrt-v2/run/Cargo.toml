@@ -1,0 +1,57 @@
+[package]
+name = "obrrt-run"
+description = "Runs Objective-based RRT: wires the search to the objectives, command line and outputs."
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "obrrt2"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+rand.workspace = true
+serde_json.workspace = true
+sm64-binds.workspace = true
+obrrt-core.workspace = true
+obrrt-search.workspace = true
+obrrt-objectives.workspace = true
+# OBRRT_SPEC=<file or dir>: declarative objectives added to Registry's (off: unused).
+obrrt-spec.workspace = true
+
+[[bin]]
+name = "probe"
+path = "src/probe.rs"
+
+[[bin]]
+name = "nodepath"
+path = "src/nodepath.rs"
+
+[[bin]]
+name = "obrrt-route"
+path = "src/route.rs"
+
+[[bin]]
+name = "steertest"
+path = "src/steertest.rs"
+
+
+[[bin]]
+name = "modalbench"
+path = "src/modalbench.rs"
+
+[[bin]]
+name = "tasplay"
+path = "src/tasplay.rs"
+
+[[bin]]
+name = "ilsync"
+path = "src/ilsync.rs"
+
+[[bin]]
+name = "dataset"
+path = "src/dataset.rs"
+
+[[bin]]
+name = "goalbench"
+path = "src/goalbench.rs"

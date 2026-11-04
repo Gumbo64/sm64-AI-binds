@@ -1,0 +1,728 @@
+//! `Jrb::PillarCannonless` (technique `jrbcless`): JRB star 5, "Blast to the
+//! Stone Pillar", without the cannon: climb out of the water onto something
+//! high near the cliff, jump and wall-kick off the cliff face, and ledge-grab
+//! the stone platform the star's ! box floats over.
+//!
+//! The place (decomp, levels/jrb/areas/1/collision.inc.c and script.c):
+//! - The platform is a ledge 103 units thick sticking out of the bay's back
+//!   cliff: floor y 1946 over the quad (522, 2287), (1762, 1734),
+//!   (1853, 2191), (1546, 2703); the cliff behind it is a true wall (normals
+//!   (0.06, 0, 1.00) and (0.66, 0, 0.75)) from below the water up to 4096.
+//!   The ! box (`bhvExclamationBox`, behaviour byte 0 = 4, star index 4) is
+//!   at (1540, 2160, 2130), 214 above the floor, in every act (US; the JP
+//!   version places a bare star).
+//! - The water surface is 1024, 922 below the floor. A water jump reaches
+//!   about 1190, nowhere near.
+//!
+//! Launch spots (where the climb starts):
+//! - The stone spire next to the platform: a thin column at about
+//!   (130, -500..2304, 2720) whose faces have normal y 0.04, so they're
+//!   floors, not walls (surface_load.c: normal.y > 0.01 is a floor), and
+//!   Mario can walk a little way up out of the water. The 120-star TAS by
+//!   rikku (ref/tas/dumps/full-120star-rikku-U.csv, frames 7824-7894, act 3)
+//!   swims up the spire, walks from y 1033 to 1244 on it, butt-slides off,
+//!   jumps at the cliff, hits it (ACT_AIR_HIT_WALL), wall-kicks from y 1324
+//!   to 1836 and ledge-grabs the platform at (777, 1946, 2380): 70 frames
+//!   from leaving the water. Nothing act-dependent is used, so it works in
+//!   act 1 too. That's [`SPIRE`] and [`LEDGE`] below.
+//! - The floating ship (`bhvInSunkenShip3`, its collision, acts 2-6 only,
+//!   at (4880, 820, 2375), script.c): the catalogue's route (Ukikipedia's
+//!   Cless page: long jump off the ship, then wall kick). Its highest deck is
+//!   the stern, local y 1536 at local z -1945..-1740
+//!   (levels/jrb/wooden_ship/collision.inc.c), so absolute about
+//!   (4880, 2356, 535): 410 above the platform but ~3,000 from it, so this
+//!   launch is the long shot of the two. Taken from the loaded objects at
+//!   runtime when the ship is there (it rocks a little; that's ignored).
+//!
+//! So the objective rewards getting near the platform from below, with a
+//! bonus once a wall kick has happened, and succeeds when Mario stands on
+//! (or ledge-grabs) the platform, or has the star. The jumps, the kick timing
+//! and the ledge grab are the GA's; the hints only point at the launch spot
+//! (in the water) and at the ledge (out of it), with A on alternate frames in
+//! the air so a kick is tried at the wall.
+//!
+//! Hyperspeed mode (`Jrb::PillarHyper`, technique `jrbclesshyper`; c5 §6,
+//! the 2026 TAS f82451-82613, 142 frames from control to the platform):
+//! 1. long jump onto the dock slope at (-5115, 947, 1230) (type 0x15, ny
+//!    0.970) facing downhill (yaw 17561, +x) and BLJ in place, A+Z on
+//!    alternate frames, no pause: -9.8 -> -477 in 10 presses (f82522-82541;
+//!    the slope ends each jump at once, so x stays -5115 until -150);
+//! 2. the BLJ carries him west along the dock at -470; the wall at x -7642
+//!    (normal (0.99, 0, 0.14)) flips his facing (f82547 WALKING, f82548
+//!    DECELERATING at -429, facing -x), so the speed now carries him east;
+//! 3. off the dock edge (FREEFALL f82553), B: DIVE straight into
+//!    DIVE_SLIDE on the rock at (-5053, 984, 2125), A: BACKWARD_ROLLOUT at
+//!    -405 for 17 frames over the water (y 950-1110);
+//! 4. lands at the spire base (-17, 980, 2746), Z: CROUCH_SLIDE, then
+//!    BRAKING at -305 whose quarter steps climb the spire's ny 0.04 floor
+//!    faces from 980 to 2343 in 4 frames (f82576-82579);
+//! 5. BUTT_SLIDE down the far face, A at y ~1910: STEEP_JUMP backwards at
+//!    -98, landing on the platform (y 1946) at f82593.
+//!
+//! The objective: base = on the dock near the slope and slow (the BLJ
+//! start), or backwards at |fv| > 150 out of the water between the dock
+//! and the spire, or on the spire backwards; heuristic = straight line to
+//! the platform (via the slope from the dock); success = the platform test
+//! above (or the star), no cannon. Progress in stages: the graded BLJ
+//! metric (blj.rs) on the dock, then nearness to the spire base at
+//! hyperspeed, then height gained on the spire (+ nearness to the box once
+//! above 1900). The dock part is a rule overlay ([`dock_rule`]: the
+//! TAS's run-up, two long jumps onto the slope, then A+Z on landings with
+//! the genome's stick on the press frames), up to -400; the pinned BLJ
+//! wasn't reproduced in the lab (see [`dock_rule`]). After that the genome
+//! plays, with B forced on a
+//! fast FREEFALL frame and A on a fast DIVE_SLIDE frame (both one-frame
+//! windows), and hints for the rest (Z on the spire base, A in the butt
+//! slide above 1850).
+//!
+//! Gating: nothing blocks this star (`star_blocked` covers BoB's star 6
+//! only), so there's nothing to soften. The cannon route is excluded from
+//! success: a trajectory that went through the cannon doesn't count.
+
+use std::sync::Arc;
+
+use obrrt_core::buttons::{A_BUTTON, B_BUTTON, Z_TRIG};
+use obrrt_core::layout::*;
+use obrrt_core::{Eta, GamePad, Mem, Obj, Objective, PadOverlay, St, dist, frames_for};
+
+const COURSE: i16 = 3;
+const INDEX: u8 = 4;
+const AREA: u8 = 1;
+const BOX: &str = "bhvExclamationBox";
+const SHIP: &str = "bhvInSunkenShip3";
+/// The platform's floor is this far below the box (2160 - 1946).
+const BOX_ABOVE_FLOOR: f32 = 214.0;
+/// The platform reaches this far from the box horizontally (its far corner
+/// (522, 2287) is 1030 from it).
+const PLATFORM_REACH: f32 = 1100.0;
+/// Where the TAS leaves the water onto the spire (rikku, frame 7830).
+const SPIRE: [f32; 3] = [127.0, 1100.0, 2779.0];
+/// Where the TAS ledge-grabs the platform (rikku, frame 7894).
+const LEDGE: [f32; 3] = [777.0, 1946.0, 2380.0];
+/// Offered from states this close to the ledge (straight line).
+const OFFER_RADIUS: f32 = 4000.0;
+/// The ship's stern deck relative to the ship object (local y, local z).
+const SHIP_STERN: [f32; 2] = [1536.0, -1840.0];
+/// The wall kick off the cliff still to do: v1's kick bonus (250 units) at
+/// PACE.
+const KICK_FRAMES: f64 = 8.0;
+/// `mem.flags` of PillarCannonless: the cannon was entered this rollout
+/// (no success after it, even mid-trajectory: v1 checked every state of its
+/// success but its progress only up to the cannon).
+const CANNONED: u32 = 1;
+/// `mem.flags` of PillarCannonless: a wall kick above the water seen.
+const KICKED: u32 = 2;
+
+/// The star's ! box, if loaded (it's gone once broken).
+fn star_box(s: &St) -> Option<&Obj> {
+    s.objects().iter().find(|o| o.bhv_name() == BOX && (o.beh_params >> 24) as u8 == INDEX)
+}
+
+fn hdist(a: [f32; 3], b: [f32; 3]) -> f32 {
+    ((a[0] - b[0]).powi(2) + (a[2] - b[2]).powi(2)).sqrt()
+}
+
+fn in_jrb(s: &St) -> bool {
+    s.course == COURSE && s.area == AREA
+}
+
+fn cannon(s: &St) -> bool {
+    s.action == ACT_IN_CANNON || s.action == ACT_SHOT_FROM_CANNON
+}
+
+/// Launch spots: the spire, and the ship's deck when it's afloat.
+fn launches(s: &St) -> Vec<[f32; 3]> {
+    let mut v = vec![SPIRE];
+    if let Some(o) = s.objects().iter().find(|o| o.bhv_name() == SHIP) {
+        v.push([o.pos[0], o.pos[1] + SHIP_STERN[0], o.pos[2] + SHIP_STERN[1]]);
+    }
+    v
+}
+
+/// On the platform: supported (not airborne, swimming or on a pole) at its
+/// floor height, within its reach of the box.
+fn on_platform(s: &St, boxpos: [f32; 3]) -> bool {
+    let floor = boxpos[1] - BOX_ABOVE_FLOOR;
+    s.alive()
+        && s.action & (ACT_FLAG_AIR | ACT_FLAG_SWIMMING | ACT_FLAG_ON_POLE) == 0
+        && s.pos[1] >= floor - 10.0
+        && s.pos[1] <= floor + 400.0
+        && hdist(s.pos, boxpos) < PLATFORM_REACH
+}
+
+pub struct PillarCannonless {
+    zone: (u16, u8),
+    boxpos: [f32; 3],
+}
+
+impl PillarCannonless {
+    pub fn new(b: &St) -> Option<Arc<dyn Objective>> {
+        if !in_jrb(b) || b.has_star(COURSE, INDEX) || !b.alive() {
+            return None;
+        }
+        let o = star_box(b)?;
+        let x = PillarCannonless { zone: b.zone(), boxpos: o.pos };
+        (b.dist(LEDGE) < OFFER_RADIUS && !on_platform(b, o.pos)).then(|| Arc::new(x) as Arc<dyn Objective>)
+    }
+}
+
+impl Objective for PillarCannonless {
+    /// Dense adds (`OBRRT_DENSE_EVERY=obj`): technique setups are frame-precise: every state, mid-air too.
+    fn dense_keep(&self) -> obrrt_core::DenseKeep {
+        obrrt_core::DenseKeep::Every { n: 1, air: true }
+    }
+    fn precision(&self) -> obrrt_core::Precision {
+        obrrt_core::Precision::Precise
+    }
+    fn kind(&self) -> &'static str {
+        "Jrb::PillarCannonless"
+    }
+    fn key(&self) -> String {
+        format!("Jrb::PillarCannonless {:?}", self.zone)
+    }
+    fn obj_weight(&self, _b: &St) -> f64 {
+        4.0
+    }
+    fn base_criteria(&self, s: &St) -> bool {
+        s.zone() == self.zone
+            && s.alive()
+            && !s.has_star(COURSE, INDEX)
+            && !cannon(s)
+            && s.dist(LEDGE) < OFFER_RADIUS
+            && !on_platform(s, self.boxpos)
+    }
+    fn ga_budget(&self) -> Option<obrrt_core::GaBudget> {
+        Some(obrrt_core::GaBudget { population: 24, generations: 6, horizon: 240 })
+    }
+    /// The cannon entered at any frame of the rollout ([`CANNONED`],
+    /// latched): `Lost` from then on. `Done` on v1's success: this star, or
+    /// on the platform. The zone left: `Lost`. Else v1's base heuristic in
+    /// frames (via the nearest launch spot, or straight at the ledge from
+    /// above the water), plus [`KICK_FRAMES`] until a wall kick above the
+    /// water ([`KICKED`], latched as v1's progress did).
+    fn eta(&self, s: &St, _start: &St, mem: &mut Mem) -> Eta {
+        if cannon(s) {
+            mem.flags |= CANNONED;
+        }
+        if mem.flags & CANNONED != 0 {
+            return Eta::Lost;
+        }
+        if s.has_star(COURSE, INDEX) || (s.zone() == self.zone && on_platform(s, self.boxpos)) {
+            return Eta::Done;
+        }
+        if s.zone() != self.zone {
+            return Eta::Lost;
+        }
+        if s.action == ACT_WALL_KICK_AIR && s.pos[1] > s.water_level as f32 {
+            mem.flags |= KICKED;
+        }
+        let via = launches(s).iter().map(|l| s.dist(*l) + dist(*l, LEDGE)).fold(f32::MAX, f32::min);
+        let direct = if s.pos[1] > s.water_level as f32 { s.dist(LEDGE) } else { f32::MAX };
+        let kick = if mem.flags & KICKED != 0 { 0.0 } else { KICK_FRAMES };
+        Eta::Frames(frames_for(via.min(direct)) + kick)
+    }
+    fn success_value(&self) -> f64 {
+        10.0
+    }
+    fn needs_objects(&self) -> bool {
+        true
+    }
+    fn steer_target(&self, s: &St) -> Option<[f32; 3]> {
+        // In (or under) the water: the nearest launch spot. Out of it: the
+        // ledge, which runs Mario at the cliff below it.
+        if s.pos[1] <= s.water_level as f32 + 20.0 || s.action & ACT_FLAG_SWIMMING != 0 {
+            return launches(s).into_iter().min_by(|a, b| s.dist(*a).total_cmp(&s.dist(*b)));
+        }
+        Some(LEDGE)
+    }
+    fn steer_button(&self, s: &St) -> u16 {
+        // A on alternate frames in the air near the cliff, so a kick is tried
+        // when he hits it; otherwise the controller's usual jump pattern.
+        if s.action & ACT_FLAG_AIR != 0 && hdist(s.pos, LEDGE) < 700.0 && s.pos[1] < LEDGE[1] {
+            A_BUTTON
+        } else {
+            0
+        }
+    }
+    fn exists_in(&self, s: &St) -> bool {
+        s.zone() == self.zone && !s.has_star(COURSE, INDEX) && star_box(s).is_some()
+    }
+    fn kinship(&self) -> u32 {
+        10
+    }
+}
+
+// ---------------------------------------------------------------------
+// Hyperspeed mode (`jrbclesshyper`).
+
+/// The TAS's BLJ spot on the dock slope (f82522) and its facing (downhill).
+const SLOPE: [f32; 3] = [-5115.0, 947.0, 1230.0];
+const SLOPE_YAW: i32 = 17561;
+/// Where the TAS's run-up starts (JRB's spawn on the dock, f82451).
+const DOCK_START: [f32; 3] = [-6703.0, 1126.0, 1482.0];
+/// The rule stops pressing past this backwards speed (TAS: -320 -> -477).
+const BLJ_STOP: f32 = 400.0;
+/// Where the backward rollout lands at the spire's foot (TAS f82572).
+const SPIRE_BASE: [f32; 3] = [-17.0, 980.0, 2746.0];
+/// The spire's axis (xz) and how far from it counts as on it.
+const SPIRE_AXIS: [f32; 3] = [60.0, 0.0, 2730.0];
+const SPIRE_RADIUS: f32 = 350.0;
+/// Backwards speed that counts as hyperspeed here.
+const HYPER: f32 = 150.0;
+/// The dock: west of this x, above this y.
+const DOCK_X: f32 = -4800.0;
+const DOCK_Y: f32 = 900.0;
+const ACT_FREEFALL: u32 = 0x0100_088C;
+const ACT_DIVE_SLIDE: u32 = 0x0088_0456;
+const ACT_BUTT_SLIDE: u32 = 0x0084_0452;
+const ACT_WALKING: u32 = 0x0400_0440;
+const ACT_DECELERATING: u32 = 0x0400_044A;
+const ACT_GROUP_SUBMERGED: u32 = 0x0C0;
+
+/// TAS f82541 -> f82572: from the end of the BLJ (-477) to the landing at
+/// the spire's foot (west to the wall, the flip, the dive and the rollout).
+const SLOPE_TO_BASE_FRAMES: f64 = 31.0;
+/// TAS f82572 -> f82576: the landing at the spire's foot to the braking
+/// that climbs it.
+const BASE_FRAMES: f64 = 4.0;
+/// TAS f82576-82579: braking climbs the spire from 980 to 2343 in 4 frames.
+const CLIMB_PACE: f32 = 340.0;
+/// The height on the spire above which v1 counted nearness to the box (the
+/// butt slide's A comes at ~1910).
+const SPIRE_TOP_Y: f32 = 1900.0;
+/// TAS f82580 -> f82593: from the spire's top, the butt slide down its far
+/// face and the backwards steep jump onto the platform.
+const TOP_FRAMES: f64 = 13.0;
+/// The steep jump's backwards speed onto the platform (TAS -98).
+const STEEP_SPEED: f32 = 98.0;
+/// A landing this near the box (horizontally) is on the platform (its
+/// reach 1100, less a margin for the lip).
+const LAND_NEAR: f32 = 800.0;
+/// `mem` of PillarHyper: blj's chain tracker uses f[0..3] and the bits
+/// below `blj::M_FREE`; these are the objective's own latches.
+const H_HYPER: u32 = super::blj::M_FREE;
+const H_CANNON: u32 = super::blj::M_FREE << 1;
+const H_WET: u32 = super::blj::M_FREE << 2;
+
+fn wet(s: &St) -> bool {
+    s.action & ACT_FLAG_SWIMMING != 0 || s.action & ACT_GROUP_MASK == ACT_GROUP_SUBMERGED
+}
+
+/// On the dock, slow: where the BLJ starts from.
+fn on_dock(s: &St) -> bool {
+    s.pos[0] < DOCK_X && s.pos[1] > DOCK_Y && !wet(s) && s.forward_vel.abs() < 100.0 && s.hdist(SLOPE) < 2500.0
+}
+
+/// Backwards at hyperspeed out of the water (between the dock and the spire).
+fn fast(s: &St) -> bool {
+    s.forward_vel < -HYPER && !wet(s) && s.pos[1] > DOCK_Y && s.pos[0] < SPIRE_AXIS[0] + 600.0
+}
+
+fn on_spire(s: &St) -> bool {
+    !wet(s) && s.pos[1] > SPIRE_BASE[1] - 30.0 && hdist(s.pos, SPIRE_AXIS) < SPIRE_RADIUS
+}
+
+pub struct PillarHyper {
+    zone: (u16, u8),
+    boxpos: [f32; 3],
+    /// OBRRT_FREE_SETUP=1: the run-up variant (index into [`RUNWAYS`]).
+    fs: u8,
+}
+
+/// OBRRT_FREE_SETUP=1: where on the run-up line (through [`SLOPE`] along
+/// [`SLOPE_YAW`]) the crouch slide may start, as distance back from SLOPE:
+/// the TAS's (DOCK_START is 1606 back and 71 off the line; its crouch slide
+/// comes ~50 on, at 10) and a longer runway one further back. The genome
+/// runs there; [`dock_free`] presses Z on the first frame in the band
+/// facing the slope within 0x180 at 10-18 and on the line within 100.
+const RUNWAYS: [(f32, f32); 2] = [(1500.0, 1600.0), (1600.0, 1700.0)];
+const RUNWAY_LATERAL: f32 = 100.0;
+const RUNWAY_FV: (f32, f32) = (10.0, 18.0);
+/// The first long jump's flight onto the slope (31 frames on the flat,
+/// ref/blj-conditions.md 1.2; the TAS's f82457-82488).
+const JUMP1_FRAMES: f64 = 31.0;
+
+impl PillarHyper {
+    pub fn new(b: &St) -> Vec<Arc<dyn Objective>> {
+        if !in_jrb(b) || b.has_star(COURSE, INDEX) || !b.alive() {
+            return Vec::new();
+        }
+        let Some(o) = star_box(b) else { return Vec::new() };
+        let n = if super::freesetup::on() { RUNWAYS.len() as u8 } else { 1 };
+        (0..n)
+            .map(|fs| PillarHyper { zone: b.zone(), boxpos: o.pos, fs })
+            .filter(|x| x.base_criteria(b))
+            .map(|x| Arc::new(x) as Arc<dyn Objective>)
+            .collect()
+    }
+
+    /// The runway band's far end on the run-up line (the hand-off point).
+    fn runway_point(&self) -> [f32; 3] {
+        let a = SLOPE_YAW as f32 * std::f32::consts::TAU / 65536.0;
+        let back = RUNWAYS[self.fs as usize].1;
+        [SLOPE[0] - back * a.sin(), DOCK_START[1], SLOPE[2] - back * a.cos()]
+    }
+
+    /// The ETA's stages (see the module doc). `hyper`: the rollout has been
+    /// at hyperspeed by `s` (a `fast` state, a backwards start on the
+    /// spire, or a BLJ chain); the spire stage needs it (audit: v1's credit
+    /// counted however he got up).
+    /// - on the spire (or above [`SPIRE_TOP_Y`] near the box): below the
+    ///   top, the climb at [`CLIMB_PACE`] and [`TOP_FRAMES`]; above it, the
+    ///   steep jump to within [`LAND_NEAR`] of the box at [`STEEP_SPEED`];
+    /// - fast towards the spire: its foot at his speed, then [`BASE_FRAMES`],
+    ///   the climb and the top;
+    /// - else (the dock): the BLJ chain to [`BLJ_STOP`] from the slope
+    ///   (`blj::build_eta`), [`SLOPE_TO_BASE_FRAMES`], then as above.
+    fn frames(&self, s: &St, hyper: bool) -> f64 {
+        let climb = |y: f32| ((SPIRE_TOP_Y - y).max(0.0) / CLIMB_PACE) as f64 + TOP_FRAMES;
+        let near_box = s.pos[1] > SPIRE_TOP_Y && hdist(s.pos, self.boxpos) < PLATFORM_REACH && !wet(s);
+        if hyper && (on_spire(s) || near_box) {
+            if s.pos[1] > SPIRE_TOP_Y {
+                let speed = (-s.forward_vel).max(STEEP_SPEED);
+                return ((hdist(s.pos, self.boxpos) - LAND_NEAR).max(0.0) / speed) as f64 + 1.0;
+            }
+            return climb(s.pos[1]);
+        }
+        let from_base = BASE_FRAMES + climb(SPIRE_BASE[1]);
+        if fast(s) {
+            return (s.hdist(SPIRE_BASE) / -s.forward_vel) as f64 + from_base;
+        }
+        if super::freesetup::on() && !super::blj::long_jumping(s) && s.action != super::blj::ACT_CROUCH_SLIDE && on_dock(s) {
+            // OBRRT_FREE_SETUP: the run to the runway's hand-off (approach,
+            // turn to SLOPE_YAW, the run-up to 10), the first long jump onto
+            // the slope, then the chain (blj's figure for a start already
+            // set up there).
+            let handoff = super::freesetup::handoff_frames(s, self.runway_point(), SLOPE_YAW, RUNWAY_FV.0);
+            return handoff + JUMP1_FRAMES + super::blj::build_eta(s, None, BLJ_STOP) + SLOPE_TO_BASE_FRAMES + from_base;
+        }
+        super::blj::build_eta(s, Some(SLOPE), BLJ_STOP) + SLOPE_TO_BASE_FRAMES + from_base
+    }
+}
+
+impl Objective for PillarHyper {
+    /// Dense adds (`OBRRT_DENSE_EVERY=obj`): technique setups are frame-precise: every state, mid-air too.
+    fn dense_keep(&self) -> obrrt_core::DenseKeep {
+        obrrt_core::DenseKeep::Every { n: 1, air: true }
+    }
+    fn precision(&self) -> obrrt_core::Precision {
+        obrrt_core::Precision::Precise
+    }
+    fn kind(&self) -> &'static str {
+        "Jrb::PillarHyper"
+    }
+    fn key(&self) -> String {
+        let k = format!("Jrb::PillarHyper {:?}", self.zone);
+        if super::freesetup::on() { k + &super::freesetup::tag(self.fs as usize) } else { k }
+    }
+    fn obj_weight(&self, _b: &St) -> f64 {
+        if super::freesetup::on() { 4.0 / RUNWAYS.len() as f64 } else { 4.0 }
+    }
+    fn base_criteria(&self, s: &St) -> bool {
+        s.zone() == self.zone
+            && s.alive()
+            && !s.has_star(COURSE, INDEX)
+            && !cannon(s)
+            && !on_platform(s, self.boxpos)
+            && (on_dock(s) || fast(s) || (on_spire(s) && s.forward_vel < -HYPER / 2.0))
+    }
+    fn ga_budget(&self) -> Option<obrrt_core::GaBudget> {
+        Some(obrrt_core::GaBudget { population: 24, generations: 6, horizon: 240 })
+    }
+    /// `Lost` from the first cannon or water frame on ([`H_CANNON`],
+    /// [`H_WET`], latched: v1's success failed on any cannon state and its
+    /// progress stopped at the first water entry, after which the speed is
+    /// gone), on leaving the zone or dying. `Done` on v1's success (this
+    /// star or the platform). Else [`PillarHyper::frames`], with the
+    /// hyperspeed latch [`H_HYPER`] set as v1's `hyper` (a BLJ re-jump seen
+    /// by blj's tracker, a `fast` state, or a fast backwards start on the
+    /// spire).
+    fn eta(&self, s: &St, start: &St, mem: &mut Mem) -> Eta {
+        let chain = super::blj::chain_step(s, mem);
+        if cannon(s) {
+            mem.flags |= H_CANNON;
+        }
+        if mem.flags & H_CANNON != 0 {
+            return Eta::Lost;
+        }
+        if s.has_star(COURSE, INDEX) || (s.zone() == self.zone && on_platform(s, self.boxpos)) {
+            return Eta::Done;
+        }
+        if wet(s) {
+            mem.flags |= H_WET;
+        }
+        if s.zone() != self.zone || !s.alive() || mem.flags & H_WET != 0 {
+            return Eta::Lost;
+        }
+        if chain > 0.0 || mem.flags & super::blj::M_ON != 0 || fast(s) || (on_spire(start) && start.forward_vel < -HYPER / 2.0) {
+            mem.flags |= H_HYPER;
+        }
+        Eta::Frames(self.frames(s, mem.flags & H_HYPER != 0))
+    }
+    fn success_value(&self) -> f64 {
+        10.0
+    }
+    fn needs_objects(&self) -> bool {
+        true
+    }
+    fn steer_target(&self, s: &St) -> Option<[f32; 3]> {
+        if on_dock(s) {
+            return Some(SLOPE);
+        }
+        if on_spire(s) || s.pos[1] > 1900.0 {
+            return Some(self.boxpos);
+        }
+        Some(SPIRE_BASE)
+    }
+    fn steer_button(&self, s: &St) -> u16 {
+        let base = s.hdist(SPIRE_BASE) < 400.0 && s.pos[1] < SPIRE_BASE[1] + 150.0;
+        match s.action {
+            ACT_FREEFALL if s.forward_vel < -HYPER => B_BUTTON,
+            ACT_DIVE_SLIDE if s.forward_vel < -100.0 => A_BUTTON,
+            ACT_WALKING | ACT_DECELERATING if base && s.forward_vel < -HYPER => Z_TRIG,
+            ACT_BUTT_SLIDE if on_spire(s) && s.pos[1] > 1850.0 => A_BUTTON,
+            _ => 0,
+        }
+    }
+    fn pad_overlay(&self) -> Option<PadOverlay> {
+        let free = super::freesetup::on().then_some(RUNWAYS[self.fs as usize]);
+        Some(PadOverlay::keyed(move |traj, played, genome| {
+            let s = traj.last().unwrap();
+            let held = |b: u16| played.last().is_some_and(|p| p.button & b != 0);
+            // The BLJ: from a slow dock start, until -400 or the chain breaks.
+            let begun = traj.iter().any(super::blj::long_jumping);
+            let broken = begun && !super::blj::long_jumping(s);
+            let hyper = traj.iter().any(|t| t.forward_vel < -BLJ_STOP);
+            if on_dock(&traj[0]) && !hyper && !broken && s.pos[0] < DOCK_X && !wet(s) {
+                if let Some(band) = free {
+                    return dock_free(band, traj, played, genome);
+                }
+                return dock_rule(traj, played, genome);
+            }
+            // One-frame windows at speed: B dives out of a freefall, A rolls
+            // out of the dive slide (backwards, forwardVel < 0).
+            let forced = match s.action {
+                ACT_FREEFALL if s.forward_vel < -HYPER && !held(B_BUTTON) => B_BUTTON,
+                ACT_DIVE_SLIDE if s.forward_vel < -100.0 && !held(A_BUTTON) => A_BUTTON,
+                _ => 0,
+            };
+            if forced != 0 {
+                return (GamePad::new(forced, genome.stick_x, genome.stick_y), true);
+            }
+            (genome, false)
+        }))
+    }
+    fn exists_in(&self, s: &St) -> bool {
+        s.zone() == self.zone && !s.has_star(COURSE, INDEX) && star_box(s).is_some()
+    }
+    fn kinship(&self) -> u32 {
+        10
+    }
+}
+
+/// The full-tilt raw stick that points `intendedYaw` along `yaw`
+/// (camera-relative; adjust_analog_stick's 6-unit dead band added back).
+fn stick_along(s: &St, yaw: i32) -> (i8, i8) {
+    let rel = (yaw - s.cam_yaw as i32) as f32 * std::f32::consts::TAU / 65536.0;
+    let t = 121.0;
+    let raw = |v: f32| if v.abs() < 0.5 { 0 } else { (v + 6.0 * v.signum()).round().clamp(-127.0, 127.0) as i8 };
+    (raw(t * rel.sin()), raw(-t * rel.cos()))
+}
+
+/// The 1st long jump's stick goes from forward to back at this speed
+/// (lab, 2026-10-25: from the spawn the 2nd jump then comes down at
+/// (-5114, 947, 1227) at -9.6, the TAS's (-5115, 947, 1230) at -9.8).
+const JUMP1_CAP: f32 = 39.0;
+/// In the air the stick also pushes sideways toward the spot's z beyond
+/// this lateral offset.
+const LATERAL_TOL: f32 = 4.0;
+
+fn yaw_to(a: [f32; 3], b: [f32; 3]) -> i32 {
+    ((b[0] - a[0]).atan2(b[2] - a[2]) * 32768.0 / std::f32::consts::PI) as i32
+}
+
+/// The dock part of the TAS's route as a rule (2026 TAS f82451-82541):
+/// - walk to [`DOCK_START`], stop, then run along [`SLOPE_YAW`] (+x, down the
+///   slope); at forwardVel 10 Z (CROUCH_SLIDE), then A: a long jump;
+/// - the 1st long jump with the stick forward (TAS 16 -> 44) comes down on
+///   the slope (f82488, x -5619); A+Z at once: the 2nd long jump, stick
+///   back (44 -> -9.8), comes down on the slope again (f82522, x -5115)
+///   moving backwards;
+/// - then the BLJ: on each LONG_JUMP_LAND frame with forwardVel < 0 a new
+///   A (Z held) re-jumps at x1.5. The press frames' stick is the genome's
+///   (key frames), neutral between, back in the air.
+///
+/// Why the spot: the TAS's chain stays at x -5115.0 for 7 presses (-15.8
+/// to -150, y +0.2 a jump): it's under the overhang of the bhvRockSolid at
+/// (-5332, 1434, 1023), whose underside is a ceiling (a low-ceiling BLJ,
+/// ref/blj-conditions.md) and whose top is a floor at y ~1025-1035 a few
+/// units further in. Lab (scratchpad hyperlab, from v34-1b-s2 node 8854):
+/// the rule lands at (-5114, 947, 1227) at -9.6, but no first-press stick
+/// (81 tried) pinned the chain: each press either flies a normal long jump
+/// (-15.5, 27 air frames) or snaps up onto the rock's top (y 1031) and
+/// butt-slides. So the pin needs a position within a few units that the
+/// rule doesn't reach; the GA gets the descent's last frames' stick and
+/// the press sticks to find it. Unverified beyond that.
+fn dock_rule(traj: &[St], played: &[GamePad], genome: GamePad) -> (GamePad, bool) {
+    let s = traj.last().unwrap();
+    let held = |b: u16| played.last().is_some_and(|p| p.button & b != 0);
+    let jumps = traj.windows(2).filter(|w| w[1].action == super::blj::ACT_LONG_JUMP && w[0].action != super::blj::ACT_LONG_JUMP).count()
+        + (traj[0].action == super::blj::ACT_LONG_JUMP) as usize;
+    let fwd = stick_along(s, SLOPE_YAW);
+    let back = stick_along(s, s.yaw as i32 + 0x8000);
+    // In the air, also sideways toward the TAS spot (its z: the BLJ only
+    // stays pinned there), 45 degrees off the forward / back stick.
+    let side = {
+        let f = s.yaw as f32 * std::f32::consts::TAU / 65536.0;
+        let (dx, dz) = (SLOPE[0] - s.pos[0], SLOPE[2] - s.pos[2]);
+        // Lateral offset, positive toward yaw + 0x4000.
+        let lat = dx * f.cos() - dz * f.sin();
+        if lat.abs() < LATERAL_TOL { 0 } else if lat > 0.0 { 0x2000 } else { -0x2000 }
+    };
+    let air_fwd = stick_along(s, s.yaw as i32 + side);
+    let air_back = stick_along(s, s.yaw as i32 + 0x8000 - side);
+    let new_a = if held(A_BUTTON) { 0 } else { A_BUTTON };
+    match s.action {
+        super::blj::ACT_LONG_JUMP if jumps <= 1 => {
+            // Forward up to JUMP1_CAP, then back, so the 2nd jump comes
+            // down on the slope at the TAS's spot moving backwards.
+            let st = if s.forward_vel < JUMP1_CAP { air_fwd } else { air_back };
+            return (GamePad::new(Z_TRIG, st.0, st.1), false);
+        }
+        super::blj::ACT_LONG_JUMP if jumps == 2 => {
+            // The last part of the descent (falling below 1100) is the
+            // genome's stick (key frames): the spot is a few units wide.
+            if s.vel[1] < 0.0 && s.pos[1] < 1100.0 && (genome.stick_x, genome.stick_y) != (0, 0) {
+                return (GamePad::new(Z_TRIG, genome.stick_x, genome.stick_y), true);
+            }
+            return (GamePad::new(Z_TRIG, air_back.0, air_back.1), false);
+        }
+        super::blj::ACT_LONG_JUMP => return (GamePad::new(Z_TRIG, back.0, back.1), false),
+        super::blj::ACT_LONG_JUMP_LAND if jumps <= 1 => return (GamePad::new(Z_TRIG | new_a, fwd.0, fwd.1), false),
+        super::blj::ACT_LONG_JUMP_LAND => {
+            if s.forward_vel < 0.0 && new_a != 0 {
+                return (GamePad::new(Z_TRIG | A_BUTTON, genome.stick_x, genome.stick_y), true);
+            }
+            return (GamePad::new(Z_TRIG, 0, 0), false);
+        }
+        super::blj::ACT_CROUCH_SLIDE => return (GamePad::new(Z_TRIG | new_a, fwd.0, fwd.1), false),
+        _ => {}
+    }
+    if jumps > 0 {
+        // The chain broke: the genome's.
+        return (genome, false);
+    }
+    // Run-up.
+    if !traj.iter().any(|t| t.hdist(DOCK_START) < 40.0) {
+        let d = s.hdist(DOCK_START);
+        let (x, y) = stick_along(s, yaw_to(s.pos, DOCK_START));
+        let k = if d > 700.0 { 1.0 } else { (d / 700.0).max(0.25) };
+        return (GamePad::new(0, (x as f32 * k) as i8, (y as f32 * k) as i8), false);
+    }
+    let lined_up = ((s.yaw as i32 - SLOPE_YAW) as i16).unsigned_abs() < 0x180;
+    if !lined_up && s.action & ACT_FLAG_MOVING != 0 {
+        return (GamePad::new(0, 0, 0), false);
+    }
+    let z = lined_up && s.forward_vel >= 10.0 && !held(Z_TRIG);
+    (GamePad::new(if z { Z_TRIG } else { 0 }, fwd.0, fwd.1), false)
+}
+
+/// OBRRT_FREE_SETUP=1: [`dock_rule`] without its run-up (the walk to
+/// DOCK_START, the stop and the line-up there): until the first crouch
+/// slide the genome runs; the rule presses Z (stick along SLOPE_YAW, a key
+/// frame) on the first walking frame in the runway `band` (distance back
+/// from SLOPE along the line), within [`RUNWAY_LATERAL`] of it, facing
+/// SLOPE_YAW within 0x180, at [`RUNWAY_FV`]. From the crouch slide on,
+/// [`dock_rule`] (the two long jumps and the chain's presses).
+fn dock_free(band: (f32, f32), traj: &[St], played: &[GamePad], genome: GamePad) -> (GamePad, bool) {
+    let s = traj.last().unwrap();
+    let begun = traj.iter().any(|t| t.action == super::blj::ACT_CROUCH_SLIDE || super::blj::long_jumping(t));
+    if begun {
+        return dock_rule(traj, played, genome);
+    }
+    let a = SLOPE_YAW as f32 * std::f32::consts::TAU / 65536.0;
+    let (dx, dz) = (SLOPE[0] - s.pos[0], SLOPE[2] - s.pos[2]);
+    let back = dx * a.sin() + dz * a.cos();
+    let lat = (dx * a.cos() - dz * a.sin()).abs();
+    let lined_up = ((s.yaw as i32 - SLOPE_YAW) as i16).unsigned_abs() < 0x180;
+    let held_z = played.last().is_some_and(|p| p.button & Z_TRIG != 0);
+    if s.action == ACT_WALKING
+        && lined_up
+        && (RUNWAY_FV.0..=RUNWAY_FV.1).contains(&s.forward_vel)
+        && back >= band.0
+        && back <= band.1
+        && lat < RUNWAY_LATERAL
+        && !held_z
+    {
+        let fwd = stick_along(s, SLOPE_YAW);
+        return (GamePad::new(Z_TRIG, fwd.0, fwd.1), true);
+    }
+    // No Z elsewhere (a crouch slide off the line is a wasted long jump).
+    (GamePad::new(genome.button & !Z_TRIG, genome.stick_x, genome.stick_y), false)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::extra::tech::testkit::{ACT_WALKING, st};
+    use obrrt_core::{fold, start_eta};
+
+    const BOXPOS: [f32; 3] = [1540.0, 2160.0, 2130.0];
+    const ACT_SWIMMING: u32 = 0x3000_24D0;
+
+    fn at(p: [f32; 3], a: u32) -> St {
+        let mut s = st(LEVEL_JRB, AREA, p, a);
+        s.water_level = 1024;
+        s
+    }
+
+    #[test]
+    fn cannon_mid_rollout_is_lost_after() {
+        let obj = PillarCannonless { zone: (LEVEL_JRB as u16, AREA), boxpos: BOXPOS };
+        let traj = vec![
+            at([500.0, 1200.0, 2600.0], ACT_WALKING),
+            at([600.0, 1400.0, 2500.0], ACT_WALL_KICK_AIR),
+            // Into the cannon, then (somehow) on the platform: no success.
+            at([600.0, 1400.0, 2500.0], ACT_IN_CANNON),
+            at([1500.0, 1946.0, 2200.0], ACT_WALKING),
+        ];
+        let (met, etas) = fold(&obj, &traj);
+        assert_eq!(met, None, "{etas:?}");
+        assert!(etas[1].frames() < etas[0].frames());
+        assert!(etas[2] == Eta::Lost && etas[3] == Eta::Lost);
+        // Without the cannon the platform is Done.
+        let (met, _) = fold(&obj, &[traj[0].clone(), traj[1].clone(), traj[3].clone()]);
+        assert_eq!(met, Some(2));
+    }
+
+    #[test]
+    fn hyper_stages_drop() {
+        let obj = PillarHyper { zone: (LEVEL_JRB as u16, AREA), boxpos: BOXPOS, fs: 0 };
+        let fastat = |p: [f32; 3], a: u32, fv: f32| {
+            let mut s = at(p, a);
+            s.forward_vel = fv;
+            s
+        };
+        let traj = vec![
+            fastat([-3000.0, 950.0, 2300.0], ACT_FREEFALL, -400.0),
+            fastat([-1500.0, 1000.0, 2600.0], ACT_FREEFALL, -400.0),
+            fastat(SPIRE_BASE, ACT_WALKING, -305.0),
+            fastat([60.0, 1600.0, 2730.0], ACT_WALKING, -305.0),
+            fastat([300.0, 2300.0, 2650.0], ACT_BUTT_SLIDE, -98.0),
+            fastat([700.0, 2100.0, 2450.0], ACT_FREEFALL, -98.0),
+            fastat([800.0, 1946.0, 2380.0], ACT_WALKING, -20.0),
+        ];
+        let (met, etas) = fold(&obj, &traj);
+        assert_eq!(met, Some(6), "{etas:?}");
+        let f: Vec<f64> = etas.iter().map(|e| e.frames()).collect();
+        assert!(f.windows(2).all(|w| w[1] < w[0]), "ETA not decreasing: {f:?}");
+        // A water entry ends it.
+        let mut mem = Mem::default();
+        obj.eta(&traj[0], &traj[0], &mut mem);
+        assert!(obj.eta(&fastat([-1500.0, 1000.0, 2600.0], ACT_SWIMMING, -10.0), &traj[0], &mut mem) == Eta::Lost);
+        assert!(obj.eta(&traj[1], &traj[0], &mut mem) == Eta::Lost);
+        // A dock start ranks behind a fast one.
+        let dock = fastat([-6000.0, 1126.0, 1400.0], ACT_WALKING, 0.0);
+        assert!(start_eta(&obj, &dock) > start_eta(&obj, &traj[0]));
+    }
+}

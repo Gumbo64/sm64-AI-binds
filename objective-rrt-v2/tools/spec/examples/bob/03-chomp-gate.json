@@ -1,0 +1,24 @@
+{
+  "name": "ChompGate",
+  "doc": "BoB star 6 (Behind Chain Chomp's Gate) the intended way: pound the Chomp's post 3 times (it sinks ~60-65 per pound; home_dy counts it), the freed Chomp breaks the gate, then collect the star behind it.",
+  "zone": "bob",
+  "gate": {"lacks_star": [1, 6], "present": "bhvChainChompGate", "controllable": true},
+  "phases": [
+    {"name": "posts",
+     "target": {"object": {"bhv": "bhvWoodenPost", "near": [260, 735, 1920], "within": 400, "offset": [0, 80, 0]}},
+     "repeat": {"n": 3, "count": {"field": "home_dy", "per": 60}, "frames": 35},
+     "frames": 25,
+     "steer_button": {"button": "Z", "within": 120},
+     "arrival": "stop"},
+    {"name": "gate",
+     "doc": "The Chomp lunges at the gate; no Mario travel, head for the star meanwhile.",
+     "done": {"absent": "bhvChainChompGate"},
+     "frames": 180,
+     "steer": {"point": [1550, 1200, 300]}},
+    {"name": "star",
+     "target": {"point": [1550, 1200, 300]},
+     "done": {"star_got": [1, 6]}}
+  ],
+  "hints": {"obj_weight": 20, "precision": "precise", "success_value": 5, "ga_budget": [24, 6, 300]},
+  "expect": {"star_got": [1, 6]}
+}

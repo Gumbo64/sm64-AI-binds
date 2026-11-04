@@ -1,0 +1,30 @@
+[package]
+name = "obrrt-spec"
+description = "Declarative (JSON) objectives for objective-rrt-v2, interpreted by one generic Objective, plus a route-replay validator."
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+rand.workspace = true
+serde_json.workspace = true
+sm64-binds.workspace = true
+obrrt-core.workspace = true
+# The validator: read_tree_bin (route replay) and schema keys.
+obrrt-search.workspace = true
+objective-scattershot = { path = "../scattershot" }
+# legs: the steering controller and technique set-up, as obrrt2 installs them.
+obrrt-objectives.workspace = true
+rayon.workspace = true
+
+[[bin]]
+name = "spec-validate"
+path = "src/bin/validate.rs"
+
+[[bin]]
+name = "legs"
+path = "src/bin/legs.rs"
+
+[[bin]]
+name = "route-stats"
+path = "src/bin/route_stats.rs"

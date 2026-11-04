@@ -1,0 +1,580 @@
+{
+ "budget": {
+  "generations": 60,
+  "population": 128
+ },
+ "doc": "Startup -> Hill Lakitu skip through the door -> painting -> the TAS's speed chain from BoB's spawn hill -> a superjump above the slippery east slope -> the walked upper path -> the King, per hit -> star. As fast-king-hits, with Hill1, ChompSide and EastPath replaced.",
+ "legs": [
+  {
+   "doc": "Tech::LakituSkip's Hill mode (objectives/src/extra/tech/lakituskip.rs): the slope superjump over Lakitu's box to the door.",
+   "key_contains": "hill",
+   "name": "LakituHill",
+   "native": "Tech::LakituSkip",
+   "reference": {
+    "node": 2257,
+    "run": "runs/q8-g995-s1"
+   },
+   "zones": [
+    "grounds",
+    "castle:1"
+   ]
+  },
+  {
+   "name": "BobPainting",
+   "phases": [
+    {
+     "done": {
+      "any": [
+       {
+        "action_class": "cutscene",
+        "hdist": {
+         "lt": 250
+        }
+       },
+       {
+        "zone": "bob"
+       }
+      ]
+     },
+     "name": "painting",
+     "target": {
+      "metric": "h",
+      "point": [
+       -5222,
+       600,
+       -461
+      ]
+     }
+    },
+    {
+     "done": {
+      "zone": "bob"
+     },
+     "frames": 70,
+     "name": "warp"
+    }
+   ],
+   "reference": {
+    "node": 2257,
+    "run": "runs/q8-g995-s1"
+   },
+   "zone": "castle:1"
+  },
+  {
+   "name": "SpeedChain",
+   "zone": "bob",
+   "reference": {
+    "m64": "ref/tas/full-120star-2026-U.m64",
+    "frames": 22700,
+    "from": 22397
+   },
+   "stable_frames": 0,
+   "done_requires_next": false,
+   "hints": {
+    "precision": "precise"
+   },
+   "doc": "Reach the field's east side at speed 60+ by any path. The TAS's slide and kick chain (seeded, turned to our camera) is one way, not a requirement.",
+   "phases": [
+    {
+     "name": "fast",
+     "target": {
+      "sphere": {
+       "center": [
+        848,
+        0,
+        4854
+       ],
+       "r": 1500
+      }
+     },
+     "penalty": [
+      {
+       "when": {
+        "speed": {
+         "lt": 60
+        }
+       },
+       "frames": 60
+      }
+     ],
+     "done": {
+      "dist": {
+       "le": 0
+      },
+      "speed": {
+       "ge": 60
+      }
+     }
+    }
+   ],
+   "budget": {
+    "population": 256,
+    "generations": 120,
+    "horizon": 320
+   }
+  },
+  {
+   "name": "OverSlope",
+   "zone": "bob",
+   "stable_frames": 0,
+   "budget": {
+    "population": 256,
+    "generations": 150,
+    "horizon": 700
+   },
+   "hints": {
+    "precision": "precise"
+   },
+   "doc": "Carry the speed across the field and superjump above BoB's slippery east slope, landing on the flat ground past it. Walking this slope took 196 frames in legs-bob-king-qd4-s1 (3165-3361). Waypoints are latched and passed moving (LANDMARK_TIPS 20).",
+   "phases": [
+    {
+     "name": "hill1",
+     "target": {
+      "sphere": {
+       "center": [
+        3170,
+        766,
+        3130
+       ],
+       "r": 300
+      }
+     }
+    },
+    {
+     "name": "chompside",
+     "target": {
+      "sphere": {
+       "center": [
+        4949,
+        765,
+        1570
+       ],
+       "r": 300
+      }
+     }
+    },
+    {
+     "name": "approach",
+     "target": {
+      "sphere": {
+       "center": [
+        7196,
+        880,
+        -3011
+       ],
+       "r": 300
+      }
+     }
+    },
+    {
+     "name": "slopebase",
+     "target": {
+      "sphere": {
+       "center": [
+        7350,
+        1214,
+        -4300
+       ],
+       "r": 300
+      }
+     }
+    },
+    {
+     "name": "above",
+     "target": {
+      "sphere": {
+       "center": [
+        7642,
+        1971,
+        -6140
+       ],
+       "r": 200
+      }
+     },
+     "done": {
+      "dist": {
+       "le": 0
+      },
+      "action_class": [
+       "stationary",
+       "moving"
+      ],
+      "controllable": true
+     }
+    }
+   ]
+  },
+  {
+   "name": "Ledge2",
+   "zone": "bob",
+   "reference": {
+    "m64": "oss2/runs/legs-bob-king-qd4-s1/route.m64"
+   },
+   "phases": [
+    {
+     "name": "ledge2",
+     "target": {
+      "sphere": {
+       "center": [
+        6772,
+        2045,
+        -6552
+       ],
+       "r": 120
+      }
+     },
+     "done": {
+      "dist": {
+       "le": 0
+      },
+      "action_class": [
+       "stationary",
+       "moving"
+      ],
+      "controllable": true
+     }
+    }
+   ]
+  },
+  {
+   "name": "BackPath",
+   "phases": [
+    {
+     "done": {
+      "action_class": [
+       "stationary",
+       "moving"
+      ],
+      "controllable": true,
+      "dist": {
+       "le": 0
+      }
+     },
+     "name": "backpath",
+     "target": {
+      "sphere": {
+       "center": [
+        2843.0,
+        2472.0,
+        -7178.0
+       ],
+       "r": 120
+      }
+     }
+    }
+   ],
+   "reference": {
+    "m64": "oss2/runs/legs-bob-king-qd4-s1/route.m64"
+   },
+   "zone": "bob"
+  },
+  {
+   "name": "UpperPath",
+   "phases": [
+    {
+     "done": {
+      "action_class": [
+       "stationary",
+       "moving"
+      ],
+      "controllable": true,
+      "dist": {
+       "le": 0
+      }
+     },
+     "name": "upperpath",
+     "target": {
+      "sphere": {
+       "center": [
+        485.0,
+        2606.0,
+        -5742.0
+       ],
+       "r": 120
+      }
+     }
+    }
+   ],
+   "reference": {
+    "m64": "oss2/runs/legs-bob-king-qd4-s1/route.m64"
+   },
+   "zone": "bob"
+  },
+  {
+   "dialogs": "stop",
+   "name": "Summit",
+   "phases": [
+    {
+     "name": "summit",
+     "target": {
+      "sphere": {
+       "center": [
+        1653,
+        4022,
+        -5727
+       ],
+       "r": 300
+      }
+     }
+    }
+   ],
+   "reference": {
+    "m64": "oss2/runs/legs-bob-king-qd4-s1/route.m64"
+   },
+   "zone": "bob"
+  },
+  {
+   "name": "KingIntro",
+   "zone": "bob",
+   "dialogs": "stop",
+   "stable_frames": 0,
+   "hints": {
+    "precision": "precise"
+   },
+   "lost": {
+    "y": {
+     "lt": 2500
+    }
+   },
+   "doc": "Reach the King until his intro dialog opens: the only leg of the fight where a dialog ends the leg.",
+   "phases": [
+    {
+     "done": {
+      "held": "target"
+     },
+     "frames": 10,
+     "name": "intro",
+     "steer_button": {
+      "button": "B",
+      "within": 200
+     },
+     "target": {
+      "object": {
+       "bhv": "bhvKingBobomb"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "KingHit1",
+   "zone": "bob",
+   "stable_frames": 0,
+   "hints": {
+    "precision": "precise"
+   },
+   "lost": {
+    "y": {
+     "lt": 2500
+    }
+   },
+   "doc": "One hit. No \"dialogs\": \"stop\": a dialog here (his return after a throw off the summit) is not Done.",
+   "phases": [
+    {
+     "done": {
+      "held": "target"
+     },
+     "frames": 10,
+     "name": "grab1",
+     "steer_button": {
+      "button": "B",
+      "within": 200
+     },
+     "target": {
+      "object": {
+       "bhv": "bhvKingBobomb"
+      }
+     }
+    },
+    {
+     "doc": "Holding him: steer at the summit's middle; a throw predicted to land off the hill (or him off it) costs his way back (~105), DIALOG_128 (~90) and the regrab (~35).",
+     "done": {
+      "field": {
+       "le": 2,
+       "name": "health"
+      }
+     },
+     "frames": 60,
+     "name": "hit1",
+     "penalty": [
+      {
+       "frames": 230,
+       "when": {
+        "thrown_off": true
+       }
+      }
+     ],
+     "steer": {
+      "point": [
+       2600,
+       4293,
+       -4800
+      ]
+     },
+     "target": {
+      "object": {
+       "bhv": "bhvKingBobomb"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "KingHit2",
+   "zone": "bob",
+   "stable_frames": 0,
+   "hints": {
+    "precision": "precise"
+   },
+   "lost": {
+    "y": {
+     "lt": 2500
+    }
+   },
+   "doc": "One hit. No \"dialogs\": \"stop\": a dialog here (his return after a throw off the summit) is not Done.",
+   "phases": [
+    {
+     "done": {
+      "held": "target"
+     },
+     "frames": 10,
+     "name": "grab2",
+     "steer_button": {
+      "button": "B",
+      "within": 200
+     },
+     "target": {
+      "object": {
+       "bhv": "bhvKingBobomb"
+      }
+     }
+    },
+    {
+     "doc": "Holding him: steer at the summit's middle; a throw predicted to land off the hill (or him off it) costs his way back (~105), DIALOG_128 (~90) and the regrab (~35).",
+     "done": {
+      "field": {
+       "le": 1,
+       "name": "health"
+      }
+     },
+     "frames": 60,
+     "name": "hit2",
+     "penalty": [
+      {
+       "frames": 230,
+       "when": {
+        "thrown_off": true
+       }
+      }
+     ],
+     "steer": {
+      "point": [
+       2600,
+       4293,
+       -4800
+      ]
+     },
+     "target": {
+      "object": {
+       "bhv": "bhvKingBobomb"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "KingHit3",
+   "zone": "bob",
+   "stable_frames": 0,
+   "hints": {
+    "precision": "precise"
+   },
+   "lost": {
+    "y": {
+     "lt": 2500
+    }
+   },
+   "doc": "One hit. No \"dialogs\": \"stop\": a dialog here (his return after a throw off the summit) is not Done.",
+   "phases": [
+    {
+     "done": {
+      "held": "target"
+     },
+     "frames": 10,
+     "name": "grab3",
+     "steer_button": {
+      "button": "B",
+      "within": 200
+     },
+     "target": {
+      "object": {
+       "bhv": "bhvKingBobomb"
+      }
+     }
+    },
+    {
+     "doc": "Holding him: steer at the summit's middle; a throw predicted to land off the hill (or him off it) costs his way back (~105), DIALOG_128 (~90) and the regrab (~35).",
+     "done": {
+      "field": {
+       "le": 0,
+       "name": "health"
+      }
+     },
+     "frames": 60,
+     "name": "hit3",
+     "penalty": [
+      {
+       "frames": 230,
+       "when": {
+        "thrown_off": true
+       }
+      }
+     ],
+     "steer": {
+      "point": [
+       2600,
+       4293,
+       -4800
+      ]
+     },
+     "target": {
+      "object": {
+       "bhv": "bhvKingBobomb"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "KingStar",
+   "phases": [
+    {
+     "done": {
+      "star_got": [
+       1,
+       1
+      ]
+     },
+     "name": "star",
+     "target": {
+      "point": [
+       2000,
+       4500,
+       -4500
+      ]
+     }
+    }
+   ],
+   "reference": {
+    "m64": "oss2/runs/legs-bob-king-qd4-s1/route.m64"
+   },
+   "zone": "bob",
+   "stable_frames": 0
+  }
+ ],
+ "name": "fast-king-superjump-c",
+ "seed_ref": true,
+ "start": {
+  "boot": "tas"
+ }
+}

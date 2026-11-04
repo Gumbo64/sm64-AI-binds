@@ -1,0 +1,204 @@
+{
+  "errors": 0,
+  "legs": [
+    {
+      "issues": [
+        {
+          "level": "warning",
+          "message": "Done has no grounded/controllable condition and a region wider than 150",
+          "tip": 2
+        }
+      ],
+      "leg": 0,
+      "name": "Bridge",
+      "snapped_to": [
+        -573.0,
+        807.0,
+        424.0
+      ],
+      "stable_in_reference": true
+    },
+    {
+      "issues": [
+        {
+          "level": "note",
+          "message": "Done has no grounded/controllable condition",
+          "tip": 2
+        },
+        {
+          "level": "warning",
+          "message": "the straight line from (-540, 820, 200) crosses 30 of 33 samples of bad terrain (a drop of 820, a drop of 819, a drop of 818, a drop of 818, a drop of 818, a drop of 817, a drop of 816, a drop of 816, a drop of 304, a drop of 303, a drop of ); add a landmark on the reference path at (-506, 957, -2091)",
+          "tip": 5
+        }
+      ],
+      "leg": 1,
+      "name": "CastleDoor",
+      "snapped_to": null,
+      "stable_in_reference": null
+    },
+    {
+      "issues": [
+        {
+          "level": "note",
+          "message": "Done has no grounded/controllable condition",
+          "tip": 2
+        }
+      ],
+      "leg": 2,
+      "name": "BobPainting",
+      "snapped_to": null,
+      "stable_in_reference": null
+    },
+    {
+      "issues": [
+        {
+          "level": "warning",
+          "message": "Done has no grounded/controllable condition and a region wider than 150",
+          "tip": 2
+        }
+      ],
+      "leg": 3,
+      "name": "Ramp",
+      "snapped_to": [
+        1666.0,
+        204.0,
+        4560.0
+      ],
+      "stable_in_reference": null
+    },
+    {
+      "issues": [
+        {
+          "level": "warning",
+          "message": "Done has no grounded/controllable condition and a region wider than 150",
+          "tip": 2
+        },
+        {
+          "level": "warning",
+          "message": "the straight line from (1600, 300, 4550) crosses 7 of 7 samples of bad terrain (a drop of 395, a drop of 490, a drop of 584, a drop of 679, a drop of 774, a drop of 868, a drop of 963); add a landmark on the reference path at (1683, 604, 4458)",
+          "tip": 5
+        }
+      ],
+      "leg": 4,
+      "name": "Elevator",
+      "snapped_to": [
+        1740.0,
+        644.0,
+        4466.0
+      ],
+      "stable_in_reference": null
+    },
+    {
+      "issues": [
+        {
+          "level": "warning",
+          "message": "Done has no grounded/controllable condition and a region wider than 150",
+          "tip": 2
+        },
+        {
+          "level": "warning",
+          "message": "the straight line from (1683, 1058, 4356) crosses 2 of 16 samples of bad terrain (a drop of 1041, a drop of 1024); add a landmark on the reference path at (1329, 768, 3692)",
+          "tip": 5
+        }
+      ],
+      "leg": 5,
+      "name": "ChompHill",
+      "snapped_to": [
+        893.0,
+        768.0,
+        2924.0
+      ],
+      "stable_in_reference": null
+    },
+    {
+      "issues": [
+        {
+          "level": "note",
+          "message": "Done has no grounded/controllable condition",
+          "tip": 2
+        }
+      ],
+      "leg": 6,
+      "name": "ChompPost",
+      "snapped_to": null,
+      "stable_in_reference": null
+    },
+    {
+      "issues": [
+        {
+          "level": "warning",
+          "message": "the straight line from (266, 783, 1932) crosses 6 of 21 samples of bad terrain (a drop of 318, a drop of 337, a drop of 356, a drop of 375, a drop of 394, a drop of 413); add a landmark on the reference path at (1183, 768, 380)",
+          "tip": 5
+        }
+      ],
+      "leg": 7,
+      "name": "GateStar",
+      "snapped_to": null,
+      "stable_in_reference": null
+    }
+  ],
+  "moves": [
+    {
+      "from": [
+        -540.0,
+        820.0,
+        200.0
+      ],
+      "leg": 0,
+      "moved": 227.0,
+      "name": "Bridge",
+      "to": [
+        -573.0,
+        807.0,
+        424.0
+      ]
+    },
+    {
+      "from": [
+        1600.0,
+        300.0,
+        4550.0
+      ],
+      "leg": 3,
+      "moved": 117.0,
+      "name": "Ramp",
+      "to": [
+        1666.0,
+        204.0,
+        4560.0
+      ]
+    },
+    {
+      "from": [
+        1683.0,
+        1058.0,
+        4356.0
+      ],
+      "leg": 4,
+      "moved": 432.0,
+      "name": "Elevator",
+      "to": [
+        1740.0,
+        644.0,
+        4466.0
+      ]
+    },
+    {
+      "from": [
+        900.0,
+        768.0,
+        2900.0
+      ],
+      "leg": 5,
+      "moved": 25.0,
+      "name": "ChompHill",
+      "to": [
+        893.0,
+        768.0,
+        2924.0
+      ]
+    }
+  ],
+  "route": "bob-chomp",
+  "snapped_route": "tools/spec/routes/bob-chomp.snapped.json"
+}

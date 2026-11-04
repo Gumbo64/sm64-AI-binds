@@ -1,0 +1,78 @@
+{
+ "name": "tas-star-switch-7",
+ "doc": "VCutM from the TAS's 7th red coin (frame 2342): press the vanish cap switch, take the 8th red coin, get the star. The TAS takes the coin first (star at 2569).",
+ "start": {
+  "m64": "ref/tas/full-120star-2026-U.m64",
+  "frames": 2342
+ },
+ "seed_ref": true,
+ "budget": {
+  "population": 512,
+  "generations": 300,
+  "horizon": 400
+ },
+ "legs": [
+  {
+   "name": "SwitchThenStar",
+   "zone": "vcutm",
+   "stable_frames": 0,
+   "reference": {
+    "m64": "ref/tas/full-120star-2026-U.m64",
+    "frames": 2600
+   },
+   "hints": {
+    "precision": "precise"
+   },
+   "phases": [
+    {
+     "name": "switch",
+     "target": {
+      "sphere": {
+       "center": [
+        4506,
+        26,
+        -6246
+       ],
+       "r": 200
+      }
+     },
+     "frames": 12,
+     "done": {
+      "save_flag": "0x8"
+     }
+    },
+    {
+     "name": "red8",
+     "target": {
+      "point": [
+       4509,
+       0,
+       -5527
+      ]
+     },
+     "done": {
+      "red_coins": {
+       "ge": 8
+      }
+     },
+     "frames": 115
+    },
+    {
+     "name": "star",
+     "target": {
+      "point": [
+       4600,
+       100,
+       -4600
+      ]
+     },
+     "done": {
+      "stars_gained": {
+       "ge": 1
+      }
+     }
+    }
+   ]
+  }
+ ]
+}

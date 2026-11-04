@@ -1,0 +1,430 @@
+{
+ "start": {
+  "boot": "tas"
+ },
+ "seed_ref": true,
+ "budget": {
+  "population": 128,
+  "generations": 60
+ },
+ "name": "fast-king-blj-tas",
+ "doc": "TAS boot -> the Hill Lakitu skip (native) -> castle -> BoB painting (runs/q8-g995-s1) -> the elevator BLJ, the first tree's redirect, the hyperspeed jump to the second tree, its redirect and the climb to the summit (natives, as TAS 2026 f22551-22672; reference runs/q6-rrfobnb-s3 for the first part) -> the King fight with the throw fix -> his star (runs/q8-g995-s3). Each leg's reference is its own tree's (stitched). The BLJ chain's legs take the 2026 TAS (f22551-22672) as their reference and gen-0 seed.",
+ "legs": [
+  {
+   "name": "LakituHill",
+   "native": "Tech::LakituSkip",
+   "key_contains": "hill",
+   "zone": "grounds",
+   "doc": "Tech::LakituSkip's Hill mode (objectives/src/extra/tech/lakituskip.rs): the slope superjump over Lakitu's box to the door.",
+   "reference": {
+    "run": "runs/q8-g995-s1",
+    "node": 2257
+   }
+  },
+  {
+   "name": "CastleDoor",
+   "zones": [
+    "grounds",
+    "castle:1"
+   ],
+   "dialogs": "stop",
+   "phases": [
+    {
+     "name": "door",
+     "target": {
+      "point": [
+       0,
+       803,
+       -3155
+      ]
+     },
+     "done": {
+      "zone": "castle"
+     },
+     "frames": 30,
+     "arrival": "door"
+    }
+   ],
+   "reference": {
+    "run": "runs/q8-g995-s1",
+    "node": 2257
+   }
+  },
+  {
+   "name": "BobPainting",
+   "zone": "castle:1",
+   "phases": [
+    {
+     "name": "painting",
+     "target": {
+      "point": [
+       -5222,
+       600,
+       -461
+      ],
+      "metric": "h"
+     },
+     "done": {
+      "any": [
+       {
+        "action_class": "cutscene",
+        "hdist": {
+         "lt": 250
+        }
+       },
+       {
+        "zone": "bob"
+       }
+      ]
+     }
+    },
+    {
+     "name": "warp",
+     "done": {
+      "zone": "bob"
+     },
+     "frames": 70
+    }
+   ],
+   "reference": {
+    "run": "runs/q8-g995-s1",
+    "node": 2257
+   }
+  },
+  {
+   "name": "Ramp",
+   "zone": "bob",
+   "phases": [
+    {
+     "name": "ramp",
+     "target": {
+      "sphere": {
+       "center": [
+        1600,
+        300,
+        4550
+       ],
+       "r": 400
+      }
+     }
+    }
+   ],
+   "reference": {
+    "run": "runs/q6-rrfobnb-s3",
+    "node": 32609
+   }
+  },
+  {
+   "name": "Blj",
+   "native": "Tech::BljRun",
+   "key_contains": "bob-elevator",
+   "zone": "bob",
+   "doc": "The checkerboard elevator BLJ (blj.rs bob-elevator: TAS 2026 f22551-22602). done_requires_next: Done only where Tech::PoleRedirect (the reference fold's tree objectives) can start, i.e. flying at the tree on the velocity ray, so the GA optimises the BLJ and the aim together (filtering the BLJ's own ends afterwards kept 1 of ~35).",
+   "reference": {
+    "m64": "ref/tas/full-120star-2026-U.m64",
+    "frames": 22700
+   },
+   "done_requires_next": true
+  },
+  {
+   "name": "Redirect",
+   "native": "Tech::PoleRedirect",
+   "zone": "bob",
+   "doc": "Into the first tree at hyperspeed and out (poleredirect.rs; TAS 2026 f22607-22611: crouch slide +380). done_requires_next: an aim from which the climb to the second tree can start. Aimed at the second tree (6799, 2008, -5587) when that aim is offered.",
+   "reference": {
+    "m64": "ref/tas/full-120star-2026-U.m64",
+    "frames": 22700
+   },
+   "done_requires_next": true,
+   "key_contains": [
+    "aim 6799",
+    ""
+   ]
+  },
+  {
+   "name": "Climb",
+   "native": "Tech::HyperClimb",
+   "key_contains": [
+    "pole 6799",
+    "pole"
+   ],
+   "zone": "bob",
+   "done_requires_next": true,
+   "doc": "The jump at hyperspeed to the second tree (hyperclimb.rs pole targets; TAS: JUMP vy 131 fv 298 to the tree at (6799, 2008, -5587), +1080).",
+   "reference": {
+    "m64": "ref/tas/full-120star-2026-U.m64",
+    "frames": 22700
+   }
+  },
+  {
+   "name": "Redirect2",
+   "native": "Tech::PoleRedirect",
+   "zone": "bob",
+   "done_requires_next": true,
+   "doc": "The second tree's redirect (TAS +278), aimed at the summit place (1900, 4293, -5900) when offered.",
+   "reference": {
+    "m64": "ref/tas/full-120star-2026-U.m64",
+    "frames": 22700
+   },
+   "key_contains": [
+    "aim 1900",
+    ""
+   ]
+  },
+  {
+   "name": "Climb2",
+   "native": "Tech::HyperClimb",
+   "key_contains": [
+    "up"
+   ],
+   "zone": "bob",
+   "doc": "Hyperspeed into height (hyperclimb.rs, the generic +1000 objective): from the second tree's redirect the summit itself was 66 ETA frames short (rollouts topped out at y ~3100 by (3700, 3050, -6850); the TAS chains a wall kick and a double jump), so climb what the speed gives and walk the rest.",
+   "reference": {
+    "m64": "ref/tas/full-120star-2026-U.m64",
+    "frames": 22700
+   }
+  },
+  {
+   "name": "UpperPath",
+   "zone": "bob",
+   "phases": [
+    {
+     "name": "upperpath",
+     "target": {
+      "sphere": {
+       "center": [
+        449,
+        3229,
+        -5721
+       ],
+       "r": 400
+      }
+     },
+     "done": {
+      "dist": {
+       "le": 0
+      },
+      "action_class": [
+       "stationary",
+       "moving"
+      ]
+     }
+    }
+   ],
+   "reference": {
+    "run": "runs/q8-g995-s3",
+    "node": 51783
+   }
+  },
+  {
+   "name": "Summit",
+   "zone": "bob",
+   "phases": [
+    {
+     "name": "summit",
+     "target": {
+      "sphere": {
+       "center": [
+        1653,
+        4022,
+        -5727
+       ],
+       "r": 300
+      }
+     }
+    }
+   ],
+   "dialogs": "stop",
+   "reference": {
+    "run": "runs/q8-g995-s3",
+    "node": 51783
+   }
+  },
+  {
+   "name": "KingThrows",
+   "zone": "bob",
+   "dialogs": "stop",
+   "phases": [
+    {
+     "name": "grab1",
+     "target": {
+      "object": {
+       "bhv": "bhvKingBobomb"
+      }
+     },
+     "done": {
+      "held": "target"
+     },
+     "frames": 10,
+     "steer_button": {
+      "button": "B",
+      "within": 200
+     }
+    },
+    {
+     "name": "hit1",
+     "target": {
+      "object": {
+       "bhv": "bhvKingBobomb"
+      }
+     },
+     "done": {
+      "field": {
+       "name": "health",
+       "le": 2
+      }
+     },
+     "frames": 60,
+     "steer": {
+      "point": [
+       2600,
+       4293,
+       -4800
+      ]
+     },
+     "penalty": [
+      {
+       "when": {
+        "thrown_off": true
+       },
+       "frames": 230
+      }
+     ],
+     "doc": "Holding him: steer at the summit's middle; a throw predicted to land off the hill (or him off it) costs his way back (~105), DIALOG_128 (~90) and the regrab (~35)."
+    },
+    {
+     "name": "grab2",
+     "target": {
+      "object": {
+       "bhv": "bhvKingBobomb"
+      }
+     },
+     "done": {
+      "held": "target"
+     },
+     "frames": 10,
+     "steer_button": {
+      "button": "B",
+      "within": 200
+     }
+    },
+    {
+     "name": "hit2",
+     "target": {
+      "object": {
+       "bhv": "bhvKingBobomb"
+      }
+     },
+     "done": {
+      "field": {
+       "name": "health",
+       "le": 1
+      }
+     },
+     "frames": 60,
+     "steer": {
+      "point": [
+       2600,
+       4293,
+       -4800
+      ]
+     },
+     "penalty": [
+      {
+       "when": {
+        "thrown_off": true
+       },
+       "frames": 230
+      }
+     ],
+     "doc": "Holding him: steer at the summit's middle; a throw predicted to land off the hill (or him off it) costs his way back (~105), DIALOG_128 (~90) and the regrab (~35)."
+    },
+    {
+     "name": "grab3",
+     "target": {
+      "object": {
+       "bhv": "bhvKingBobomb"
+      }
+     },
+     "done": {
+      "held": "target"
+     },
+     "frames": 10,
+     "steer_button": {
+      "button": "B",
+      "within": 200
+     }
+    },
+    {
+     "name": "hit3",
+     "target": {
+      "object": {
+       "bhv": "bhvKingBobomb"
+      }
+     },
+     "done": {
+      "field": {
+       "name": "health",
+       "le": 0
+      }
+     },
+     "frames": 60,
+     "steer": {
+      "point": [
+       2600,
+       4293,
+       -4800
+      ]
+     },
+     "penalty": [
+      {
+       "when": {
+        "thrown_off": true
+       },
+       "frames": 230
+      }
+     ],
+     "doc": "Holding him: steer at the summit's middle; a throw predicted to land off the hill (or him off it) costs his way back (~105), DIALOG_128 (~90) and the regrab (~35)."
+    }
+   ],
+   "lost": {
+    "y": {
+     "lt": 2500
+    }
+   },
+   "hints": {
+    "precision": "precise"
+   },
+   "reference": {
+    "run": "runs/q8-g995-s3",
+    "node": 51783
+   }
+  },
+  {
+   "name": "KingStar",
+   "zone": "bob",
+   "phases": [
+    {
+     "name": "star",
+     "target": {
+      "point": [
+       2000,
+       4500,
+       -4500
+      ]
+     },
+     "done": {
+      "star_got": [
+       1,
+       1
+      ]
+     }
+    }
+   ],
+   "reference": {
+    "run": "runs/q8-g995-s3",
+    "node": 51783
+   }
+  }
+ ]
+}

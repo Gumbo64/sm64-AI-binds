@@ -1,0 +1,16 @@
+{
+  "name": "EnterBob",
+  "doc": "Castle lobby -> into the Bob-omb Battlefield painting (plane x = -5222). Leaving the zone is the goal (GOALS.md rule 6). Two phases: jump into the painting (Mario freezes in a cutscene action at it), then the ~70-frame warp until the level loads.",
+  "zone": "castle:1",
+  "gate": {"stars": [0, 0], "controllable": true},
+  "phases": [
+    {"name": "painting",
+     "target": {"point": [-5222, 600, -461], "metric": "h"},
+     "done": {"any": [{"action_class": "cutscene", "hdist": {"lt": 250}}, {"zone": "bob"}]}},
+    {"name": "warp",
+     "done": {"zone": "bob"},
+     "frames": 70}
+  ],
+  "hints": {"obj_weight": 8, "success_value": 1},
+  "expect": {"zone": "bob"}
+}

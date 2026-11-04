@@ -1,0 +1,45 @@
+{
+ "name": "tas-first-star-last",
+ "doc": "Only the last segment of the 2026 TAS's first star: VCutM from TAS frame 2390 to the star at 2569 (179 frames), seeded from the TAS, which stays in the population.",
+ "start": {
+  "m64": "ref/tas/full-120star-2026-U.m64",
+  "frames": 2390
+ },
+ "seed_ref": true,
+ "budget": {
+  "population": 512,
+  "generations": 300,
+  "horizon": 400
+ },
+ "legs": [
+  {
+   "name": "VcutmStar",
+   "zone": "vcutm",
+   "stable_frames": 0,
+   "reference": {
+    "m64": "ref/tas/full-120star-2026-U.m64",
+    "frames": 2600
+   },
+   "hints": {
+    "precision": "precise"
+   },
+   "phases": [
+    {
+     "name": "star",
+     "target": {
+      "point": [
+       4564,
+       17,
+       -4599
+      ]
+     },
+     "done": {
+      "stars_gained": {
+       "ge": 1
+      }
+     }
+    }
+   ]
+  }
+ ]
+}

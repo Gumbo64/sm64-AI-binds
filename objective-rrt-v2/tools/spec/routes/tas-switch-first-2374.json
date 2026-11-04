@@ -1,0 +1,87 @@
+{
+ "name": "tas-switch-first-2374",
+ "doc": "VCutM from TAS frame 2374: the vanish cap switch strictly before the 8th red coin (coin first is Lost), then the star. No seed: the TAS's order isn't allowed. Target: the TAS's star at 2569.",
+ "start": {
+  "m64": "ref/tas/full-120star-2026-U.m64",
+  "frames": 2374
+ },
+ "budget": {
+  "population": 512,
+  "generations": 300,
+  "horizon": 300
+ },
+ "legs": [
+  {
+   "name": "SwitchFirst",
+   "zone": "vcutm",
+   "stable_frames": 0,
+   "hints": {
+    "precision": "precise"
+   },
+   "lost": {
+    "all": [
+     {
+      "red_coins": {
+       "ge": 8
+      }
+     },
+     {
+      "not": {
+       "save_flag": "0x8"
+      }
+     }
+    ]
+   },
+   "phases": [
+    {
+     "name": "switch",
+     "target": {
+      "sphere": {
+       "center": [
+        4506,
+        26,
+        -6246
+       ],
+       "r": 200
+      }
+     },
+     "frames": 12,
+     "done": {
+      "save_flag": "0x8"
+     }
+    },
+    {
+     "name": "red8",
+     "target": {
+      "point": [
+       4509,
+       0,
+       -5527
+      ]
+     },
+     "frames": 115,
+     "done": {
+      "red_coins": {
+       "ge": 8
+      }
+     }
+    },
+    {
+     "name": "star",
+     "target": {
+      "point": [
+       4600,
+       100,
+       -4600
+      ]
+     },
+     "done": {
+      "stars_gained": {
+       "ge": 1
+      }
+     }
+    }
+   ]
+  }
+ ]
+}

@@ -1,0 +1,154 @@
+{
+  "errors": 0,
+  "legs": [
+    {
+      "issues": [],
+      "leg": 0,
+      "name": "LakituHill",
+      "snapped_to": null,
+      "stable_in_reference": null
+    },
+    {
+      "issues": [
+        {
+          "level": "note",
+          "message": "Done has no grounded/controllable condition",
+          "tip": 2
+        },
+        {
+          "level": "warning",
+          "message": "the straight line from (-23, 803, -2858) crosses 2 of 2 samples of bad terrain (a drop of 1109, a drop of 1109); add a landmark on the reference path at (-57, 803, -3055)",
+          "tip": 5
+        }
+      ],
+      "leg": 1,
+      "name": "CastleDoor",
+      "snapped_to": null,
+      "stable_in_reference": null
+    },
+    {
+      "issues": [
+        {
+          "level": "note",
+          "message": "Done has no grounded/controllable condition",
+          "tip": 2
+        }
+      ],
+      "leg": 2,
+      "name": "BobPainting",
+      "snapped_to": null,
+      "stable_in_reference": null
+    },
+    {
+      "issues": [
+        {
+          "level": "warning",
+          "message": "Done has no grounded/controllable condition and a region wider than 150",
+          "tip": 2
+        }
+      ],
+      "leg": 3,
+      "name": "Ramp",
+      "snapped_to": [
+        1640.0,
+        227.0,
+        4680.0
+      ],
+      "stable_in_reference": true
+    },
+    {
+      "issues": [],
+      "leg": 4,
+      "name": "Blj",
+      "snapped_to": null,
+      "stable_in_reference": null
+    },
+    {
+      "issues": [],
+      "leg": 5,
+      "name": "Redirect",
+      "snapped_to": null,
+      "stable_in_reference": null
+    },
+    {
+      "issues": [],
+      "leg": 6,
+      "name": "Climb",
+      "snapped_to": null,
+      "stable_in_reference": null
+    },
+    {
+      "issues": [],
+      "leg": 7,
+      "name": "Redirect2",
+      "snapped_to": null,
+      "stable_in_reference": null
+    },
+    {
+      "issues": [],
+      "leg": 8,
+      "name": "Climb2",
+      "snapped_to": null,
+      "stable_in_reference": null
+    },
+    {
+      "issues": [],
+      "leg": 9,
+      "name": "UpperPath",
+      "snapped_to": null,
+      "stable_in_reference": null
+    },
+    {
+      "issues": [
+        {
+          "level": "warning",
+          "message": "Done has no grounded/controllable condition and a region wider than 150",
+          "tip": 2
+        }
+      ],
+      "leg": 10,
+      "name": "Summit",
+      "snapped_to": null,
+      "stable_in_reference": null
+    },
+    {
+      "issues": [
+        {
+          "level": "note",
+          "message": "Done has no grounded/controllable condition",
+          "tip": 2
+        }
+      ],
+      "leg": 11,
+      "name": "KingThrows",
+      "snapped_to": null,
+      "stable_in_reference": null
+    },
+    {
+      "issues": [],
+      "leg": 12,
+      "name": "KingStar",
+      "snapped_to": null,
+      "stable_in_reference": null
+    }
+  ],
+  "moves": [
+    {
+      "from": [
+        1600.0,
+        300.0,
+        4550.0
+      ],
+      "leg": 3,
+      "moved": 154.0,
+      "name": "Ramp",
+      "to": [
+        1640.0,
+        227.0,
+        4680.0
+      ]
+    }
+  ],
+  "route": "fast-king-blj-tas",
+  "snapped_route": "tools/spec/routes/fast-king-blj-tas.snapped.json"
+}

@@ -1,0 +1,11 @@
+{
+  "name": "BobRamp",
+  "doc": "BoB spawn -> the foot of the first ramp by the elevator, where both reference routes pass (q6-p-s1 BLJs up from there, q2-star-s2 rides the platform).",
+  "zone": "bob",
+  "gate": {"lacks_star": [1, 6], "z": {"gt": 5500}, "controllable": true},
+  "phases": [
+    {"name": "ramp", "target": {"sphere": {"center": [1600, 300, 4550], "r": 300}}}
+  ],
+  "hints": {"obj_weight": 4},
+  "expect": {"in_sphere": {"center": [1600, 300, 4550], "r": 300}}
+}

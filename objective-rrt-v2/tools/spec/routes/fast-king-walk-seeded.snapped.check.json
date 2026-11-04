@@ -1,0 +1,336 @@
+{
+  "errors": 1,
+  "legs": [
+    {
+      "issues": [],
+      "leg": 0,
+      "name": "LakituHill",
+      "snapped_to": null,
+      "stable_in_reference": true
+    },
+    {
+      "issues": [
+        {
+          "level": "note",
+          "message": "Done has no grounded/controllable condition",
+          "tip": 2
+        },
+        {
+          "level": "warning",
+          "message": "the straight line from (-23, 803, -2858) crosses 2 of 2 samples of bad terrain (a drop of 1109, a drop of 1109); add a landmark on the reference path at (-57, 803, -3055)",
+          "tip": 5
+        }
+      ],
+      "leg": 1,
+      "name": "CastleDoor",
+      "snapped_to": null,
+      "stable_in_reference": null
+    },
+    {
+      "issues": [
+        {
+          "level": "note",
+          "message": "Done has no grounded/controllable condition",
+          "tip": 2
+        }
+      ],
+      "leg": 2,
+      "name": "BobPainting",
+      "snapped_to": null,
+      "stable_in_reference": null
+    },
+    {
+      "issues": [
+        {
+          "level": "warning",
+          "message": "Done has no grounded/controllable condition and a region wider than 150",
+          "tip": 2
+        },
+        {
+          "level": "warning",
+          "message": "the straight line from (-6525, -0, 6431) crosses 33 of 100 samples of bad terrain (a drop of 322, a drop of 350, a drop of 378, a drop of 407, a drop of 414, a drop of 422, a drop of 429, a drop of 437, a drop of 445, a drop of 452, a drop of ); add a landmark on the reference path at (-241, -0, 4216)",
+          "tip": 5
+        }
+      ],
+      "leg": 3,
+      "name": "Hill1",
+      "snapped_to": [
+        3170.0,
+        766.0,
+        3130.0
+      ],
+      "stable_in_reference": true
+    },
+    {
+      "issues": [
+        {
+          "level": "warning",
+          "message": "Done has no grounded/controllable condition and a region wider than 150",
+          "tip": 2
+        },
+        {
+          "level": "error",
+          "message": "the reference's Done state at frame 2935 slides or falls within 20 frames",
+          "tip": 15
+        },
+        {
+          "level": "warning",
+          "message": "target floor ny 0.61 type 0x15 (steep) at (5339, 926, 1098)",
+          "tip": 1
+        },
+        {
+          "level": "warning",
+          "message": "the straight line from (2966, 761, 3262) crosses 3 of 32 samples of bad terrain (steep floor ny 0.36, steep floor ny 0.61, steep floor ny 0.61); add a landmark on the reference path at (4949, 765, 1570)",
+          "tip": 5
+        }
+      ],
+      "leg": 4,
+      "name": "ChompSide",
+      "snapped_to": [
+        4949.0,
+        765.0,
+        1570.0
+      ],
+      "stable_in_reference": false
+    },
+    {
+      "issues": [
+        {
+          "level": "warning",
+          "message": "Done has no grounded/controllable condition and a region wider than 150",
+          "tip": 2
+        },
+        {
+          "level": "warning",
+          "message": "target floor ny 0.82 type 0x2a (slippery) at (7397, 1251, -4564)",
+          "tip": 1
+        },
+        {
+          "level": "warning",
+          "message": "the straight line from (5339, 927, 1098) crosses 37 of 60 samples of bad terrain (steep floor ny 0.69, steep floor ny 0.69, slippery floor 0x2a, slippery floor 0x2a, slippery floor 0x2a, slippery floor 0x2a, slippery floor 0x2a, slippery floo); add a landmark on the reference path at (6157, 791, -744)",
+          "tip": 5
+        },
+        {
+          "level": "warning",
+          "message": "no stable flat grounded reference point within 700 to snap to",
+          "tip": 1
+        }
+      ],
+      "leg": 5,
+      "name": "PoleBase",
+      "snapped_to": null,
+      "stable_in_reference": true
+    },
+    {
+      "issues": [
+        {
+          "level": "warning",
+          "message": "Done has no grounded/controllable condition and a region wider than 150",
+          "tip": 2
+        },
+        {
+          "level": "warning",
+          "message": "target floor ny 0.82 type 0x2a (slippery) at (7781, 1620, -5264)",
+          "tip": 1
+        },
+        {
+          "level": "warning",
+          "message": "the straight line from (7397, 1250, -4564) crosses 10 of 10 samples of bad terrain (slippery floor 0x2a, slippery floor 0x2a, slippery floor 0x2a, slippery floor 0x2a, slippery floor 0x2a, slippery floor 0x2a, slippery floor 0x2a, slippery floo)",
+          "tip": 5
+        },
+        {
+          "level": "warning",
+          "message": "no stable flat grounded reference point within 700 to snap to",
+          "tip": 1
+        }
+      ],
+      "leg": 6,
+      "name": "Ledge1",
+      "snapped_to": null,
+      "stable_in_reference": null
+    },
+    {
+      "issues": [
+        {
+          "level": "warning",
+          "message": "Done has no grounded/controllable condition and a region wider than 150",
+          "tip": 2
+        },
+        {
+          "level": "warning",
+          "message": "the straight line from (7781, 1864, -5264) crosses 1 of 17 samples of bad terrain (slippery floor 0x14); add a landmark on the reference path at (7827, 1951, -5943)",
+          "tip": 5
+        }
+      ],
+      "leg": 7,
+      "name": "Ledge2",
+      "snapped_to": [
+        6772.0,
+        2045.0,
+        -6552.0
+      ],
+      "stable_in_reference": null
+    },
+    {
+      "issues": [
+        {
+          "level": "warning",
+          "message": "Done has no grounded/controllable condition and a region wider than 150",
+          "tip": 2
+        }
+      ],
+      "leg": 8,
+      "name": "BackPath",
+      "snapped_to": [
+        2843.0,
+        2472.0,
+        -7178.0
+      ],
+      "stable_in_reference": null
+    },
+    {
+      "issues": [
+        {
+          "level": "warning",
+          "message": "Done has no grounded/controllable condition and a region wider than 150",
+          "tip": 2
+        },
+        {
+          "level": "warning",
+          "message": "the straight line from (2937, 2722, -7213) crosses 26 of 29 samples of bad terrain (a drop of 301, a drop of 313, a drop of 326, a drop of 338, a drop of 350, a drop of 362, a drop of 375, a drop of 387, a drop of 399, a drop of 412, a drop of ); add a landmark on the reference path at (1496, 2544, -6363)",
+          "tip": 5
+        }
+      ],
+      "leg": 9,
+      "name": "UpperPath",
+      "snapped_to": [
+        485.0,
+        2606.0,
+        -5742.0
+      ],
+      "stable_in_reference": null
+    },
+    {
+      "issues": [
+        {
+          "level": "warning",
+          "message": "Done has no grounded/controllable condition and a region wider than 150",
+          "tip": 2
+        },
+        {
+          "level": "warning",
+          "message": "the straight line from (449, 3229, -5721) crosses 4 of 14 samples of bad terrain (a drop of 660, a drop of 652, no floor, no floor); add a landmark on the reference path at (431, 2683, -5590)",
+          "tip": 5
+        },
+        {
+          "level": "warning",
+          "message": "no stable flat grounded reference point within 700 to snap to",
+          "tip": 1
+        }
+      ],
+      "leg": 10,
+      "name": "Summit",
+      "snapped_to": null,
+      "stable_in_reference": null
+    },
+    {
+      "issues": [
+        {
+          "level": "note",
+          "message": "Done has no grounded/controllable condition",
+          "tip": 2
+        }
+      ],
+      "leg": 11,
+      "name": "KingThrows",
+      "snapped_to": null,
+      "stable_in_reference": true
+    },
+    {
+      "issues": [],
+      "leg": 12,
+      "name": "KingStar",
+      "snapped_to": null,
+      "stable_in_reference": null
+    }
+  ],
+  "moves": [
+    {
+      "from": [
+        2966.0,
+        761.0,
+        3262.0
+      ],
+      "leg": 3,
+      "moved": 243.0,
+      "name": "Hill1",
+      "to": [
+        3170.0,
+        766.0,
+        3130.0
+      ]
+    },
+    {
+      "from": [
+        5339.0,
+        927.0,
+        1098.0
+      ],
+      "leg": 4,
+      "moved": 633.0,
+      "name": "ChompSide",
+      "to": [
+        4949.0,
+        765.0,
+        1570.0
+      ]
+    },
+    {
+      "from": [
+        6689.0,
+        2137.0,
+        -6599.0
+      ],
+      "leg": 7,
+      "moved": 132.0,
+      "name": "Ledge2",
+      "to": [
+        6772.0,
+        2045.0,
+        -6552.0
+      ]
+    },
+    {
+      "from": [
+        2937.0,
+        2722.0,
+        -7213.0
+      ],
+      "leg": 8,
+      "moved": 270.0,
+      "name": "BackPath",
+      "to": [
+        2843.0,
+        2472.0,
+        -7178.0
+      ]
+    },
+    {
+      "from": [
+        449.0,
+        3229.0,
+        -5721.0
+      ],
+      "leg": 9,
+      "moved": 624.0,
+      "name": "UpperPath",
+      "to": [
+        485.0,
+        2606.0,
+        -5742.0
+      ]
+    }
+  ],
+  "route": "fast-king-walk-seeded",
+  "snapped_route": "tools/spec/routes/fast-king-walk-seeded.snapped.json"
+}

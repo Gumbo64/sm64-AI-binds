@@ -1,0 +1,28 @@
+[package]
+name = "oss2"
+description = "Scattershot v2: objective-scattershot's archive and pellets, with objective-rrt-v2's ETA GA as an expansion operator."
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "oss2"
+path = "src/bin/oss2.rs"
+
+[dependencies]
+anyhow.workspace = true
+lz4_flex.workspace = true
+rand.workspace = true
+rand_distr = "0.5"
+rayon.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sm64-binds.workspace = true
+obrrt-core.workspace = true
+obrrt-search.workspace = true
+obrrt-objectives.workspace = true
+# OBRRT_SPEC: declarative objectives added to the GA's eligible list (off: unused).
+obrrt-spec.workspace = true
+# The schema tree and the objective kinds (key writers): the vendored copy of
+# objective-scattershot that obrrt-search already uses, so they aren't duplicated.
+objective-scattershot = { path = "../scattershot" }
+sm64_ai = { path = "../../rust" }

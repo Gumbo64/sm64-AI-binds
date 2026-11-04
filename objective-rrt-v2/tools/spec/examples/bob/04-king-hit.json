@@ -1,0 +1,85 @@
+{
+ "name": "KingHit",
+ "doc": "BoB star 1: one hit on King Bob-omb (summit). Grab him from behind (held), throw him (his health drops below the start's). repeat would need 3 hits; this is the first.",
+ "zone": "bob",
+ "gate": {
+  "lacks_star": [
+   1,
+   1
+  ],
+  "present": "bhvKingBobomb",
+  "y": {
+   "gt": 3500
+  },
+  "controllable": true
+ },
+ "phases": [
+  {
+   "name": "behind",
+   "target": {
+    "object": {
+     "bhv": "bhvKingBobomb"
+    }
+   },
+   "done": {
+    "dist": {
+     "lt": 250
+    },
+    "facing": {
+     "yaw": "object",
+     "within": 60
+    }
+   }
+  },
+  {
+   "name": "grab",
+   "target": {
+    "object": {
+     "bhv": "bhvKingBobomb"
+    }
+   },
+   "done": {
+    "held": "target"
+   },
+   "frames": 8,
+   "steer_button": {
+    "button": "B",
+    "within": 200
+   }
+  },
+  {
+   "name": "throw",
+   "target": {
+    "object": {
+     "bhv": "bhvKingBobomb"
+    }
+   },
+   "done": {
+    "field": {
+     "name": "health",
+     "lt": 3
+    }
+   },
+   "frames": 40,
+   "steer": false,
+   "penalty": [
+    {
+     "when": {
+      "thrown_off": true
+     },
+     "frames": 230
+    }
+   ]
+  }
+ ],
+ "lost": {
+  "y": {
+   "lt": 3000
+  }
+ },
+ "hints": {
+  "obj_weight": 10,
+  "precision": "precise",
+  "success_value": 3
+ }
+}
