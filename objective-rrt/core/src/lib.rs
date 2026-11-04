@@ -4,6 +4,7 @@
 //!
 //! Neither side depends on the other; both depend on this crate only.
 
+pub mod features;
 pub mod geo;
 pub mod layout;
 pub mod mover;

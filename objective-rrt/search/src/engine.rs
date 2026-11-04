@@ -176,6 +176,9 @@ pub struct Config {
     pub reroute_schema: Option<String>,
     /// OBRRT_REROUTE_SHARE: at most this share of a round's slots for grafts.
     pub reroute_share: f64,
+    /// OBRRT_POLISH=<share>: at most this share of a round's plans re-attempt
+    /// the best route's earlier milestones (see `polish`); 0 = off.
+    pub polish: f64,
     /// OBRRT_REROUTE_MARGIN: frames a graft must save.
     pub reroute_margin: u32,
     /// OBRRT_ZONE_SHARE=1: replay the inputs states took since entering
@@ -288,6 +291,7 @@ impl Default for Config {
             reroute: false,
             reroute_schema: None,
             reroute_share: 0.25,
+            polish: 0.0,
             reroute_margin: 10,
             zone_share: false,
             zone_share_k: 4,
@@ -298,7 +302,7 @@ impl Default for Config {
             chain_route: false,
             chain_follow: 0.5,
             sampler_rate: false,
-            rate: crate::pool::RateParams { floor: 0.15, cap: 4.0, tau: 50_000_000.0, prior_frames: 200_000.0, nostart_frames: 5_000.0, hier: false, kind_scale: 10.0, nostart_skip: false, skip_budget: 2_000_000 },
+            rate: crate::pool::RateParams { floor: 0.15, cap: 4.0, tau: 50_000_000.0, prior_frames: 200_000.0, nostart_frames: 5_000.0, hier: false, kind_scale: 10.0, nostart_skip: false, skip_budget: 2_000_000, route: 0.0, novel: 1.0 },
             node_prior: 300_000.0,
             node_cap: 2.0,
             kinship_mult: 1.0,
@@ -318,7 +322,14 @@ struct Plan {
     /// OBRRT_NEAR_SEED: recorded inputs of a nearby start's attempt of the
     /// first stage, seeding the GA (see near.rs).
     seed: Option<Vec<GamePad>>,
+    /// OBRRT_POLISH: the route job this plan is (see `polish`).
+    polish: Option<crate::polish::Job>,
+    /// OBRRT_MODEL_REPAIR: the seed's recorded states with model data.
+    targets: Option<crate::ga::RepairTargets>,
 }
+
+/// OBRRT_POLISH: route-graft waves per round at most.
+const POLISH_WAVES: usize = 64;
 
 /// RRT* rewiring work: re-attempt `target`'s objective from `from`, a state
 /// that reached `target`'s parent's place sooner.
@@ -458,6 +469,7 @@ fn cell(st: &St) -> Cell {
 pub struct Engine {
     /// Rerouting onto faster duplicates (`Config::reroute`).
     rr: Option<crate::reroute::Reroute>,
+    polish: Option<crate::polish::Polish>,
     /// Zone-entry input sharing (`Config::zone_share`).
     zs: Option<crate::share::ZoneShare>,
     /// Replay budget (`Config::replay_budget`).
@@ -633,6 +645,11 @@ impl Engine {
                 None => crate::reroute::RerouteKey::Cell,
             };
             Some(crate::reroute::Reroute::new(key))
+        } else if cfg.polish > 0.0 {
+            // Route grafts only.
+            let mut r = crate::reroute::Reroute::new(crate::reroute::RerouteKey::Cell);
+            r.route_only = true;
+            Some(r)
         } else {
             None
         };
@@ -649,6 +666,7 @@ impl Engine {
         }
         Ok(Engine {
             rr,
+            polish: (cfg.polish > 0.0).then(|| crate::polish::Polish::new(cfg.polish)),
             zs,
             rb,
             tree: Tree::new(root),
@@ -951,7 +969,20 @@ impl Engine {
         }
         let hmin = cands.iter().map(|c| c.1).fold(f64::INFINITY, f64::min);
         let t = if arrival { self.cfg.arrival_t } else { obj.temperature() }.max(1e-9);
-        let weights: Vec<f64> = cands.iter().map(|c| (-(c.1 - hmin) / t).exp() * c.2).collect();
+        let mut weights: Vec<f64> = cands.iter().map(|c| (-(c.1 - hmin) / t).exp() * c.2).collect();
+        // OBRRT_MODEL (model.rs): starts the model puts fewer frames from a
+        // star they haven't collected weigh more.
+        if let Some(mt) = crate::model::settings().map(|s| s.start_t).filter(|&t| t > 0.0) {
+            let score = |i: u32| self.tree.nodes[i as usize].stats.model.as_ref().map(|m| m.score as f64);
+            let smin = cands.iter().filter_map(|c| score(c.0)).fold(f64::INFINITY, f64::min);
+            if smin.is_finite() {
+                for (w, c) in weights.iter_mut().zip(&cands) {
+                    if let Some(sc) = score(c.0) {
+                        *w *= (-(sc - smin) / mt).exp();
+                    }
+                }
+            }
+        }
         let total: f64 = weights.iter().sum();
         if !(total > 0.0) {
             return Some(cands[0].0);
@@ -1082,6 +1113,14 @@ impl Engine {
     /// A dialog or menu state as b: its options have infinite weight (and
     /// everything else none), so one of them is attempted from it. From the
     /// queue, each option once, untried first; otherwise by weight.
+    /// The model's learned objectives proposed at b (OBRRT_MODEL_LEARNED).
+    fn insert_learned(&mut self, b: u32, b_st: &St) {
+        let Some(m) = self.tree.nodes[b as usize].stats.model.clone() else { return };
+        for o in &m.proposals {
+            self.pool.insert(o.clone(), b_st);
+        }
+    }
+
     fn plan_modal(&mut self, b: u32, queued: bool) -> Option<Plan> {
         // A state retired since it was queued (the frontier moved on) has no
         // save any more: starting from it would start from the root.
@@ -1092,6 +1131,7 @@ impl Engine {
         for o in self.generator.generate(&b_st, &mut self.rng) {
             self.pool.insert(o, &b_st);
         }
+        self.insert_learned(b, &b_st);
         let options: Vec<(usize, f64)> = self
             .pool
             .entries
@@ -1113,7 +1153,7 @@ impl Engine {
         self.diag.kind(kind).samples += 1;
         self.diag.kind(kind).window_samples += 1;
         self.pool.entries[entry].unattemptable = 0;
-        Some(Plan { stages: vec![(entry, obj)], start: b, b, rewire: None, seed: None })
+        Some(Plan { stages: vec![(entry, obj)], start: b, b, rewire: None, seed: None, polish: None, targets: None })
     }
 
     /// RRT*: the next rewiring attempt, if any is still valid.
@@ -1132,9 +1172,162 @@ impl Engine {
                 }
             };
             self.diag.rewire.attempts += 1;
-            return Some(Plan { stages: vec![(entry, obj)], start: r.from, b: r.from, rewire: Some(r.target), seed: None });
+            return Some(Plan { stages: vec![(entry, obj)], start: r.from, b: r.from, rewire: Some(r.target), seed: None, polish: None, targets: None });
         }
         None
+    }
+
+    /// OBRRT_POLISH: the next polish plan: a queued repair, else a route
+    /// milestone drawn by its leg's length (fewer draws after failed tries),
+    /// attempted from a route state up to `back` nodes above it, seeded with
+    /// the route's own inputs (see `polish`).
+    fn plan_polish(&mut self) -> Option<Plan> {
+        let job = loop {
+            let pl = self.polish.as_mut()?;
+            if let Some(j) = pl.repairs.pop_front() {
+                break j;
+            }
+            let route = &pl.route;
+            let ms = pl.milestones(&self.tree);
+            if ms.is_empty() {
+                pl.stats.no_target += 1;
+                return None;
+            }
+            let mut prev = 0usize;
+            let mut w: Vec<(usize, usize, f64)> = Vec::with_capacity(ms.len());
+            for &j in &ms {
+                let f = self.tree.nodes[route[j] as usize].st.frame.saturating_sub(self.tree.nodes[route[prev] as usize].st.frame).max(30) as f64;
+                let t = pl.tries.get(&route[j]).copied().unwrap_or(0) as f64;
+                w.push((j, prev, f / (1.0 + t / 4.0)));
+                prev = j;
+            }
+            let total: f64 = w.iter().map(|x| x.2).sum();
+            let mut x = self.rng.random::<f64>() * total;
+            let mut pick = w[w.len() - 1];
+            for &c in &w {
+                if x < c.2 {
+                    pick = c;
+                    break;
+                }
+                x -= c.2;
+            }
+            let (j, prev, _) = pick;
+            let span = (j - prev).min(pl.back).max(1);
+            let k = self.rng.random_range(1..=span);
+            let from = route[j - k];
+            break crate::polish::Job { from, anchor: from, target: route[j], end: pl.end, repair: false };
+        };
+        let pl = self.polish.as_mut().unwrap();
+        let n = &self.tree.nodes[job.from as usize];
+        let Some(obj) = self.tree.nodes[job.target as usize].made_by.clone() else {
+            pl.stats.no_target += 1;
+            return None;
+        };
+        let loadable = job.from == 0 || !n.retired || self.tree.is_pinned(job.from);
+        if !loadable || n.st.modal() || n.st.objects.is_none() || !obj.exists_in(&n.st) || !obj.base_criteria(&n.st) {
+            pl.stats.no_target += 1;
+            return None;
+        }
+        let Some(seed) = crate::polish::Polish::inputs(&self.tree, job.anchor, job.target) else {
+            pl.stats.no_target += 1;
+            return None;
+        };
+        pl.stats.plans += 1;
+        if job.repair {
+            pl.stats.repairs += 1;
+        } else {
+            *pl.tries.entry(job.target).or_default() += 1;
+        }
+        let entry = match self.pool.find(&obj.key()) {
+            Some(e) => e,
+            None => {
+                self.pool.insert(obj.clone(), &n.st);
+                self.pool.entries.len() - 1
+            }
+        };
+        let targets = crate::model::settings().filter(|m| m.repair > 0).map(|_| {
+            // The route's states from the anchor down to the target, each
+            // with its own model data, at their frames after the anchor.
+            let mut path = Vec::new();
+            let mut at = job.target;
+            while at != job.anchor {
+                path.push(at);
+                match self.tree.nodes[at as usize].parent {
+                    Some(p) => at = p,
+                    None => break,
+                }
+            }
+            let f0 = self.tree.nodes[job.anchor as usize].st.frame;
+            let mut out: Vec<(u32, Arc<crate::model::NodeModel>)> = Vec::new();
+            for &i in path.iter().rev() {
+                let n = &self.tree.nodes[i as usize];
+                if let Some(m) = &n.stats.model {
+                    if out.last().is_none_or(|(_, l)| !Arc::ptr_eq(l, m)) {
+                        out.push((n.st.frame.saturating_sub(f0), m.clone()));
+                    }
+                }
+            }
+            Arc::new(out)
+        });
+        Some(Plan { stages: vec![(entry, obj)], start: job.from, b: job.from, rewire: None, seed: Some(seed), polish: Some(job), targets })
+    }
+
+    /// OBRRT_POLISH: a polish or repair plan's first segment ended at `end`
+    /// (its node, and whether it met the objective). A result of the target's
+    /// progress set at least the margin sooner continues the route: grafted
+    /// edge by edge if it is the target's movement key, else a repair toward
+    /// the next milestone.
+    fn polish_result(&mut self, job: crate::polish::Job, end: Option<(u32, bool)>) {
+        let Some(pl) = self.polish.as_mut() else { return };
+        let Some((n, true)) = end else {
+            pl.stats.failed += 1;
+            return;
+        };
+        pl.pinned(n);
+        let (ns, ts) = (&self.tree.nodes[n as usize].st, &self.tree.nodes[job.target as usize].st);
+        if ns.progress_set() != ts.progress_set() || ns.stars != ts.stars || ns.keys != ts.keys {
+            pl.stats.other_set += 1;
+            return;
+        }
+        let bar = pl.best.get(&job.target).copied().unwrap_or(ts.frame).min(ts.frame);
+        if ns.frame + pl.margin > bar {
+            pl.stats.not_sooner += 1;
+            return;
+        }
+        pl.best.insert(job.target, ns.frame);
+        let saved = (ts.frame - ns.frame) as u64;
+        pl.stats.sooner += 1;
+        pl.stats.sooner_frames += saved;
+        pl.tries.remove(&job.target);
+        if job.target == job.end {
+            pl.stats.done += 1;
+            pl.stats.done_frames += saved;
+            return;
+        }
+        let same = crate::reroute::move_key(ns) == crate::reroute::move_key(ts);
+        if pl.stats.sooner <= 30 {
+            let tn = &self.tree.nodes[job.target as usize];
+            println!(
+                "POLISH sooner #{}: target {} ({} via {}, frame {}) from {} (frame {}) repair {}: node {} frame {} (-{saved}), same key {same}, end {}",
+                pl.stats.sooner, job.target, tn.made_by.as_ref().map_or(String::new(), |m| m.key()), tn.via, ts.frame, job.from, self.tree.nodes[job.from as usize].st.frame, job.repair, n, ns.frame, job.end
+            );
+        }
+        let Some(child) = crate::legs::below(&self.tree, job.target, job.end) else {
+            pl.stats.no_child += 1;
+            return;
+        };
+        if same {
+            pl.stats.same_key += 1;
+            pl.stats.chains += 1;
+            if let Some(rr) = self.rr.as_mut() {
+                rr.push(crate::reroute::Graft { from: n, child, depth: 1, kind: crate::reroute::KIND_ROUTE, leg: job.end }, true);
+            }
+        } else if let Some(t) = crate::polish::Polish::next_milestone(&self.tree, child, job.end) {
+            pl.stats.other_key += 1;
+            pl.push_repair(crate::polish::Job { from: n, anchor: job.target, target: t, end: job.end, repair: true });
+        } else {
+            pl.stats.no_next += 1;
+        }
     }
 
     /// New-eligible boost: the keys (with their text) of the objectives `st`
@@ -1168,6 +1361,46 @@ impl Engine {
         let mut first = sets.pop().unwrap_or_default();
         first.retain(|(h, _, _)| second.binary_search_by(|x| x.0.cmp(h)).is_ok());
         first
+    }
+
+    /// Rate sampler, OBRRT_RATE_ROUTE: node `id` set a new best time for its
+    /// milestone (`old`: the previous best, u32::MAX if none). The entries
+    /// that made the states on its path since the previous star share the
+    /// credit, so objectives that lead to stars rate above dead ends.
+    fn route_credit(&mut self, id: u32, old: u32) {
+        let c = self.cfg.rate.route;
+        if !self.cfg.sampler_rate || c <= 0.0 {
+            return;
+        }
+        let n = &self.tree.nodes[id as usize];
+        let imp = c * if old == u32::MAX { 5.0 } else { (old.saturating_sub(n.st.frame) as f64 / 30.0).min(5.0) };
+        if imp <= 0.0 {
+            return;
+        }
+        let floor = n.st.stars - 1;
+        let mut js: Vec<usize> = Vec::new();
+        let mut cur = Some(id);
+        while let Some(i) = cur {
+            let n = &self.tree.nodes[i as usize];
+            if n.st.stars < floor {
+                break;
+            }
+            if let Some(j) = n.made_by.as_ref().and_then(|m| self.pool.find(&m.key())) {
+                if !js.contains(&j) {
+                    js.push(j);
+                }
+            }
+            cur = n.parent;
+        }
+        if js.is_empty() {
+            return;
+        }
+        let p = self.cfg.rate;
+        let share = imp / js.len() as f64;
+        for j in js {
+            self.pool.rate_note(j, share, 0.0, self.total_frames, &p, false);
+        }
+        self.pool.rate.imp_route += imp;
     }
 
     /// New-eligible boost, on adding `id` (child of `parent`): records its
@@ -1238,6 +1471,7 @@ impl Engine {
             for o in self.generator.generate(&b_st, &mut self.rng) {
                 self.pool.insert(o, &b_st);
             }
+            self.insert_learned(b, &b_st);
             let Some(entry) = self.pool.find(&key) else { continue };
             let obj = self.pool.entries[entry].obj.clone();
             if obj.modal() || !obj.exists_in(&b_st) || !obj.base_criteria(&b_st) {
@@ -1251,7 +1485,7 @@ impl Engine {
                     self.pool.entries[entry].unattemptable = 0;
                     self.ne.planned += 1;
                     let stages = self.extend_chain(entry, obj, start);
-                    out = Some(Plan { stages, start, b, rewire: None, seed: None });
+                    out = Some(Plan { stages, start, b, rewire: None, seed: None, polish: None, targets: None });
                     break;
                 }
                 None => {
@@ -1340,6 +1574,7 @@ impl Engine {
             for o in self.generator.generate(&b_st, &mut self.rng) {
                 self.pool.insert(o, &b_st);
             }
+            self.insert_learned(b, &b_st);
             let Some(entry) = self.sample_entry(b, true) else {
                 self.ea.no_objective += 1;
                 continue;
@@ -1352,7 +1587,7 @@ impl Engine {
             self.diag.kind(kind).window_samples += 1;
             self.pool.entries[entry].unattemptable = 0;
             let stages = self.extend_chain(entry, obj, b);
-            return Some(Plan { stages, start: b, b, rewire: None, seed: None });
+            return Some(Plan { stages, start: b, b, rewire: None, seed: None, polish: None, targets: None });
         }
         None
     }
@@ -1365,7 +1600,7 @@ impl Engine {
             if let Some((start, obj)) = self.bc.next(&self.tree) {
                 self.pool.insert(obj.clone(), &self.tree.nodes[start as usize].st);
                 let entry = self.pool.find(&obj.key()).unwrap();
-                return Some(Plan { stages: vec![(entry, obj)], start, b: start, rewire: None, seed: None });
+                return Some(Plan { stages: vec![(entry, obj)], start, b: start, rewire: None, seed: None, polish: None, targets: None });
             }
         }
         if self.cfg.rrt_star
@@ -1414,6 +1649,7 @@ impl Engine {
         for o in self.generator.generate(&b_st, &mut self.rng) {
             self.pool.insert(o, &b_st);
         }
+        self.insert_learned(b, &b_st);
         // Steps 3-4, retrying a few times when a pick has no eligible start.
         for _ in 0..4 {
             // Wall time per pick (diagnostics only, never decisions).
@@ -1431,7 +1667,7 @@ impl Engine {
                 Some(start) => {
                     self.pool.entries[entry].unattemptable = 0;
                     let stages = self.extend_chain(entry, obj, start);
-                    return Some(Plan { stages, start, b, rewire: None, seed: None });
+                    return Some(Plan { stages, start, b, rewire: None, seed: None, polish: None, targets: None });
                 }
                 None => {
                     self.diag.kind(kind).no_start += 1;
@@ -1768,6 +2004,9 @@ impl Engine {
         let mut carry: Vec<GamePad> = Vec::new();
         let mut seg_start = self.tree.nodes[plan.start as usize].st.clone();
         let (mut chain_added, mut chain_frontier, mut chain_zones, mut chain_value) = (0, 0, 0, 0.0);
+        // OBRRT_POLISH: a polish plan's states stay loadable (pinned).
+        self.tree.pin_next = plan.polish.is_some();
+        let mut polish_end: Option<(u32, bool)> = None;
         for (i, seg) in att.segments.into_iter().enumerate() {
             let (entry, obj) = (plan.stages[i].0, plan.stages[i].1.clone());
             let kind = obj.kind();
@@ -1829,6 +2068,9 @@ impl Engine {
                     let progress = st.progress();
                     let zone_now = st.zone();
                     let (id, adv) = self.tree.add(parent, std::mem::take(&mut carry), st, delta, kind);
+                    if let Some(m) = seg.model.clone() {
+                        self.tree.nodes[id as usize].stats.model = Some(m);
+                    }
                     if self.cfg.chain_route {
                         let n = &mut self.tree.nodes[id as usize];
                         n.made_by = Some(obj.clone());
@@ -1841,7 +2083,9 @@ impl Engine {
                         self.ea_note(id);
                     }
                     // Best game time per milestone, for the anytime curve.
-                    self.diag.note_best(progress, zone_now, frame);
+                    if let Some(old) = self.diag.note_best(progress, zone_now, frame) {
+                        self.route_credit(id, old);
+                    }
                     if self.cfg.rrt_star {
                         self.tree.nodes[id as usize].made_by = Some(obj.clone());
                         // Everything already at this place got here later (the
@@ -1900,6 +2144,9 @@ impl Engine {
                     added = Some(id);
                     advanced = adv;
                     parent = id;
+                    if i == 0 && plan.polish.is_some() {
+                        polish_end = Some((id, seg.success));
+                    }
                     if i == 0 && self.near.on.is_some() {
                         let rank = if seg.success { (frame - seg_start.frame) as f64 } else { obj.base_heuristic(&self.tree.nodes[id as usize].st) };
                         self.near.note(obj.key(), plan.start, id, seg.success, rank);
@@ -2006,7 +2253,7 @@ impl Engine {
                 let p = self.cfg.rate;
                 let e = &mut self.pool.entries[entry];
                 let (mut imp, mut first, mut sooner, mut closer) = (0.0, 0.0, 0.0, 0.0);
-                let novel_i = if novel { 1.0 } else { 0.0 };
+                let novel_i = if novel { p.novel } else { 0.0 };
                 if let (true, Some(f)) = (seg.success, end_frame) {
                     if e.best_hit == u32::MAX {
                         first = 1.0;
@@ -2131,6 +2378,10 @@ impl Engine {
             if let Some(st) = next_start {
                 seg_start = st;
             }
+        }
+        self.tree.pin_next = false;
+        if let Some(job) = plan.polish {
+            self.polish_result(job, polish_end);
         }
         if let Some(d) = dense {
             self.merge_dense(plan, d)?;
@@ -2263,7 +2514,9 @@ impl Engine {
             if self.cfg.earliest {
                 self.ea_note(id);
             }
-            self.diag.note_best(progress, zone, frame);
+            if let Some(old) = self.diag.note_best(progress, zone, frame) {
+                self.route_credit(id, old);
+            }
             if modal {
                 self.modal_queue.push(id);
             }
@@ -2484,6 +2737,12 @@ impl Engine {
             });
         }
         summary["decay_resets"] = serde_json::json!(self.decay_resets);
+        if let Some(pl) = &self.polish {
+            summary["polish"] = serde_json::to_value(&pl.stats).unwrap_or_default();
+            summary["polish"]["route_end"] = serde_json::json!(pl.end);
+            summary["polish"]["pinned"] = serde_json::json!(self.tree.pinned.len());
+            println!("{}", pl.line(&self.tree));
+        }
         if let Some(rr) = &self.rr {
             summary["reroute"] = rr.summary();
             let st = &rr.stats;
@@ -2571,9 +2830,9 @@ impl Engine {
                 r.imp_novel, r.imp_first, r.imp_sooner, r.imp_closer, r.nostart_charges, m.len(), q(0.0), q(0.5), q(1.0), node_floor
             );
             println!(
-                "   rate sampler: weight p10 {:.2} p90 {:.2}; kinds {} rate/median min {:.2} median {:.2} max {:.2}; picks {:.1}s started {:.1}s no start (sampling {:.1}s), plans none {}; skip: no-start global {} kin {}, skipped {} released {} recheck {:.1}s",
+                "   rate sampler: weight p10 {:.2} p90 {:.2}; kinds {} rate/median min {:.2} median {:.2} max {:.2}; picks {:.1}s started {:.1}s no start (sampling {:.1}s), plans none {}; skip: no-start global {} kin {}, skipped {} released {} recheck {:.1}s; route credit {:.1}",
                 r.p10, r.p90, r.kinds, r.kind_min, r.kind_p50, r.kind_max, r.pick_secs, r.nostart_secs, r.sample_secs, r.plans_none,
-                r.nostart_global, r.nostart_kin, r.skipped, r.released, r.recheck_secs
+                r.nostart_global, r.nostart_kin, r.skipped, r.released, r.recheck_secs, r.imp_route
             );
             summary["rate"] = serde_json::json!({
                 "entries": r, "starts": {"n": m.len(), "min": q(0.0), "p25": q(0.25), "median": q(0.5), "p75": q(0.75), "max": q(1.0), "at_floor": node_floor},
@@ -2860,7 +3119,7 @@ impl Engine {
                 .iter()
                 .copied()
                 .filter(|g| {
-                    let ok = checked || g.from == 0 || !self.tree.nodes[g.from as usize].retired;
+                    let ok = checked || g.from == 0 || !self.tree.nodes[g.from as usize].retired || self.tree.is_pinned(g.from);
                     rr.stats.stale += !ok as u64;
                     ok
                 })
@@ -2963,7 +3222,9 @@ impl Engine {
             if self.cfg.earliest {
                 self.ea_note(id);
             }
-            self.diag.note_best(progress, zone, frame);
+            if let Some(old) = self.diag.note_best(progress, zone, frame) {
+                self.route_credit(id, old);
+            }
             if modal {
                 self.modal_queue.push(id);
             }
@@ -3028,15 +3289,18 @@ impl Engine {
             Ok(Some(x)) => x,
             Ok(None) => {
                 rr.stats.died += 1;
+                self.route_diverged(g);
                 return Ok(());
             }
             Err(_) => {
                 rr.stats.traps += 1;
+                self.route_diverged(g);
                 return Ok(());
             }
         };
         let c = cell(&st);
         if !rr.accept(g, &st, &c, &self.tree, self.cfg.reroute_margin) {
+            self.route_diverged(g);
             return Ok(());
         }
         let dup = self.cells.get(&c).is_some_and(|ids| ids.iter().any(|&i| self.tree.nodes[i as usize].st.frame <= st.frame));
@@ -3061,7 +3325,10 @@ impl Engine {
             println!("new zone {zone:?} via reroute of {kind} at node {}", self.tree.nodes.len());
         }
         let (modal, frame, progress) = (st.modal(), st.frame, st.progress());
+        let route = g.kind == crate::reroute::KIND_ROUTE;
+        self.tree.pin_next = route;
         let (id, _adv) = self.tree.add(g.from, inputs, st, delta, kind);
+        self.tree.pin_next = false;
         // OBRRT_KIN_UNIT=attempt: a graft is the generation its child was.
         self.tree.gen_step[id as usize] = self.tree.gen_step[g.child as usize];
         if self.cfg.chain_route {
@@ -3077,7 +3344,9 @@ impl Engine {
         if self.cfg.earliest {
             self.ea_note(id);
         }
-        self.diag.note_best(progress, zone, frame);
+        if let Some(old) = self.diag.note_best(progress, zone, frame) {
+            self.route_credit(id, old);
+        }
         if modal {
             self.modal_queue.push(id);
         }
@@ -3098,7 +3367,38 @@ impl Engine {
         rr.stats.frames_saved += child_frame.saturating_sub(frame) as u64;
         rr.stats.max_depth = rr.stats.max_depth.max(g.depth + 1);
         rr.note(id, &self.tree.nodes[id as usize].st, &c, &self.tree, &self.hot, self.cfg.reroute_margin, g.depth + 1);
+        if route {
+            // A kept route edge: the next one from here, or the chain is done.
+            let next = (g.child != g.leg).then(|| crate::legs::below(&self.tree, g.child, g.leg)).flatten();
+            if let Some(next) = next {
+                rr.push(crate::reroute::Graft { from: id, child: next, depth: g.depth + 1, kind: crate::reroute::KIND_ROUTE, leg: g.leg }, true);
+            }
+            if let Some(pl) = self.polish.as_mut() {
+                pl.pinned(id);
+                pl.stats.edges_kept += 1;
+                if g.child == g.leg {
+                    pl.stats.done += 1;
+                    pl.stats.done_frames += child_frame.saturating_sub(frame) as u64;
+                    let f = self.write_m64(id, "polish-best")?;
+                    println!("POLISH chain done at node {id}: frame {frame}, {} sooner than node {}: {f}", child_frame.saturating_sub(frame), g.leg);
+                }
+            }
+        }
         Ok(())
+    }
+
+    /// OBRRT_POLISH: route edge `g` was not kept (diverged, slower, died):
+    /// a repair attempt at the next route milestone from its start.
+    fn route_diverged(&mut self, g: crate::reroute::Graft) {
+        if g.kind != crate::reroute::KIND_ROUTE {
+            return;
+        }
+        let Some(pl) = self.polish.as_mut() else { return };
+        pl.stats.diverged += 1;
+        let Some(anchor) = self.tree.nodes[g.child as usize].parent else { return };
+        if let Some(t) = crate::polish::Polish::next_milestone(&self.tree, g.child, g.leg) {
+            pl.push_repair(crate::polish::Job { from: g.from, anchor, target: t, end: g.leg, repair: true });
+        }
     }
 
     /// Replay budget: after the round's plans (frames since `round_t0`, plus
@@ -3137,6 +3437,7 @@ impl Engine {
         let mut last_report = Instant::now();
         let mut last_tune = self.total_frames;
         let mut round = 0u64;
+        self.tree.pin_routes = self.polish.is_some();
         // Stop on wall-clock time, or on emulated frames (max_frames) so runs
         // compare equally whatever the thread count or CPU sharing.
         while begin.elapsed() < Duration::from_secs_f64(self.cfg.minutes * 60.0)
@@ -3177,7 +3478,7 @@ impl Engine {
                         let st = &self.tree.nodes[id].st;
                         rr.note(id as u32, st, &cell(st), &self.tree, &self.hot, self.cfg.reroute_margin, 0);
                     }
-                    if self.rb.is_some() {
+                    if self.rb.is_some() || rr.route_only {
                         Vec::new()
                     } else {
                         rr.take((self.cfg.round_plans as f64 * self.cfg.reroute_share).ceil() as usize)
@@ -3201,12 +3502,26 @@ impl Engine {
             if let Some(idx) = self.pool.sidx.as_mut() {
                 idx.reweigh(&self.pool.entries);
             }
-            let mut plans: Vec<Plan> =
-                (0..self.cfg.round_plans - grafts.len() - shares.len()).filter_map(|_| self.plan().inspect(|_| self.bc.made += 1)).collect();
+            // Polish takes up to its share of the plans, after the others.
+            let n_polish = match self.polish.as_mut() {
+                Some(pl) => {
+                    pl.refresh(&mut self.tree, round);
+                    ((self.cfg.round_plans as f64 * pl.share).ceil() as usize).min(self.cfg.round_plans.saturating_sub(grafts.len() + shares.len()))
+                }
+                None => 0,
+            };
+            let mut plans: Vec<Plan> = (0..self.cfg.round_plans.saturating_sub(grafts.len() + shares.len() + n_polish))
+                .filter_map(|_| self.plan().inspect(|_| self.bc.made += 1))
+                .collect();
+            for _ in 0..n_polish {
+                if let Some(p) = self.plan_polish() {
+                    plans.push(p);
+                }
+            }
             if self.near.on.is_some() {
                 for (i, p) in plans.iter_mut().enumerate() {
                     let o = &p.stages[0].1;
-                    if self.bc.is_pending(i) || p.rewire.is_some() || o.modal() || !matches!(o.budget(), Budget::Ga { .. }) {
+                    if self.bc.is_pending(i) || p.rewire.is_some() || p.polish.is_some() || o.modal() || !matches!(o.budget(), Budget::Ga { .. }) {
                         continue;
                     }
                     p.seed = self.near.pick(&self.tree, &o.key(), p.start);
@@ -3259,6 +3574,7 @@ impl Engine {
                         pack: &pack,
                     });
                     let seed_in = bc.seed(i).or(plan.seed.as_deref());
+                    crate::ga::set_repair_targets(plan.targets.clone());
                     let at = Instant::now();
                     let packed = w.attempt_full(&stages, &node.st, None, &mut rng, params, seed_in, req.as_ref()).map(|a| a.map_saves(|s| pack(&s)));
                     att_ns.fetch_add(at.elapsed().as_nanos() as u64, std::sync::atomic::Ordering::Relaxed);
@@ -3334,6 +3650,16 @@ impl Engine {
             }
             if self.rb.is_some() {
                 self.budget_replays(round, round_t0)?;
+            }
+            // Polish: route-graft chains, several edges a round.
+            if self.polish.is_some() {
+                for _ in 0..POLISH_WAVES {
+                    let gs = self.rr.as_mut().map_or(Vec::new(), |rr| rr.take_route(self.cfg.round_plans));
+                    if gs.is_empty() {
+                        break;
+                    }
+                    self.run_replays(&gs, &[], false)?;
+                }
             }
             // Sparse saves: frames replayed to rebuild starts count as
             // emulated frames.

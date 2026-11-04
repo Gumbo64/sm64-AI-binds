@@ -70,6 +70,8 @@ pub struct Segment<S = SaveState> {
     pub success: bool,
     /// Best progress score reached (successes included).
     pub progress: f64,
+    /// The end state as the learned model scored it (`OBRRT_MODEL`).
+    pub model: Option<std::sync::Arc<crate::model::NodeModel>>,
 }
 
 /// How the GA's winner came about (for diagnostics): which generation and
@@ -112,8 +114,29 @@ pub enum Fitness {
     Steps,
 }
 
-pub const ORIGINS: [&str; 12] =
-    ["seeded", "random", "span", "turn", "a-toggle", "resteer", "press", "pink", "key", "backseed", "policy", "repolicy"];
+pub const ORIGINS: [&str; 14] =
+    ["seeded", "random", "span", "turn", "a-toggle", "resteer", "press", "pink", "key", "backseed", "policy", "repolicy", "model", "repair"];
+
+/// [`ORIGINS`] index of a first-generation rollout from the learned policy
+/// (`OBRRT_MODEL_POLICY`) and of one from inverse-dynamics repair toward a
+/// recorded route (`OBRRT_MODEL_REPAIR`), model.rs.
+const ORIGIN_MODEL: u8 = 12;
+const ORIGIN_REPAIR: u8 = 13;
+
+/// A recorded route's states as repair targets: frames after the attempt's
+/// start, and their model data.
+pub type RepairTargets = std::sync::Arc<Vec<(u32, std::sync::Arc<crate::model::NodeModel>)>>;
+
+thread_local! {
+    /// The next attempt's repair targets (`OBRRT_MODEL_REPAIR`), set by the
+    /// engine for seeded attempts that have them.
+    static REPAIR: std::cell::RefCell<Option<RepairTargets>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Sets the repair targets for the next attempt on this thread.
+pub fn set_repair_targets(t: Option<RepairTargets>) {
+    REPAIR.with(|r| *r.borrow_mut() = t);
+}
 
 /// [`ORIGINS`] index of a first-generation policy-seeded rollout and of a
 /// `repolicy` child (`OBRRT_MOVE_GA`, movegenome.rs).
@@ -292,7 +315,7 @@ impl Attempt {
         let segments = self
             .segments
             .into_iter()
-            .map(|s| Segment { inputs: s.inputs, end: s.end.map(|(st, save)| (st, f(save))), success: s.success, progress: s.progress })
+            .map(|s| Segment { inputs: s.inputs, end: s.end.map(|(st, save)| (st, f(save))), success: s.success, progress: s.progress, model: s.model })
             .collect();
         Attempt { segments, frames: self.frames, died: self.died, ga: self.ga, dense: self.dense }
     }
@@ -950,6 +973,32 @@ impl Worker {
                 frames += r.genome.len() as u64;
                 pop.push(r);
             }
+            // OBRRT_MODEL (model.rs): rollouts from the learned model on top
+            // of the first generation (none when the model is off).
+            if let Some(ms) = crate::model::settings() {
+                let goal = if seed.is_none() && !pure { stages[0].steer_target(start) } else { None };
+                if let Some(goal) = goal.filter(|_| ms.policy > 0) {
+                    for _ in 0..ms.policy {
+                        self.tmp.sync_from(&self.base)?;
+                        let g = crate::model::policy_genome(&mut self.tmp, start, goal, horizon, rng)?;
+                        let mut r = self.rollout(dc, stages, start, &g, None, horizon)?;
+                        r.origin = ORIGIN_MODEL;
+                        frames += r.genome.len() as u64;
+                        pop.push(r);
+                    }
+                }
+                let targets = REPAIR.with(|r| r.borrow_mut().take());
+                if let Some(t) = targets.filter(|t| ms.repair > 0 && seed.is_some() && !t.is_empty()) {
+                    for _ in 0..ms.repair {
+                        self.tmp.sync_from(&self.base)?;
+                        let g = crate::model::repair_genome(&mut self.tmp, start, &t, horizon)?;
+                        let mut r = self.rollout(dc, stages, start, &g, None, horizon)?;
+                        r.origin = ORIGIN_REPAIR;
+                        frames += r.genome.len() as u64;
+                        pop.push(r);
+                    }
+                }
+            }
             let gen0_best = pop.iter().max_by(|a, b| a.better(b, mode)).unwrap();
             let gen0 = gen0_best.fitness;
             let gen0_plan = (gen0_best.origin == ORIGIN_POLICY).then_some(gen0_best.plan as usize);
@@ -1211,7 +1260,7 @@ impl Worker {
             let progress = progress_of(i, played, at.max(played));
             if at <= played {
                 // Met where the previous one was (or at the start): nothing to add.
-                segments.push(Segment { inputs: Vec::new(), end: None, success, progress });
+                segments.push(Segment { inputs: Vec::new(), end: None, success, progress, model: None });
                 continue;
             }
             let mut inputs = best.genome[played..at].to_vec();
@@ -1222,7 +1271,8 @@ impl Worker {
             let last = i == bounds.len() - 1;
             if !last {
                 let st = read_state(&self.tmp, start.frame + played as u32, true);
-                segments.push(Segment { inputs, end: Some((st, self.tmp.save_state())), success, progress });
+                let model = crate::model::node(&self.tmp, &st, inputs.last().copied().unwrap_or_default());
+                segments.push(Segment { inputs, end: Some((st, self.tmp.save_state())), success, progress, model });
                 continue;
             }
             // Universal tail: press A through cutscenes and warps until the
@@ -1243,11 +1293,12 @@ impl Worker {
             // fade-out still counts, and the death warp is just the way out.
             let gained = st.progress() > start.progress();
             if !(st.controllable() || st.modal()) || (!gained && (!st.alive() || st.lives < start.lives)) {
-                segments.push(Segment { inputs: Vec::new(), end: None, success: false, progress });
+                segments.push(Segment { inputs: Vec::new(), end: None, success: false, progress, model: None });
                 return Ok(Attempt { segments, frames, died: true, ga, dense });
             }
             let st = read_state(&self.tmp, start.frame + (played + tail) as u32, true);
-            segments.push(Segment { inputs, end: Some((st, self.tmp.save_state())), success, progress });
+            let model = crate::model::node(&self.tmp, &st, inputs.last().copied().unwrap_or_default());
+            segments.push(Segment { inputs, end: Some((st, self.tmp.save_state())), success, progress, model });
         }
         Ok(Attempt { segments, frames, died: best.died, ga, dense })
     }

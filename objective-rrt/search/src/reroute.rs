@@ -45,8 +45,8 @@ pub struct Graft {
 }
 
 /// Graft kinds, for per-kind counts.
-pub const KINDS: usize = 4;
-pub const KIND_NAMES: [&str; KINDS] = ["dup", "forward", "relax", "leg"];
+pub const KINDS: usize = 5;
+pub const KIND_NAMES: [&str; KINDS] = ["dup", "forward", "relax", "leg", "route"];
 
 /// A slower duplicate's child onto a new faster state (the original rule).
 pub const KIND_DUP: u8 = 0;
@@ -60,6 +60,10 @@ pub const KIND_RELAX: u8 = 2;
 /// milestone, see `legs`) replayed from another copy of its spawn; a kept
 /// one queues the leg's next edge from the new node.
 pub const KIND_LEG: u8 = 3;
+/// `OBRRT_POLISH`: one edge of the best route replayed from a sooner copy of
+/// an earlier route state (see `polish`); accepted as a leg edge, and the
+/// engine queues the next edge from a kept one.
+pub const KIND_ROUTE: u8 = 4;
 
 #[derive(Default, Clone, Copy, Debug)]
 pub struct RerouteStats {
@@ -214,6 +218,9 @@ pub struct Reroute {
     pub(crate) legs: Option<crate::legs::Legs>,
     /// `OBRRT_GRAFT_BIAS=star`: nodes on a path that ended in more stars.
     pub(crate) star_path: HashSet<u32>,
+    /// OBRRT_POLISH without OBRRT_REROUTE: only route grafts, no duplicate
+    /// grafts.
+    pub route_only: bool,
 }
 
 /// Queued grafts kept at most (beyond it the cold queue drops new ones).
@@ -239,7 +246,7 @@ pub fn schema_hash(t: &objective_scattershot::objective::Tree, st: &St) -> u64 {
 
 impl Reroute {
     pub fn new(key: RerouteKey) -> Reroute {
-        Reroute { key, keys: Vec::new(), index: HashMap::new(), hot: VecDeque::new(), cold: VecDeque::new(), seen: HashSet::new(), stats: RerouteStats::default(), lifo: false, mkeys: Vec::new(), mindex: HashMap::new(), accepted: None, legs: crate::legs::Legs::from_env(), star_path: HashSet::new() }
+        Reroute { key, keys: Vec::new(), index: HashMap::new(), hot: VecDeque::new(), cold: VecDeque::new(), seen: HashSet::new(), stats: RerouteStats::default(), lifo: false, mkeys: Vec::new(), mindex: HashMap::new(), accepted: None, legs: crate::legs::Legs::from_env(), star_path: HashSet::new(), route_only: false }
     }
 
     /// `st`'s key; `cell` is the engine's duplicate cell for it.
@@ -283,7 +290,7 @@ impl Reroute {
                 }
             }
         }
-        if let Some(list) = self.index.get(&k) {
+        if let Some(list) = self.index.get(&k).filter(|_| !self.route_only) {
             let mut q = Vec::new();
             for &y in list {
                 if tree.nodes[y as usize].st.frame < st.frame + margin {
@@ -447,7 +454,7 @@ impl Reroute {
         let child = &tree.nodes[g.child as usize];
         self.stats.k_tried[g.kind as usize] += 1;
         self.stats.k_frames_rejected[g.kind as usize] += child.inputs.len() as u64;
-        if g.kind == KIND_LEG {
+        if g.kind == KIND_LEG || g.kind == KIND_ROUTE {
             return self.leg_accept(g, st, cell, tree);
         }
         if g.kind == KIND_RELAX {
@@ -509,6 +516,26 @@ impl Reroute {
                 Some(g) => out.push(g),
                 None => break,
             }
+        }
+        out
+    }
+
+    /// OBRRT_POLISH: up to `n` queued route grafts (other kinds stay).
+    pub fn take_route(&mut self, n: usize) -> Vec<Graft> {
+        let mut out = Vec::new();
+        for q in [&mut self.hot, &mut self.cold] {
+            if !q.iter().any(|g| g.kind == KIND_ROUTE) {
+                continue;
+            }
+            let mut keep = VecDeque::with_capacity(q.len());
+            while let Some(g) = q.pop_front() {
+                if g.kind == KIND_ROUTE && out.len() < n {
+                    out.push(g);
+                } else {
+                    keep.push_back(g);
+                }
+            }
+            *q = keep;
         }
         out
     }

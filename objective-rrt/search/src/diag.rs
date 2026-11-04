@@ -218,18 +218,22 @@ pub struct Diagnostics {
 }
 
 impl Diagnostics {
-    pub fn note_best(&mut self, progress: (u8, i16), zone: (u16, u8), frame: u32) {
-        for slot in [self.best_progress.entry(progress).or_insert((u32::MAX, 0)), ] {
-            if frame < slot.0 {
-                slot.1 += (slot.0 != u32::MAX) as u32;
-                slot.0 = frame;
-            }
+    /// Returns the milestone's previous best frame (u32::MAX if none) when
+    /// this one beats it.
+    pub fn note_best(&mut self, progress: (u8, i16), zone: (u16, u8), frame: u32) -> Option<u32> {
+        let slot = self.best_progress.entry(progress).or_insert((u32::MAX, 0));
+        let mut better = None;
+        if frame < slot.0 {
+            better = Some(slot.0);
+            slot.1 += (slot.0 != u32::MAX) as u32;
+            slot.0 = frame;
         }
         let z = self.best_zone.entry(zone).or_insert((u32::MAX, 0));
         if frame < z.0 {
             z.1 += (z.0 != u32::MAX) as u32;
             z.0 = frame;
         }
+        better
     }
 
     pub fn kind(&mut self, k: &'static str) -> &mut KindStats {

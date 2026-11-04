@@ -45,3 +45,7 @@ path = "src/tasplay.rs"
 [[bin]]
 name = "ilsync"
 path = "src/ilsync.rs"
+
+[[bin]]
+name = "dataset"
+path = "src/dataset.rs"

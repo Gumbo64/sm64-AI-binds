@@ -132,7 +132,7 @@ impl Legs {
 }
 
 /// The node right below `top` on the path down to `d` (`d` below `top`).
-fn below(tree: &Tree, top: u32, d: u32) -> Option<u32> {
+pub(crate) fn below(tree: &Tree, top: u32, d: u32) -> Option<u32> {
     let mut at = d;
     loop {
         let p = tree.nodes[at as usize].parent?;
@@ -144,7 +144,7 @@ fn below(tree: &Tree, top: u32, d: u32) -> Option<u32> {
 }
 
 fn live(tree: &Tree, f: u32) -> bool {
-    f == 0 || !tree.nodes[f as usize].retired || (tree.sparse.is_some() && tree.can_anchor(f))
+    f == 0 || !tree.nodes[f as usize].retired || tree.is_pinned(f) || (tree.sparse.is_some() && tree.can_anchor(f))
 }
 
 impl Reroute {

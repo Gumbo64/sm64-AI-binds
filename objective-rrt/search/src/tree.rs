@@ -148,6 +148,10 @@ pub struct NodeStats {
     pub rate_y: f64,
     pub rate_f: f64,
     pub rate_t: u64,
+    /// The learned model's view of the state (`OBRRT_MODEL`, model.rs): its
+    /// own when its attempt's worker scored it, else its parent's. None
+    /// when the model is off.
+    pub model: Option<std::sync::Arc<crate::model::NodeModel>>,
 }
 
 pub struct Node {
@@ -183,6 +187,15 @@ pub struct Tree {
     /// While set, an advance of the frontier doesn't retire the states
     /// behind it (resume: a later record may still need their saves).
     pub hold_retire: bool,
+    /// OBRRT_POLISH: nodes kept loadable when retired (save, anchor and
+    /// objects stay; they are still not starts for ordinary plans): the best
+    /// route, polish results and route-graft chains (see `polish`).
+    pub pinned: std::collections::HashSet<u32>,
+    /// Pin the nodes `add` makes while set.
+    pub pin_next: bool,
+    /// OBRRT_POLISH: a frontier advance pins the new frontier's ancestors
+    /// before retiring what is behind it (the route there stays loadable).
+    pub pin_routes: bool,
     /// OBRRT_RETIRE_SUBSET: the maximal collected sets (an antichain), the
     /// sets dropped by the cap (states in or under them are behind), and
     /// the most sets that coexisted.
@@ -246,6 +259,9 @@ impl Tree {
             frontier: vec![0],
             delta_bytes: 0,
             hold_retire: false,
+            pinned: Default::default(),
+            pin_next: false,
+            pin_routes: false,
             subset: RETIRE_SUBSET.load(std::sync::atomic::Ordering::Relaxed),
             sets: Vec::new(),
             dropped: Vec::new(),
@@ -378,7 +394,7 @@ impl Tree {
             st,
             save,
             via,
-            stats: NodeStats { backoff: 1.0, ..Default::default() },
+            stats: NodeStats { backoff: 1.0, model: self.nodes[parent as usize].stats.model.clone(), ..Default::default() },
             retired: false,
             made_by: None,
             dominated: false,
@@ -386,6 +402,9 @@ impl Tree {
         });
         self.children.push(Vec::new());
         self.children[parent as usize].push(id);
+        if self.pin_next {
+            self.pinned.insert(id);
+        }
         self.gen_step.push(!via.ends_with("~d"));
         self.note_added(id, parent);
         self.wip.push(if self.keep_wip { self.nodes[id as usize].st.wip() } else { 0 });
@@ -466,6 +485,7 @@ impl Tree {
 
     /// Retires every state behind the frontier (after `hold_retire`).
     pub fn retire_behind(&mut self) {
+        self.pin_frontier_routes();
         if self.subset {
             return self.retire_subset();
         }
@@ -476,6 +496,7 @@ impl Tree {
     /// with b drawn from the frontier and starts never behind b, they can't be
     /// used again. Their inputs stay, for replaying descendants.
     fn retire(&mut self, progress: (u8, i16)) {
+        self.pin_frontier_routes();
         let keep = self.wip_select(|t, n| t.nodes[n as usize].st.progress() < progress);
         let ids: Vec<u32> = (0..self.nodes.len() as u32)
             .filter(|&i| {
@@ -635,6 +656,44 @@ impl Tree {
     /// still anchoring live save-less nodes keeps its save until they go;
     /// a save-less node releases its anchor.
     fn retire_at(&mut self, i: u32) {
+        if self.pinned.contains(&i) {
+            self.nodes[i as usize].retired = true;
+            return;
+        }
+        self.free_retired(i);
+    }
+
+    /// OBRRT_POLISH: pins the ancestors of the frontier's soonest state of
+    /// its best progress (the best route).
+    fn pin_frontier_routes(&mut self) {
+        if !self.pin_routes {
+            return;
+        }
+        let best = self.frontier.iter().copied().min_by_key(|&i| {
+            let st = &self.nodes[i as usize].st;
+            (std::cmp::Reverse((st.stars, st.keys)), st.frame, i)
+        });
+        let mut at = best;
+        while let Some(i) = at {
+            self.pinned.insert(i);
+            at = self.nodes[i as usize].parent;
+        }
+    }
+
+    /// Whether `id` is pinned (`pinned`).
+    pub fn is_pinned(&self, id: u32) -> bool {
+        self.pinned.contains(&id)
+    }
+
+    /// Unpins `id`; if it was retired meanwhile, frees it now.
+    pub fn unpin(&mut self, id: u32) {
+        if self.pinned.remove(&id) && self.nodes[id as usize].retired {
+            self.free_retired(id);
+        }
+    }
+
+    /// The freeing part of `retire_at`.
+    fn free_retired(&mut self, i: u32) {
         let n = &mut self.nodes[i as usize];
         self.obj_bytes -= obj_bytes(&n.st);
         n.st.objects = None;
@@ -658,7 +717,7 @@ impl Tree {
         let a = sp.anchor[iu];
         if a != SELF && sp.refs[a as usize] > 0 {
             sp.refs[a as usize] -= 1;
-            if sp.refs[a as usize] == 0 && self.nodes[a as usize].retired && sp.saved[a as usize] {
+            if sp.refs[a as usize] == 0 && self.nodes[a as usize].retired && sp.saved[a as usize] && !self.pinned.contains(&a) {
                 let an = &mut self.nodes[a as usize];
                 self.delta_bytes -= an.save.bytes();
                 an.save = Delta::none();

@@ -177,7 +177,7 @@ fn loadable(tree: &Tree, from: u32) -> Option<bool> {
     if from == 0 {
         return Some(false);
     }
-    if !n.retired {
+    if !n.retired || tree.is_pinned(from) {
         return tree.can_anchor(from).then_some(false);
     }
     (tree.sparse.is_some() && tree.can_anchor(from)).then_some(true)

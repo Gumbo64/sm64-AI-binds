@@ -13,3 +13,18 @@ runs
 plots
 baserom.us.z64
 curiosity_scoring.pkl
+# Backbone: datasets, checkpoints and experiment tracking (regenerated, far too large)
+backbone/data/
+backbone/mlartifacts/
+backbone/mlruns/
+backbone/checkpoints/
+backbone/onnx/
+backbone/refs/
+backbone/logs/
+backbone/mlflow.db
+
+# Python environments of the search tools
+pyenv/
+
+# Agent worktrees
+.claude/worktrees/

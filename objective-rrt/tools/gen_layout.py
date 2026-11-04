@@ -31,12 +31,18 @@ GLOBALS = [
     "gStaticSurfacePartition",
     # Water boxes for objectives' water-warp probes (core/src/geo.rs).
     "gEnvironmentRegions",
+    # State features for the learned backbone (backbone/, run/src/dataset.rs).
+    "gRandomSeed16", "gGlobalTimer", "gCamera", "sSelectionFlags", "gCameraMovementFlags",
+    "sCSideButtonYaw", "gDynamicSurfacePartition",
 ]
 
 OBJECT_FIELDS = [
     "oPosX", "oPosY", "oPosZ", "oVelY", "oForwardVel", "oHomeX", "oHomeY", "oHomeZ",
     "oInteractType", "oInteractStatus", "oHeldState", "oAction", "oTimer",
     "oDamageOrCoinValue", "oHealth", "oBehParams", "oFaceAngleYaw", "oIntangibleTimer", "oNumLootCoins",
+    # Backbone features.
+    "oVelX", "oVelZ", "oAngleVelYaw", "oMoveAngleYaw", "oSubAction",
+    "hitboxRadius", "hitboxHeight", "hurtboxRadius", "hurtboxHeight",
 ]
 
 MARIO_FIELDS = [
@@ -45,6 +51,11 @@ MARIO_FIELDS = [
     "angleVel", "waterLevel",
     # Read-only collision context (St::floor_y etc.).
     "ceilHeight", "floor", "ceil", "wall", "actionTimer",
+    # Backbone features.
+    "actionState", "actionArg", "intendedMag", "intendedYaw", "invincTimer", "framesSinceA",
+    "framesSinceB", "wallKickTimer", "doubleJumpTimer", "slideYaw", "twirlYaw", "slideVelX",
+    "slideVelZ", "hurtCounter", "healCounter", "squishTimer", "peakHeight", "quicksandDepth",
+    "collidedObjInteractTypes", "prevAction",
 ]
 
 SURFACE_FIELDS = ["type", "normal", "normal.y", "originOffset", "object"]
@@ -115,6 +126,8 @@ int main(void) {
     printf("pub const SURFACE_NODE_SIZE: usize = %zu;\n", sizeof(struct SurfaceNode));
     printf("pub const SPATIAL_PARTITION_CELL_SIZE: usize = %zu;\n", sizeof(SpatialPartitionCell));
     printf("pub const LAKITU_yaw: usize = %zu;\n", offsetof(struct LakituState, yaw));
+    printf("pub const CAMERA_mode: usize = %zu;\n", offsetof(struct Camera, mode));
+    printf("pub const CAMERA_cutscene: usize = %zu;\n", offsetof(struct Camera, cutscene));
     @FIELDS@
     return 0;
 }

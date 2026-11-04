@@ -290,6 +290,11 @@ fn main() -> Result<()> {
     if let Ok(v) = std::env::var("OBRRT_REROUTE_SCHEMA") {
         cfg.reroute_schema = Some(v);
     }
+    // OBRRT_POLISH=<share>: re-attempt the best route's earlier milestones
+    // and graft the rest of the route onto sooner results (search/src/polish.rs).
+    if let Ok(v) = std::env::var("OBRRT_POLISH") {
+        cfg.polish = v.parse()?;
+    }
     if let Ok(v) = std::env::var("OBRRT_REROUTE_SHARE") {
         cfg.reroute_share = v.parse()?;
     }
@@ -369,6 +374,8 @@ fn main() -> Result<()> {
         ("NODE_PRIOR", &mut cfg.node_prior),
         ("NODE_CAP", &mut cfg.node_cap),
         ("KIND_SCALE", &mut cfg.rate.kind_scale),
+        ("ROUTE", &mut cfg.rate.route),
+        ("NOVEL", &mut cfg.rate.novel),
     ] {
         if let Ok(v) = std::env::var(format!("OBRRT_RATE_{k}")) {
             *f = v.parse()?;
@@ -469,6 +476,11 @@ fn main() -> Result<()> {
     // The wait limit counts frames after `<start.m64>`, so long TAS cuts boot.
     let prefix_len = boot.len();
     while still < 10 || !st.controllable() {
+        // OBRRT_BOOT_NOWAIT: a cut that ends before control (a star's
+        // kick-out) starts as soon as Mario is controllable.
+        if nowait && st.controllable() {
+            break;
+        }
         let before = st.pos;
         let idle = GamePad::new(0, 0, 0);
         game.step_game(idle)?;

@@ -76,6 +76,13 @@ pub struct RateParams {
     pub nostart_skip: bool,
     /// Base-criteria checks per round for re-checking skipped entries.
     pub skip_budget: u64,
+    /// OBRRT_RATE_ROUTE=c: a new or sooner best time for a milestone
+    /// (keys, stars) credits c × (5 if first, else seconds saved, at most 5)
+    /// to the entries that made the states on its path since the previous
+    /// star, split evenly; 0 = off.
+    pub route: f64,
+    /// OBRRT_RATE_NOVEL: improvement for a new state (default 1).
+    pub novel: f64,
 }
 
 /// Rate sampler: the pool's overall rate and the last refresh's spread.
@@ -110,6 +117,7 @@ pub struct RateStats {
     pub imp_first: f64,
     pub imp_sooner: f64,
     pub imp_closer: f64,
+    pub imp_route: f64,
     pub nostart_charges: u64,
     /// Planning diagnostics (wall time, diagnostics only): seconds in picks
     /// that started / found no start, and in `sample_entry` alone; plans
