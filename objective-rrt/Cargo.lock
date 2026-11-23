@@ -1209,7 +1209,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "objective-scattershot"
+name = "objective-scattershot-v1"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -1260,7 +1260,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "lz4_flex",
- "objective-scattershot",
+ "objective-scattershot-v1",
  "obrrt1-core",
  "rand",
  "rayon",

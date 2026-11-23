@@ -1200,12 +1200,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "objective-scattershot"
+name = "objective-scattershot-v1"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "lz4_flex",
- "obrrt-core",
+ "obrrt1-core",
  "rand",
  "rand_distr",
  "rayon",
@@ -1216,7 +1216,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "obrrt-core"
+name = "obrrt1-core"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -2577,3 +2577,19 @@ dependencies = [
  "cc",
  "pkg-config",
 ]
+
+[[patch.unused]]
+name = "obrrt-core"
+version = "0.1.0"
+
+[[patch.unused]]
+name = "obrrt-objectives"
+version = "0.1.0"
+
+[[patch.unused]]
+name = "obrrt-search"
+version = "0.1.0"
+
+[[patch.unused]]
+name = "obrrt-spec"
+version = "0.1.0"

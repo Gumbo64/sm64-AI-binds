@@ -14,4 +14,4 @@ sm64-binds.workspace = true
 lz4_flex.workspace = true
 obrrt-core.workspace = true
 # OBRRT_REROUTE_SCHEMA: an objective-scattershot schema's key as "the same state".
-objective-scattershot = { path = "../../objective-scattershot" }
+objective-scattershot = { path = "../../objective-scattershot", package = "objective-scattershot-v1" }
