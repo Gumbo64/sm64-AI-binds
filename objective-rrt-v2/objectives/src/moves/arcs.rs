@@ -3,8 +3,8 @@
 //! Every number here comes from `run/examples/arc_lab.rs` (`arc_lab <rom>
 //! measure`), which plays each move in the real game on the castle grounds'
 //! flat plateau and writes `ref/arcs/arcs.json` (readable) and
-//! `ref/arcs/arcs_table.rs` (the same data as Rust, included below). Rerun
-//! the lab to regenerate both. Pure functions only: no RNG, no state, no
+//! `objectives/src/moves/arcs_table.rs` (the same data as Rust, committed
+//! and included below). Rerun the lab to regenerate both. Pure functions only: no RNG, no state, no
 //! game access; cheap enough to call every frame (the curves the planner
 //! uses are sampled once).
 //!
@@ -141,7 +141,7 @@ pub enum AirStick {
     Side,
 }
 
-/// One measured move (a row of `ref/arcs/arcs_table.rs`).
+/// One measured move (a row of `arcs_table.rs`).
 ///
 /// `along`/`height`: per frame from the move's first input (index 0 is the
 /// position after that frame) to the landing frame, relative to the
@@ -307,7 +307,7 @@ pub struct Steer {
     pub yaw_change: i32,
 }
 
-include!(concat!(env!("CARGO_MANIFEST_DIR"), "/../ref/arcs/arcs_table.rs"));
+include!("arcs_table.rs");
 
 // ---------------------------------------------------------------- actions
 

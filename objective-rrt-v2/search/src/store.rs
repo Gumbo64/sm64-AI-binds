@@ -14,7 +14,7 @@ pub struct Delta {
     pub base: u16,
     pages: Vec<u32>,
     xor: Vec<u8>,
-    /// The perturbation state saved with the game (feature `sm64coin`; the
+    /// The perturbation state saved with the game (feature `hooked`; the
     /// root's default delta has none and is set when the engine is built).
     pert: Option<Pert>,
 }
@@ -70,9 +70,9 @@ impl Delta {
             }
         }
         let save = sm64_binds::SaveState::from_bytes(bytes)?;
-        #[cfg(feature = "sm64coin")]
+        #[cfg(feature = "hooked")]
         let pert = self.pert.as_ref().ok_or_else(|| anyhow::anyhow!("delta without its perturbation"))?;
-        #[cfg(not(feature = "sm64coin"))]
+        #[cfg(not(feature = "hooked"))]
         let pert = &();
         Ok(crate::game::wrap(save, pert))
     }

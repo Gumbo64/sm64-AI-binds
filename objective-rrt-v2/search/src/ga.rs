@@ -105,20 +105,20 @@ pub struct Worker {
 }
 
 impl Worker {
-    #[cfg(not(feature = "sm64coin"))]
+    #[cfg(not(feature = "hooked"))]
     pub fn new(game_gen: &sm64_binds::SM64GameGenerator) -> Result<Worker> {
         Ok(Worker { base: game_gen.create_game()?, cur: game_gen.create_game()?, tmp: game_gen.create_game()? })
     }
 
     /// The state tree and attempts over raw-memory saves are default-only.
-    #[cfg(feature = "sm64coin")]
+    #[cfg(feature = "hooked")]
     pub fn new(_: &sm64_binds::SM64GameGenerator) -> Result<Worker> {
-        anyhow::bail!("Worker::new: unavailable with feature sm64coin (use Worker::forked)")
+        anyhow::bail!("Worker::new: unavailable with feature hooked (use Worker::forked)")
     }
 
-    /// A worker whose games are forks of `proto` (a mining game carries the
-    /// block's seed, so it can't come from the generator).
-    #[cfg(feature = "sm64coin")]
+    /// A worker whose games are forks of `proto` (a hooked game carries its
+    /// hook's state, so it can't come from the generator).
+    #[cfg(feature = "hooked")]
     pub fn forked(proto: &SM64Game) -> Result<Worker> {
         Ok(Worker { base: proto.fork()?, cur: proto.fork()?, tmp: proto.fork()? })
     }

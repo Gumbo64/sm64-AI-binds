@@ -57,7 +57,7 @@ fn spec_of(sel: &Value, id: &str) -> Result<obrrt_spec::Spec> {
         let zone = sel.get("zone").cloned().unwrap_or(Value::Null);
         let mut s = json!({"name": format!("Goto_{id}"), "phases": [{"target": {"point": g}, "done": done}]});
         if zone.is_null() {
-            bail!("goto needs \"zone\" (e.g. \"bob\", \"castle:1\")");
+            bail!("goto needs \"zone\" (e.g. \"bob\", \"grounds\", \"castle:1\"; \"castle\" is inside the castle, level 6, \"grounds\" the castle grounds, level 16)");
         }
         s["zone"] = zone;
         s

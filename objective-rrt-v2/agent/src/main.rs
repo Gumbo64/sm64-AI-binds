@@ -244,7 +244,7 @@ fn selector(a: &Args, from: usize) -> Result<Value> {
         return Ok(v);
     }
     if let Some(g) = a.get("goto") {
-        let mut v = json!({"goto": vec3(g)?, "zone": a.get("zone").ok_or_else(|| anyhow!("--goto needs --zone (e.g. bob, castle:1)"))?});
+        let mut v = json!({"goto": vec3(g)?, "zone": a.get("zone").ok_or_else(|| anyhow!("--goto needs --zone (e.g. bob, grounds, castle:1; castle is inside the castle, level 6, and grounds the castle grounds, level 16)"))?});
         if let Some(r) = a.num::<f64>("r")? {
             v["r"] = json!(r);
         }

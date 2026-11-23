@@ -16,7 +16,7 @@ pub fn zone_has(zones: &[Zone], z: (u16, u8)) -> bool {
 }
 
 const LEVEL_NAMES: &[(&str, u32)] = &[
-    ("castle", LEVEL_CASTLE), ("inside", LEVEL_CASTLE), ("grounds", LEVEL_CASTLE_GROUNDS), ("courtyard", LEVEL_CASTLE_COURTYARD),
+    ("castle", LEVEL_CASTLE), ("inside", LEVEL_CASTLE), ("lobby", LEVEL_CASTLE), ("grounds", LEVEL_CASTLE_GROUNDS), ("courtyard", LEVEL_CASTLE_COURTYARD),
     ("bob", LEVEL_BOB), ("wf", LEVEL_WF), ("jrb", LEVEL_JRB), ("ccm", LEVEL_CCM), ("bbh", LEVEL_BBH), ("hmc", LEVEL_HMC),
     ("lll", LEVEL_LLL), ("ssl", LEVEL_SSL), ("ddd", LEVEL_DDD), ("sl", LEVEL_SL), ("wdw", LEVEL_WDW), ("ttm", LEVEL_TTM),
     ("thi", LEVEL_THI), ("ttc", LEVEL_TTC), ("rr", LEVEL_RR), ("pss", LEVEL_PSS), ("sa", LEVEL_SA), ("wmotr", LEVEL_WMOTR),

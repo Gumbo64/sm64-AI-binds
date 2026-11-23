@@ -12,7 +12,7 @@ use obrrt_core::{GamePad, Generator, Objective, St, read_state};
 use rand::rngs::SmallRng;
 use rand::{Rng, SeedableRng};
 use rayon::prelude::*;
-#[cfg(not(feature = "sm64coin"))]
+#[cfg(not(feature = "hooked"))]
 use sm64_binds::{SM64GameGenerator, SaveState};
 
 use crate::diag::Diagnostics;
@@ -839,7 +839,7 @@ fn key_hash(k: &str) -> u64 {
 }
 
 impl Engine {
-    #[cfg(not(feature = "sm64coin"))]
+    #[cfg(not(feature = "hooked"))]
     pub fn new(
         cfg: Config,
         game_gen: &SM64GameGenerator,
@@ -853,11 +853,11 @@ impl Engine {
         Self::with_workers(cfg, workers, boot, root_save, root, generator)
     }
 
-    /// With feature `sm64coin`: the workers are forks of `proto`, a mining
-    /// game (the block's perturbation armed), and every node's save carries
-    /// the perturbation state with the game memory. `threads` workers.
-    #[cfg(feature = "sm64coin")]
-    pub fn new_mining(
+    /// With feature `hooked`: the workers are forks of `proto`, a hooked
+    /// game, and every node's save carries the hook's state with the game
+    /// memory. `threads` workers.
+    #[cfg(feature = "hooked")]
+    pub fn new_hooked(
         cfg: Config,
         proto: &crate::game::Game,
         threads: usize,
@@ -871,7 +871,7 @@ impl Engine {
     }
 
     /// Frames emulated so far (the tree's budget counter).
-    #[cfg(feature = "sm64coin")]
+    #[cfg(feature = "hooked")]
     pub fn total_frames_emulated(&self) -> u64 {
         self.total_frames
     }
@@ -3922,9 +3922,9 @@ impl Engine {
             let tree = &self.tree;
             // From the parent (`Tree::load_into`: its save, or with sparse
             // saves its anchor's and the inputs), or from the root's save.
-            #[cfg(feature = "sm64coin")]
-            let mut replay = |_: Option<u32>, _: &[Vec<u8>]| -> Result<(St, crate::game::GameSave)> { unimplemented!("state tree: sm64coin feature") };
-            #[cfg(not(feature = "sm64coin"))]
+            #[cfg(feature = "hooked")]
+            let mut replay = |_: Option<u32>, _: &[Vec<u8>]| -> Result<(St, crate::game::GameSave)> { unimplemented!("state tree: hooked feature") };
+            #[cfg(not(feature = "hooked"))]
             let mut replay = |from: Option<u32>, bases: &[Vec<u8>]| -> Result<(St, SaveState)> {
                 match from {
                     Some(p) => {

@@ -18,7 +18,7 @@ Units: frames (30/s), SM64 units (y up), yaw 0..65535 with 0 facing +z and 0x400
 | `variants` | 1-8 `{name, params}` | none | each variant is a separate pool entry (`Spec <name> <variant>`) with its `params` merged over the defaults; every string `"$p"` anywhere in the spec is replaced by `params.p` |
 | `expect` | predicate | none | validator only: the milestone this spec should reach (Done is compared with its first frame) |
 
-**Zone:** `[9, 1]`, `[9]` or `9` (any area), `"bob"`, `"bob:1"`, `"9:1"`. Names: castle (= inside, 6), grounds (16), courtyard (26), bob, wf, jrb, ccm, bbh, hmc, lll, ssl, ddd, sl, wdw, ttm, thi, ttc, rr, pss, sa, wmotr, totwc, cotmc, vcutm, bitdw, bitfs, bits, bowser1-3.
+**Zone:** `[9, 1]`, `[9]` or `9` (any area), `"bob"`, `"bob:1"`, `"9:1"`. Names: castle (= inside or lobby, 6; not the grounds), grounds (16), courtyard (26), bob, wf, jrb, ccm, bbh, hmc, lll, ssl, ddd, sl, wdw, ttm, thi, ttc, rr, pss, sa, wmotr, totwc, cotmc, vcutm, bitdw, bitfs, bits, bowser1-3.
 
 ## Phases
 

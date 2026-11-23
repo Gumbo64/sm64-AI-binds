@@ -23,11 +23,11 @@ backbone/refs/
 backbone/logs/
 backbone/mlflow.db
 
-# Python environments of the search tools
+# The sm64env Python extension crates (objective-rrt*/pyenv), parked and kept local
 pyenv/
 
 # Agent worktrees
-.claude/worktrees/
+.claude/
 
 # Backbone run output and PID files
 backbone/run/rlv2/

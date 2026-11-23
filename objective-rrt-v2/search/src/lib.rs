@@ -22,7 +22,7 @@ pub mod pool;
 pub mod reroute;
 pub mod road;
 pub mod replay;
-#[cfg(not(feature = "sm64coin"))]
+#[cfg(not(feature = "hooked"))]
 pub mod route;
 pub mod schemapick;
 pub mod share;

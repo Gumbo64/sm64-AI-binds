@@ -123,14 +123,21 @@ const OBRRT2_ENV: &[(&str, &str)] = &[
     ("OBRRT_BOOT_NOWAIT", "1"),
 ];
 
+/// The newest obrrt2: a snapshot `builds/*/obrrt2` (screen.sh's) or cargo's
+/// `target/release/obrrt2`.
 fn latest_obrrt2() -> Result<String> {
-    let mut v: Vec<_> = std::fs::read_dir(format!("{ROOT}/builds"))?
+    let mut v: Vec<_> = std::fs::read_dir(format!("{ROOT}/builds"))
+        .into_iter()
+        .flatten()
         .filter_map(|e| e.ok())
-        .filter(|e| e.path().join("obrrt2").exists())
-        .filter_map(|e| Some((e.metadata().ok()?.modified().ok()?, e.path().join("obrrt2"))))
+        .map(|e| e.path().join("obrrt2"))
+        .chain([std::path::PathBuf::from(format!("{ROOT}/target/release/obrrt2"))])
+        .filter_map(|p| Some((p.metadata().ok()?.modified().ok()?, p)))
         .collect();
     v.sort();
-    v.last().map(|x| x.1.display().to_string()).ok_or_else(|| anyhow!("no builds/*/obrrt2"))
+    v.last().map(|x| x.1.display().to_string()).ok_or_else(|| {
+        anyhow!("no obrrt2 binary (builds/*/obrrt2 or target/release/obrrt2): build it with `cargo build --release -p obrrt-run --bin obrrt2`, or pass --bin PATH")
+    })
 }
 
 pub fn explore(s: &mut Session, pos: &[String], f: &HashMap<String, String>) -> Result<()> {

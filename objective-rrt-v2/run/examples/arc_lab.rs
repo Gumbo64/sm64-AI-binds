@@ -8,7 +8,7 @@
 //! arc_lab <rom> walls                  run into walls from a few starts; print them
 //! arc_lab <rom> slopes                 static floor triangles by steepness
 //! arc_lab <rom> measure                measure everything; write ref/arcs/arcs.json
-//!                                      and ref/arcs/arcs_table.rs (the predictor's table)
+//!                                      and objectives/src/moves/arcs_table.rs (the predictor's table)
 //! arc_lab <rom> validate               predict() vs the game at speeds not in the table
 //! arc_lab <rom> door [trace]           plan_approach vs running straight, from
 //!                                      starts 800-2500 from castle doors; per-move
@@ -1321,9 +1321,10 @@ fn measure_all(gg: &SM64GameGenerator, g: &SM64Game, st: &St) -> Result<()> {
         "ground_pound": gp, "ground_pound_drift": gp_drift, "falls": falls, "chains": chains,
         "ground": ground, "air_steer": steer,
     });
+    std::fs::create_dir_all(repo("ref/arcs"))?;
     std::fs::write(repo("ref/arcs/arcs.json"), serde_json::to_string_pretty(&doc)? + "\n")?;
-    std::fs::write(repo("ref/arcs/arcs_table.rs"), table_rs(&doc))?;
-    eprintln!("wrote ref/arcs/arcs.json and ref/arcs/arcs_table.rs");
+    std::fs::write(repo("objectives/src/moves/arcs_table.rs"), table_rs(&doc))?;
+    eprintln!("wrote ref/arcs/arcs.json and objectives/src/moves/arcs_table.rs");
     Ok(())
 }
 

@@ -181,14 +181,14 @@ pub struct RhController {
 
 impl RhController {
     /// At `st` (the state `save` holds, read with objects).
-    #[cfg(not(feature = "sm64coin"))]
+    #[cfg(not(feature = "hooked"))]
     pub fn new(game_gen: &sm64_binds::SM64GameGenerator, threads: usize, save: &SaveState, st: St, cfg: RhConfig) -> Result<RhController> {
         Self::with_workers(threads, save, st, cfg, || Worker::new(game_gen))
     }
 
-    /// With feature `sm64coin` the workers are forks of `proto` (a mining
-    /// game, perturbed as the verifier replays).
-    #[cfg(feature = "sm64coin")]
+    /// With feature `hooked` the workers are forks of `proto` (a hooked
+    /// game: its step hook goes with every fork).
+    #[cfg(feature = "hooked")]
     pub fn new(proto: &SM64Game, threads: usize, save: &SaveState, st: St, cfg: RhConfig) -> Result<RhController> {
         Self::with_workers(threads, save, st, cfg, || Worker::forked(proto))
     }
