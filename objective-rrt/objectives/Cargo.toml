@@ -1,5 +1,5 @@
 [package]
-name = "obrrt-objectives"
+name = "obrrt1-objectives"
 description = "Objective-based RRT's domain knowledge: one file per objective type, and the registry that generates them from a state."
 version.workspace = true
 edition.workspace = true

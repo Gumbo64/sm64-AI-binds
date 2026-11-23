@@ -6,7 +6,7 @@ edition = "2024"
 [dependencies]
 anyhow = "1.0.100"
 lz4_flex = "0.14.0"
-obrrt-core = { path = "../objective-rrt/core" }
+obrrt-core = { path = "../objective-rrt/core", package = "obrrt1-core" }
 rand = "0.9.2"
 rand_distr = "0.5"
 rayon = "1.11.0"

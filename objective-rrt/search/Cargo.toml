@@ -1,5 +1,5 @@
 [package]
-name = "obrrt-search"
+name = "obrrt1-search"
 description = "Objective-based RRT's search: state tree, objective pool, sampling, GA attempts, diagnostics and automatic tuning."
 version.workspace = true
 edition.workspace = true

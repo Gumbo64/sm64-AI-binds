@@ -16,9 +16,11 @@ serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1"
 sm64-binds = "2.0.0"
 lz4_flex = "0.14.0"
-obrrt-core = { path = "core" }
-obrrt-search = { path = "search" }
-obrrt-objectives = { path = "objectives" }
+# Package names obrrt1-*: objective-rrt-v2 has the obrrt-* names, and a git dependency on this
+# repo (sm64-crypto3's miner) picks a crate by package name. The keys keep v1's code unchanged.
+obrrt-core = { path = "core", package = "obrrt1-core" }
+obrrt-search = { path = "search", package = "obrrt1-search" }
+obrrt-objectives = { path = "objectives", package = "obrrt1-objectives" }
 
 [profile.release]
 debug = true

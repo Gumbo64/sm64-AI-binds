@@ -1214,7 +1214,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "lz4_flex",
- "obrrt-core",
+ "obrrt1-core",
  "rand",
  "rand_distr",
  "rayon",
@@ -1225,7 +1225,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "obrrt-core"
+name = "obrrt1-core"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -1234,34 +1234,34 @@ dependencies = [
 ]
 
 [[package]]
-name = "obrrt-objectives"
+name = "obrrt1-objectives"
 version = "0.1.0"
 dependencies = [
- "obrrt-core",
+ "obrrt1-core",
  "rand",
 ]
 
 [[package]]
-name = "obrrt-run"
+name = "obrrt1-run"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "obrrt-core",
- "obrrt-objectives",
- "obrrt-search",
+ "obrrt1-core",
+ "obrrt1-objectives",
+ "obrrt1-search",
  "rand",
  "serde_json",
  "sm64-binds",
 ]
 
 [[package]]
-name = "obrrt-search"
+name = "obrrt1-search"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "lz4_flex",
  "objective-scattershot",
- "obrrt-core",
+ "obrrt1-core",
  "rand",
  "rayon",
  "serde",
@@ -2622,3 +2622,19 @@ dependencies = [
  "cc",
  "pkg-config",
 ]
+
+[[patch.unused]]
+name = "obrrt-core"
+version = "0.1.0"
+
+[[patch.unused]]
+name = "obrrt-objectives"
+version = "0.1.0"
+
+[[patch.unused]]
+name = "obrrt-search"
+version = "0.1.0"
+
+[[patch.unused]]
+name = "obrrt-spec"
+version = "0.1.0"

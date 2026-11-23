@@ -1,5 +1,5 @@
 [package]
-name = "obrrt-core"
+name = "obrrt1-core"
 description = "The contract between Objective-based RRT's search and its objectives: game snapshots and the Objective trait."
 version.workspace = true
 edition.workspace = true

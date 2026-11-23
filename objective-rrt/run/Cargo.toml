@@ -1,5 +1,5 @@
 [package]
-name = "obrrt-run"
+name = "obrrt1-run"
 description = "Runs Objective-based RRT: wires the search to the objectives, command line and outputs."
 version.workspace = true
 edition.workspace = true
