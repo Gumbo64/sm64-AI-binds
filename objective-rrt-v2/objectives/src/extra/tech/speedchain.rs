@@ -116,7 +116,9 @@ impl Objective for SpeedChain {
         s.level as u32 == LEVEL_BOB as u32 && s.controllable() && s.pos[0] < RAMP[0] - RAMP_R
     }
     fn ga_budget(&self) -> Option<obrrt_core::GaBudget> {
-        Some(obrrt_core::GaBudget { population: 128, generations: 60, horizon: 320 })
+        // A tree's budget (a route leg gives its own): in the zone-locked BoB tree
+        // of 2026-11-09 the old 128 x 60 took 17.5% of the frames in 2 attempts.
+        Some(obrrt_core::GaBudget { population: 24, generations: 5, horizon: 320 })
     }
     fn precision(&self) -> Precision {
         Precision::Precise

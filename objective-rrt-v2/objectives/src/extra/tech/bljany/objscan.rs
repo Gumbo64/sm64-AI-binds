@@ -128,7 +128,7 @@ fn bbox(ts: &[Tri]) -> [f32; 4] {
 fn near_box(ts: &[Tri], b: [f32; 4], m: f32) -> Vec<Tri> {
     ts.iter()
         .filter(|t| t.v.iter().any(|p| p[0] > b[0] - m && p[0] < b[1] + m && p[2] > b[2] - m && p[2] < b[3] + m))
-        .map(|t| Tri { v: t.v, n: t.n, kind: t.kind })
+        .map(|t| Tri { v: t.v, n: t.n, kind: t.kind, room: t.room })
         .collect()
 }
 
@@ -146,7 +146,7 @@ fn statics(zone: (u16, u8)) -> (Vec<Tri>, Vec<Tri>, Vec<Tri>) {
     if !obrrt_core::mover::published(zone) {
         return (Vec::new(), Vec::new(), Vec::new());
     }
-    let cp = |v: Option<std::sync::Arc<[Tri]>>| v.map_or(Vec::new(), |a| a.iter().map(|t| Tri { v: t.v, n: t.n, kind: t.kind }).collect());
+    let cp = |v: Option<std::sync::Arc<[Tri]>>| v.map_or(Vec::new(), |a| a.iter().map(|t| Tri { v: t.v, n: t.n, kind: t.kind, room: t.room }).collect());
     (cp(obrrt_core::geo::static_floors(zone)), cp(obrrt_core::geo::static_ceils(zone)), cp(obrrt_core::geo::static_walls(zone)))
 }
 
@@ -189,12 +189,12 @@ pub fn cands(b: &St) -> Vec<Cand> {
         for (c, i) in scan::slopes_ix(&fl, super::params::get().obj_slope_area) {
             local.push(mk(Kind::Slope, c.start, c.yaw, fl[i].v, 0, None, None));
         }
-        let bb = bbox(&fl.iter().chain(&ce).chain(&wa).map(|t| Tri { v: t.v, n: t.n, kind: t.kind }).collect::<Vec<_>>());
+        let bb = bbox(&fl.iter().chain(&ce).chain(&wa).map(|t| Tri { v: t.v, n: t.n, kind: t.kind, room: t.room }).collect::<Vec<_>>());
         let sf_near = near_box(&sf, bb, 200.0);
         let sc_near = near_box(&sc, bb, 200.0);
         let sw_near = near_box(&sw, bb, 200.0);
         // Its floors under its ceilings and the static ones.
-        let all_ce: Vec<Tri> = ce.iter().chain(&sc_near).map(|t| Tri { v: t.v, n: t.n, kind: t.kind }).collect();
+        let all_ce: Vec<Tri> = ce.iter().chain(&sc_near).map(|t| Tri { v: t.v, n: t.n, kind: t.kind, room: t.room }).collect();
         for (c, fi, _) in scan::ceilings_ix(&fl, &all_ce) {
             local.push(mk(Kind::Ceiling, c.start, None, fl[fi].v, 0, None, None));
         }
@@ -205,12 +205,12 @@ pub fn cands(b: &St) -> Vec<Cand> {
             }
         }
         if !wa.is_empty() {
-            let floors: Vec<Tri> = fl.iter().chain(&sf_near).map(|t| Tri { v: t.v, n: t.n, kind: t.kind }).collect();
+            let floors: Vec<Tri> = fl.iter().chain(&sf_near).map(|t| Tri { v: t.v, n: t.n, kind: t.kind, room: t.room }).collect();
             let rs = riser::find(&floors, &wa, super::params::get().riser_h_max);
             for c in scan::riser_cands(&rs) {
                 local.push(mk(Kind::Riser, c.start, c.yaw, [[0.0; 3]; 3], 2, c.riser, None));
             }
-            let walls: Vec<Tri> = wa.iter().chain(&sw_near).map(|t| Tri { v: t.v, n: t.n, kind: t.kind }).collect();
+            let walls: Vec<Tri> = wa.iter().chain(&sw_near).map(|t| Tri { v: t.v, n: t.n, kind: t.kind, room: t.room }).collect();
             for c in scan::wall_cands(&riser::corners(&walls, &rs)) {
                 local.push(mk(Kind::Wall, c.start, c.yaw, [[0.0; 3]; 3], 2, c.riser, c.pin));
             }
@@ -260,7 +260,7 @@ pub fn holds(s: &St, r: &ObjRef) -> Option<([f32; 3], i32, Option<(Riser, RMode)
         (Some((rl, _)), _) => {
             // The riser wall still there in the object's frame.
             wa.iter().any(|t| {
-                let lt = Tri { v: t.v.map(|p| f.to_l(p)), n: t.n, kind: t.kind };
+                let lt = Tri { v: t.v.map(|p| f.to_l(p)), n: t.n, kind: t.kind, room: t.room };
                 riser_match(&rl, &wall_outline(&lt, rl.n))
             })
         }

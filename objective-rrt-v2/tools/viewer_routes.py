@@ -17,9 +17,41 @@ ROUTES = [
     ("tree and hyperjump, star at 3829", "legs-kingloop-0061-r1-x2-tree-d", False, "BLJ, tree redirect, a hyperjump above the slippery east slope, then the walked upper path. Star at frame 3829 (2:07.6)."),
     ("walked, star at 4075", "legs-kingloop-0094-r1-x1-hits", False, "The walked route, refined by the loop. Star at frame 4075 (2:15.8)."),
     ("speed chain, unfinished", "legs-speed-blj-fresh-s1", False, "Unfinished: the spawn slope's speed chain to the BLJ setup point (161 frames from control; TAS 147), then both trees, done at frame 2719, 24 frames ahead of the record. Failed the leg to the high ledge."),
-    ("VCutM from the 7th coin, switch first", "legs-tas-switch-first-2362-s2", False, "The 2026 TAS's first star with the vanish cap switch pressed before the 8th red coin: star at 2642, against the TAS's 2569. Landing after the switch opens its dialog, about 84 frames."),
+]
+# Mended routes (spec/src/bin/mend.rs): the same route, only faster. Regions come from a replay.
+MENDED = [
+    ("King's star at 3541", "king-3541", True, "The King route after mending: 3610 -> 3541. Trim, window GA and repair, accepted only if the star came sooner."),
+    ("4th star at 8074", "q15-s2-star4-8074", True, "q15-pw1-s2's route after mending: the 4th star 9390 -> 8074 (-1316), same star order. Compare with the tree's own run below; most of the saving is in Whomp's Fortress."),
+    ("5th star at 11274", "q15-s3-star5-11274", True, "q15-pw1-s3's route after mending: the 5th star 12782 -> 11274 (-1508), 6:15.8, same star order. Compare with the tree's own run below."),
+]
+# Composed from the segment library (logs/funnel/compose.py): segments of many runs joined at zone entries.
+COMPOSED = [
+    (6, 14023, True, "Fastest 6 stars: 7:47.4. Composed with no search from segments of 8 different runs, joined at zone entries where Mario's state is identical across routes. Best single run before: 17037."),
+    (5, 9793, False, "Fastest 5 stars: 5:26.4, composed from 7 runs. Best single route before (mended): 10963."),
+    (4, 7778, False, "Fastest 4 stars: 4:19.3, composed from 6 runs. Best single route before (mended): 7937."),
+    (1, 2888, False, "Fastest first star: 1:36.3. The King route's opening into BoB, then a tree run's Chain Chomp star."),
 ]
 TREES = [("q15-pw1-s2", 4, "Parent window on every attempt: second star at 2:49.4, third at 3:46.6."), ("q15-pw1-s3", 5, "Parent window on every attempt: five stars, the fifth at 7:11.4.")]
+
+
+def replay_regions(m64):
+    "One region per zone visit and star, from a replay; returns (regions, {stars: frame})."
+    names = {16: "Castle grounds", 6: "Castle", 9: "Bob-omb Battlefield", 24: "Whomp's Fortress", 26: "Courtyard", 5: "Cool, Cool Mountain", 18: "Vanish Cap", 27: "Princess's Slide", 3: "Jolly Roger Bay"}
+    tmp = VIEWER / ".replay.csv"
+    subprocess.run([str(HERE / "builds/tools/tasplay"), str(HERE.parent / "baserom.us.z64"), str(m64), str(tmp)], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    out, stars, zone, got, n = [], {}, None, 0, 0
+    for r in csv.DictReader(open(tmp)):
+        f, l, s = int(r["frame"]), int(r["level"]), int(r["stars"])
+        if s > got:
+            got = s; stars[s] = f
+            out.append({"from": f, "label": f"Star {s}", "note": f"Frame {f}, {f // 1800}:{f % 1800 / 30:04.1f}", "color": "#f5a623"})
+            n += 1
+        if l != zone and l:
+            zone = l
+            out.append({"from": f, "label": names.get(l, f"Level {l}"), "note": "", "color": COLORS[1 + n % (len(COLORS) - 1)]})
+            n += 1
+    tmp.unlink()
+    return out, stars
 
 
 def regions(route):
@@ -40,12 +72,29 @@ def best_node(run, stars):
 
 def main():
     out = VIEWER / "obrrt2"; out.mkdir(exist_ok=True)
-    index = [e for e in json.loads((VIEWER / "index.json").read_text()) if not e.get("title", "").startswith((PREFIX, TREE))]
+    index = [e for e in json.loads((VIEWER / "index.json").read_text()) if not e.get("title", "").startswith((PREFIX, TREE, "Mended: ", "Composed: "))]
     date = "2026-11-04T00:00:00Z"
     for title, run, important, doc in ROUTES:
         d = HERE / "oss2/runs" / run
         shutil.copyfile(d / "route.m64", out / f"{run}.m64")
         e = {"date": date, "title": PREFIX + title, "description": doc, "file": f"obrrt2/{run}.m64", "start": 1646, "regions": regions(json.load(open(d / "route.json")))}
+        if important:
+            e["important"] = True
+        index.append(e)
+    for k, frame, important, doc in COMPOSED:
+        src = HERE / f"logs/funnel/composed-{k}.m64"
+        shutil.copyfile(src, out / f"composed-{k}.m64")
+        regs, stars = replay_regions(src)
+        assert stars.get(k) == frame, (k, stars)
+        e = {"date": date, "title": f"Composed: {k} star{'s' if k > 1 else ''} at {frame}", "description": doc + f" Replay: stars at {list(stars.values())}.", "file": f"obrrt2/composed-{k}.m64", "start": 1646, "regions": regs}
+        if important:
+            e["important"] = True
+        index.append(e)
+    for title, name, important, doc in MENDED:
+        src = HERE / "logs/mend" / f"{name}.m64"
+        shutil.copyfile(src, out / f"{name}.m64")
+        regs, stars = replay_regions(src)
+        e = {"date": date, "title": "Mended: " + title, "description": doc + f" Replay: stars at {list(stars.values())}.", "file": f"obrrt2/{name}.m64", "start": 1646, "regions": regs}
         if important:
             e["important"] = True
         index.append(e)

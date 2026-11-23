@@ -74,16 +74,33 @@ pub struct PosDist {
     /// From [`underwater_point`]: a longer horizon (turning underwater is
     /// slow; the lab's median to such a point is about 100 frames).
     swim: bool,
+    /// A roadmap leg (`OBRRT_ROAD`, search/src/road.rs): its frame budget.
+    /// Its own kind (`Road::Leg`), so its record is apart from exploration's.
+    leg: Option<u16>,
+    /// `Road::Climb` (road.rs): toward a far goal under the roadmap's direct
+    /// cost (frames per unit of height above a jump, the jump height), for a
+    /// goal no known way leads to: height first, then distance.
+    climb: Option<(f64, f32)>,
 }
 
 impl PosDist {
     pub fn new(b: &St, p: [f32; 3]) -> PosDist {
-        PosDist { p, zone: b.zone(), swim: false }
+        PosDist { p, zone: b.zone(), swim: false, leg: None, climb: None }
+    }
+
+    /// Progress toward the far goal `p` under the roadmap's direct cost.
+    pub fn climb(b: &St, p: [f32; 3], per_unit: f64, jump: f32) -> PosDist {
+        PosDist { p, zone: b.zone(), swim: false, leg: None, climb: Some((per_unit, jump)) }
+    }
+
+    /// A roadmap leg to `p`, an edge the tree made in `frames` frames.
+    pub fn leg(b: &St, p: [f32; 3], frames: u32) -> PosDist {
+        PosDist { p, zone: b.zone(), swim: false, leg: Some((frames * 3 / 2 + 45).min(600) as u16), climb: None }
     }
 
     /// An `OBRRT_SWIM_TARGETS` point ([`underwater_point`]).
     pub fn new_swim(b: &St, p: [f32; 3]) -> PosDist {
-        PosDist { p, zone: b.zone(), swim: true }
+        PosDist { p, zone: b.zone(), swim: true, leg: None, climb: None }
     }
 }
 
@@ -93,11 +110,23 @@ impl Objective for PosDist {
         obrrt_core::DenseKeep::Every { n: 30, air: false }
     }
     fn kind(&self) -> &'static str {
-        "Mario::PosDist"
+        if self.leg.is_some() {
+            "Road::Leg"
+        } else if self.climb.is_some() {
+            "Road::Climb"
+        } else {
+            "Mario::PosDist"
+        }
     }
     fn key(&self) -> String {
         // Points in the same 400-unit cell are the same objective.
         let c = |v: f32| (v / 400.0).round() as i32;
+        if let Some(h) = self.leg {
+            return format!("Leg {:?} {},{},{} {}", self.zone, c(self.p[0]), c(self.p[1]), c(self.p[2]), h / 60);
+        }
+        if self.climb.is_some() {
+            return format!("Climb {:?} {},{},{}", self.zone, c(self.p[0]), c(self.p[1]), c(self.p[2]));
+        }
         format!("PosDist {:?} {},{},{}", self.zone, c(self.p[0]), c(self.p[1]), c(self.p[2]))
     }
     fn obj_weight(&self, _b: &St) -> f64 {
@@ -114,9 +143,24 @@ impl Objective for PosDist {
         if d <= RADIUS {
             return Eta::Done;
         }
+        if let Some((per, jump)) = self.climb {
+            // road.rs direct_s: water up to its surface is free.
+            // The height of the footing: an airborne state has the floor's.
+            let (wl, y) = (s.water_level as f32, s.footing()[1]);
+            let from = if y < wl { wl.min(self.p[1]).max(y) } else { y };
+            let up = (self.p[1] - from - jump).max(0.0);
+            let down = (y - self.p[1]).max(0.0);
+            return Eta::Frames(frames_for(s.hdist(self.p).max(down * 0.5)) + per * up as f64);
+        }
         Eta::Frames(frames_for(d))
     }
     fn ga_budget(&self) -> Option<obrrt_core::GaBudget> {
+        if let Some(h) = self.leg {
+            return Some(obrrt_core::GaBudget { population: 16, generations: 5, horizon: h as usize });
+        }
+        if self.climb.is_some() {
+            return Some(obrrt_core::GaBudget { population: 16, generations: 5, horizon: 150 });
+        }
         Some(obrrt_core::GaBudget { population: 12, generations: 4, horizon: if self.swim { 180 } else { 90 } })
     }
     fn steer_target(&self, _s: &St) -> Option<[f32; 3]> {

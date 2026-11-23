@@ -13,6 +13,12 @@ serde_json.workspace = true
 sm64-binds.workspace = true
 lz4_flex.workspace = true
 obrrt-core.workspace = true
+obrrt-objectives.workspace = true
 # OBRRT_REROUTE_SCHEMA: an objective-scattershot schema's key as "the same state".
 # Vendored copy (scattershot/) built against v2 core.
 objective-scattershot = { path = "../scattershot" }
+sm64pow = { path = "/workspaces/sm64-combined/sm64-crypto3/pow/sm64pow", optional = true }
+
+[features]
+# Worker games are SM64MiningGame (perturbed as the SM64Coin verifier replays).
+sm64coin = ["dep:sm64pow"]

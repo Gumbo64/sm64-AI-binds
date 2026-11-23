@@ -48,7 +48,7 @@ fn st(zone: u16, action: u32, pos: [f32; 3], fv: f32, yaw: i16, floor_n: [f32; 3
         floor_obj: None,
         floor_obj_vy: None,
         floor_obj_y: None,
-        action_timer: 0,
+        action_timer: 0, cap_timer: 0,
         wall_normal: None,
         course_stars: [0; 25],
         save_flags: 0,
@@ -62,8 +62,8 @@ fn quad(x0: f32, x1: f32, z0: f32, z1: f32, y0: f32, y1: f32) -> [Tri; 2] {
     let l = (dz * dz + dy * dy).sqrt();
     let n = [0.0, dz / l, -dy / l];
     [
-        Tri { v: [[x0, y0, z0], [x1, y0, z0], [x1, y1, z1]], n, kind: 0 },
-        Tri { v: [[x0, y0, z0], [x1, y1, z1], [x0, y1, z1]], n, kind: 0 },
+        Tri { v: [[x0, y0, z0], [x1, y0, z0], [x1, y1, z1]], n, kind: 0, room: 0 },
+        Tri { v: [[x0, y0, z0], [x1, y1, z1], [x0, y1, z1]], n, kind: 0, room: 0 },
     ]
 }
 
@@ -292,8 +292,8 @@ fn slides_ride_or_escape() {
 fn wall(z: f32, sign: f32) -> [Tri; 2] {
     let n = [0.0, 0.0, -sign];
     [
-        Tri { v: [[-500.0, -100.0, z], [500.0, -100.0, z], [500.0, 2000.0, z]], n, kind: 0 },
-        Tri { v: [[-500.0, -100.0, z], [500.0, 2000.0, z], [-500.0, 2000.0, z]], n, kind: 0 },
+        Tri { v: [[-500.0, -100.0, z], [500.0, -100.0, z], [500.0, 2000.0, z]], n, kind: 0, room: 0 },
+        Tri { v: [[-500.0, -100.0, z], [500.0, 2000.0, z], [-500.0, 2000.0, z]], n, kind: 0, room: 0 },
     ]
 }
 

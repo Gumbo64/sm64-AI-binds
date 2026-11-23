@@ -1,0 +1,2 @@
+; The reference's inputs (stick by world direction) whatever happens: the blind-replay baseline.
+(pad ref (stick refst 0 1))

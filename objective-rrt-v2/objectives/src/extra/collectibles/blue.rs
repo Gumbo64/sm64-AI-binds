@@ -170,3 +170,82 @@ impl Objective for Collect {
         self.base_criteria(s)
     }
 }
+
+/// `BlueCoinSwitch::Run` (with `OBRRT_TWOSTAR=1`, in a course whose 100-coin star is missing): every blue coin a
+/// pressed switch has out, in one go. The switch gives them 240 frames (blue_coin.inc.c) and then deletes both, so
+/// a press that gets some of the coins loses the others for good: JRB's blue switch (six coins, 30 of a total
+/// of 101 for the 100-coin star) was pressed in t1's leg 5 and 4 of 6 coins taken, the star then out of reach
+/// (t1 steps 535-547, 94 coins). `Collect` goes for one coin at a time; this one's ETA is the walk through all of
+/// them (nearest first), `Done` when all are in, `Lost` when one is gone without its coins.
+pub struct Run {
+    zone: (u16, u8),
+    n: usize,
+}
+
+fn out_coins(s: &St) -> Vec<[f32; 3]> {
+    s.objects().iter().filter(|o| o.bhv_name() == "bhvHiddenBlueCoin" && o.action == HIDDEN_BLUE_COIN_ACT_ACTIVE).map(|o| o.pos).collect()
+}
+
+impl Run {
+    pub fn new(b: &St) -> Option<Run> {
+        if !crate::extra::missions::twostar::goal_on(b) || b.objects.is_none() {
+            return None;
+        }
+        let n = out_coins(b).len();
+        (n > 0).then_some(Run { zone: b.zone(), n })
+    }
+}
+
+impl Objective for Run {
+    fn dense_keep(&self) -> obrrt_core::DenseKeep {
+        obrrt_core::DenseKeep::Every { n: 15, air: false }
+    }
+    fn kind(&self) -> &'static str {
+        "BlueCoinSwitch::Run"
+    }
+    fn key(&self) -> String {
+        format!("BlueRun {:?}", self.zone)
+    }
+    fn obj_weight(&self, _b: &St) -> f64 {
+        8.0
+    }
+    fn base_criteria(&self, s: &St) -> bool {
+        s.zone() == self.zone && !out_coins(s).is_empty()
+    }
+    fn ga_budget(&self) -> Option<GaBudget> {
+        Some(GaBudget { population: 16, generations: 5, horizon: 240 })
+    }
+    fn eta(&self, s: &St, start: &St, _mem: &mut Mem) -> Eta {
+        if s.zone() != self.zone || !s.alive() || s.objects.is_none() {
+            return Eta::Lost;
+        }
+        let mut left = out_coins(s);
+        if left.is_empty() {
+            // All taken (5 coins each), else they ran out.
+            return if s.coins >= start.coins + 5 * self.n as i16 { Eta::Done } else { Eta::Lost };
+        }
+        // A coin gone with no coins for it (the 240 frames ran out).
+        if s.coins < start.coins + 5 * (self.n - left.len()) as i16 {
+            return Eta::Lost;
+        }
+        let (mut at, mut d) = (s.pos, 0.0);
+        while !left.is_empty() {
+            let i = (0..left.len()).min_by(|&i, &j| obrrt_core::dist(at, left[i]).total_cmp(&obrrt_core::dist(at, left[j]))).unwrap();
+            d += obrrt_core::dist(at, left[i]);
+            at = left.swap_remove(i);
+        }
+        Eta::Frames(frames_for(d))
+    }
+    fn success_value(&self) -> f64 {
+        4.0
+    }
+    fn needs_objects(&self) -> bool {
+        true
+    }
+    fn steer_target(&self, s: &St) -> Option<[f32; 3]> {
+        out_coins(s).into_iter().min_by(|a, b| s.dist(*a).total_cmp(&s.dist(*b)))
+    }
+    fn exists_in(&self, s: &St) -> bool {
+        self.base_criteria(s)
+    }
+}

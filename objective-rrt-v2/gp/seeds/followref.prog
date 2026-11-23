@@ -1,0 +1,2 @@
+; Replay the reference's inputs while near it (stick by world direction), else run at the waypoint.
+(if (gt RefDist 150) (pad _ (stick T0 0 1)) (pad ref (stick refst 0 1)))

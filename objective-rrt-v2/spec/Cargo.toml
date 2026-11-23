@@ -8,6 +8,7 @@ edition.workspace = true
 anyhow.workspace = true
 rand.workspace = true
 serde_json.workspace = true
+serde.workspace = true
 sm64-binds.workspace = true
 obrrt-core.workspace = true
 # The validator: read_tree_bin (route replay) and schema keys.
@@ -28,3 +29,7 @@ path = "src/bin/legs.rs"
 [[bin]]
 name = "route-stats"
 path = "src/bin/route_stats.rs"
+
+[[bin]]
+name = "mend"
+path = "src/bin/mend.rs"

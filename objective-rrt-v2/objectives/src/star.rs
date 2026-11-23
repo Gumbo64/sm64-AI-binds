@@ -60,6 +60,8 @@ pub struct Collect {
     star: Option<(i16, u8)>,
     /// A spawned star still in its spawn cutscene at generation.
     spawning: bool,
+    /// The Grand Star (see `grand_star`).
+    grand: bool,
 }
 
 /// A star object that flies in with a spawn cutscene (see the module doc).
@@ -71,19 +73,36 @@ pub fn spawned_star(o: &Obj) -> bool {
 /// A spawned star not yet collectable: in its spawn cutscene (before action
 /// 3, for all three behaviours).
 pub fn spawning(o: &Obj) -> bool {
-    spawned_star(o) && o.action < 3
+    (spawned_star(o) && o.action < 3) || (grand_star(o) && o.action < 2)
 }
+
+/// The Grand Star (bhvGrandStar, spawned by Bowser 3's death, bowser.inc.c `bowser_spawn_collectable`): 70
+/// frames of sparkles (action 0), then a cutscene arc to the arena's centre (0, 0) and a hop (action 1;
+/// grand_star.inc.c `arc_to_goal_pos` to the origin, home height + 200), tangible only from action 2.
+pub fn grand_star(o: &Obj) -> bool {
+    o.bhv_name() == "bhvGrandStar"
+}
+
+/// `ACT_JUMBO_STAR_CUTSCENE`: Mario's action once he touches the Grand Star (interaction.c `interact_star_or_key`).
+/// Nothing is saved for it in Bowser 3 (save_file.c: `LEVEL_BOWSER_3: break`), so no star count shows the grab.
+pub const ACT_JUMBO_STAR_CUTSCENE: u32 = 0x0000_1909;
 
 /// Where a star object is, or comes to rest: a spawned star's home.
 pub fn rest_pos(o: &Obj) -> [f32; 3] {
-    if spawned_star(o) { o.home } else { o.pos }
+    if grand_star(o) {
+        [0.0, o.home[1] + 200.0, 0.0]
+    } else if spawned_star(o) {
+        o.home
+    } else {
+        o.pos
+    }
 }
 
 /// The (course, index) of a star object, from its first behaviour byte;
 /// None for Bowser keys and outside courses.
 pub fn star_of(b: &St, o: &Obj) -> Option<(i16, u8)> {
     let index = (o.beh_params >> 24) as u8;
-    ((1..=24).contains(&b.course) && index <= 6 && !o.bhv_name().contains("Key")).then_some((b.course, index))
+    ((1..=24).contains(&b.course) && index <= 6 && !o.bhv_name().contains("Key") && !grand_star(o)).then_some((b.course, index))
 }
 
 /// Whether star `index` of `course` is walled off for a plain approach from
@@ -111,7 +130,7 @@ pub fn star_blocked(s: &St, course: i16, index: u8) -> bool {
 
 impl Collect {
     pub fn new(b: &St, o: &Obj) -> Collect {
-        Collect { id: o.id, pos: rest_pos(o), zone: b.zone(), star: star_of(b, o), spawning: spawning(o) }
+        Collect { id: o.id, pos: rest_pos(o), zone: b.zone(), star: star_of(b, o), spawning: spawning(o), grand: grand_star(o) }
     }
 
     fn here(&self, s: &St) -> bool {
@@ -145,6 +164,8 @@ impl Objective for Collect {
         // A key: any key or star gained.
         let got = match self.star {
             Some((c, i)) => s.has_star(c, i),
+            // The Grand Star: its cutscene action (or the ending's level, the grounds), no count changes.
+            None if self.grand => s.action == ACT_JUMBO_STAR_CUTSCENE || s.level == 16,
             None => s.progress() > start.progress(),
         };
         if got {
@@ -153,7 +174,7 @@ impl Objective for Collect {
         if s.zone() != self.zone {
             return Eta::Lost;
         }
-        Eta::Frames(frames_for(s.dist(self.pos)))
+        Eta::Frames(frames_for(crate::walk::dist(s, self.pos).max(s.dist(self.pos))))
     }
     fn done_frames(&self, s: &St, _mem: &Mem) -> f64 {
         // G06: the dance starts on landing, so an airborne grab costs its

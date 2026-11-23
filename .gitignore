@@ -28,3 +28,12 @@ pyenv/
 
 # Agent worktrees
 .claude/worktrees/
+
+# Backbone run output and PID files
+backbone/run/rlv2/
+*.pid
+
+# Generated data and binaries (too large for git)
+objective-rrt-v2/agent/sessions/
+backbone/rlv2/dataset_v2
+backbone/rlv2/lib/*.so

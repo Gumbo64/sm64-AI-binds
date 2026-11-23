@@ -55,3 +55,7 @@ path = "src/dataset.rs"
 [[bin]]
 name = "goalbench"
 path = "src/goalbench.rs"
+
+[[bin]]
+name = "funnel"
+path = "src/funnel.rs"

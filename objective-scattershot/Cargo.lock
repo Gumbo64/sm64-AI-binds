@@ -1831,7 +1831,7 @@ checksum = "826167069c09b99d56f31e9ae5c99049e932a98c9dc2dac47645b08dbbf76ba7"
 
 [[package]]
 name = "sm64-binds"
-version = "2.0.1"
+version = "2.3.0"
 dependencies = [
  "anyhow",
  "flate2",

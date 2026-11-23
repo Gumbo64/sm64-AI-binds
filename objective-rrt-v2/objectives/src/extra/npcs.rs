@@ -34,6 +34,7 @@ const KTQ_ACT_AFTER_RACE: i32 = 6;
 const RACING_PENGUIN_ACT_WAIT_FOR_MARIO: i32 = 0;
 const RACING_PENGUIN_ACT_PREPARE_FOR_RACE: i32 = 2;
 const RACING_PENGUIN_ACT_RACE: i32 = 3;
+const RACING_PENGUIN_ACT_FINISH_RACE: i32 = 4;
 const RACING_PENGUIN_ACT_SHOW_FINAL_TEXT: i32 = 5;
 const MIPS_ACT_IDLE: i32 = 4;
 const UKIKI_ACT_GO_TO_CAGE: i32 = 4;
@@ -177,6 +178,18 @@ impl Approach {
         }
     }
 
+    /// The castle (inside, grounds, courtyard): rooms and corridors, where the straight line to a Toad or MIPS
+    /// goes through walls and floors (Toad's upstairs star: 150 M each at t1 steps 188 and 195, none; MIPS 2:
+    /// 130 M). With `OBRRT_GEO=1` the ETA is the walking distance and the steering a point along the walk
+    /// (as the races do); off, or outside the castle, the straight line as before.
+    fn in_castle(s: &St) -> bool {
+        matches!(s.zone().0, 6 | 16 | 26)
+    }
+
+    fn walk(s: &St, t: [f32; 3]) -> f32 {
+        if Self::in_castle(s) { obrrt_core::geo::path_dist(s.zone(), s.pos, t).unwrap_or_else(|| s.dist(t)) } else { s.dist(t) }
+    }
+
     fn met(&self, s0: &St, s: &St) -> bool {
         let Some(o) = s.find(self.id) else { return false };
         let d = s.dist(o.pos);
@@ -235,7 +248,7 @@ impl Objective for Approach {
         // An aim beside a thing that hurts to touch (`Near`) is the goal
         // itself: its done conditions trigger from there.
         let on = if matches!(self.spec.aim, Aim::Near(_)) { 0.0 } else { dist(t, o.pos) };
-        Eta::Frames(frames_for(s.dist(t) + on))
+        Eta::Frames(frames_for(Self::walk(s, t) + on))
     }
     fn success_value(&self) -> f64 {
         self.spec.value
@@ -247,7 +260,15 @@ impl Objective for Approach {
         obrrt_core::Arrival::Stop
     }
     fn steer_target(&self, s: &St) -> Option<[f32; 3]> {
-        s.find(self.id).map(|o| self.target(s, o))
+        s.find(self.id).map(|o| {
+            let t = self.target(s, o);
+            // Along the walk while far (the aim point itself within 700, where the straight line is the walk).
+            if Self::in_castle(s) && s.dist(t) > 700.0 {
+                obrrt_core::geo::waypoint(s.zone(), s.pos, t, 700.0).unwrap_or(t)
+            } else {
+                t
+            }
+        })
     }
     fn steer_button(&self, s: &St) -> u16 {
         match s.find(self.id) {
@@ -331,7 +352,10 @@ static MIPS_CATCH: Spec = Spec {
     extra: Some(|o| o.action != MIPS_ACT_IDLE && o.held_state == 0),
     min_stars: 15,
     not_holding: true,
-    done: &[Done::Held],
+    // Met when his dialog opens (Mario holds him, so he is within 400), as Toad's talk is: a state that only holds
+    // him (Done::Held) is controllable and idle, nothing then leads on to the dialog (mips-new, 2026-11-14: 69 of 97
+    // catches, none went on; the held state's next 40 frames are the dialog, then `Dialog::Read` takes over).
+    done: &[Done::DialogNear(400.0)],
     aim: Aim::At,
     button: B_BUTTON,
     button_radius: 250.0,
@@ -449,7 +473,10 @@ static PENGUIN_TALK: Spec = Spec {
     extra: None,
     min_stars: 0,
     not_holding: false,
-    done: &[Done::DialogNear(600.0), Done::ActionLeaves],
+    // Not `ActionLeaves`: the penguin leaves WAIT_FOR_MARIO (-> SHOW_INIT_TEXT) several frames BEFORE Mario's
+    // dialog opens, so a success there was a walking state and `Dialog::Yes` (only offered from a state with
+    // the dialog open) had no base: ccm2-a, 17 Talk successes in 1500 nodes, 0 Dialog::Yes attempts.
+    done: &[Done::DialogNear(600.0)],
     aim: Aim::At,
     button: 0,
     button_radius: 0.0,
@@ -515,7 +542,10 @@ static SNOWMAN_FINISH: Spec = Spec {
     kind: "Snowman::Finish",
     weight: 15.0,
     value: 10.0,
-    actions: &[4],
+    // 2 and 3 too: the body's success state (it is under the head, action 3/4) is when the head is still
+    // flying (action 2, then 3 on the body) and reaches action 4 some 30-60 frames later; `ActionLeaves`
+    // makes those steps bases, so a state with the head at 4 exists for the dialog.
+    actions: &[2, 3, 4],
     extra: None,
     min_stars: 0,
     not_holding: false,
@@ -544,6 +574,18 @@ enum RaceKind {
 /// unseen, so never more than the game's), plus 2 frames of margin for the
 /// timer's off-by-one: `Lost` never comes before the game's flag.
 const PENGUIN_AIR_LIMIT: f64 = 62.0;
+
+/// bhvPenguinRaceShortcutCheck (levels/ccm/script.c): Mario within 500 of it
+/// cheats (racing_penguin.inc.c bhv_penguin_race_shortcut_check_update).
+const PENGUIN_SHORTCUT: [f32; 3] = [-6393.0, -716.0, 7503.0];
+
+/// Slide speed (units a frame) the penguin ETA assumes for Mario; the
+/// penguin's own is 70..150 (racing_penguin_act_race).
+const PENGUIN_SLIDE_SPEED: f32 = 80.0;
+/// The finish line wins at distance < 990 AND z below the line's (-6400: `won`); the path's last leg runs
+/// along x -6488 from z -6088, so only its last ~310 units are still needed (was 990: the ETA reached 0 ~700
+/// units before the win).
+const PENGUIN_WIN_RADIUS: f32 = 310.0;
 
 /// `mem.f[0]` of a penguin race: consecutive airborne frames while racing.
 const AIR_FRAMES: usize = 0;
@@ -609,11 +651,20 @@ impl Objective for Race {
     fn key(&self) -> String {
         format!("{} {:?} {}", self.kind(), self.zone, self.racer)
     }
+    /// The penguin race is a long chain (a descent of 80000 units, ~1000 frames, seen only through 600-900 frame
+    /// attempts) that the tree must keep extending: 5x the Koopa race's weight (ccm2-f: at 20 only 29 Win
+    /// attempts in 40 M frames against 170 Talk; from a half-way state a win took 31 attempts, ccm2-e).
     fn obj_weight(&self, _b: &St) -> f64 {
-        20.0
+        match self.race {
+            RaceKind::Koopa => 20.0,
+            RaceKind::Penguin => 100.0,
+        }
     }
     fn base_criteria(&self, s: &St) -> bool {
-        s.zone() == self.zone && star_missing(s, self.star) && self.both(s).is_some_and(|(r, _)| self.racing(r))
+        s.zone() == self.zone
+            && star_missing(s, self.star)
+            // Already won (the flag set): `PenguinRace::Await` is the next step, not the race again.
+            && self.both(s).is_some_and(|(r, _)| self.racing(r) && !(matches!(self.race, RaceKind::Penguin) && penguin_won(r)))
     }
     /// Frames to the goal; `Done` on a won frame after the start (v1's
     /// success); the race over (the racer out of his race action: he got
@@ -621,7 +672,7 @@ impl Objective for Race {
     /// the zone left: `Lost`. The penguin race also keeps its airborne window
     /// in `mem` ([`PENGUIN_AIR_LIMIT`]): past it the race is cheated.
     fn ga_budget(&self) -> Option<obrrt_core::GaBudget> {
-        Some(obrrt_core::GaBudget { population: 16, generations: 5, horizon: 600 })
+        Some(obrrt_core::GaBudget { population: 16, generations: 5, horizon: if matches!(self.race, RaceKind::Penguin) { 900 } else { 600 } })
     }
     fn eta(&self, s: &St, start: &St, mem: &mut Mem) -> Eta {
         if s.zone() != self.zone {
@@ -637,8 +688,28 @@ impl Objective for Race {
         if s.frame != start.frame && self.won(s) {
             return Eta::Done;
         }
+        if let RaceKind::Penguin = self.race {
+            // The shortcut cheats the race.
+            if dist(s.pos, PENGUIN_SHORTCUT) < 500.0 {
+                return Eta::Lost;
+            }
+            // On the slide: the length left along the penguin's own path (the walkable mesh doesn't
+            // cover the steep slide floors, so the walking distance gave 54 frames of progress).
+            if self.both(s).is_some_and(|(r, _)| self.racing(r)) {
+                // Always the path, never the walking distance: at the top plateau farther than
+                // 1500 units (the old reach) from the path's start (x -6298) the geodesic gave ETA 423 against 1000 a few
+                // steps east (and 580 for a state halfway down the slide), so the best-ETA bases were idle states at
+                // the top (ccm2-b: Win attempts from them made 1-8 progress; the halfway states were never started).
+                let pr = super::slides::ccm().progress(s.pos);
+                return Eta::Frames((((pr.remaining - PENGUIN_WIN_RADIUS).max(0.0) + 2.0 * pr.off) / PENGUIN_SLIDE_SPEED) as f64);
+            }
+        }
         match self.both(s) {
-            Some((r, g)) if self.racing(r) => Eta::Frames(frames_for(s.dist(g.pos))),
+            // OBRRT_GEO=1: the walking distance (KtQ's route spirals up BoB's mountain; the straight line
+            // to the flag rated the foot of the mountain close, and t1's BoB trees never won in 8 checkpoints).
+            Some((r, g)) if self.racing(r) => {
+                Eta::Frames(frames_for(obrrt_core::geo::path_dist(s.zone(), s.pos, g.pos).unwrap_or_else(|| s.dist(g.pos))))
+            }
             _ => Eta::Lost,
         }
     }
@@ -649,10 +720,225 @@ impl Objective for Race {
         true
     }
     fn steer_target(&self, s: &St) -> Option<[f32; 3]> {
-        s.find(self.goal).map(|g| g.pos)
+        // The penguin race, on the slide: 700 units along the penguin's path.
+        if let RaceKind::Penguin = self.race {
+            return Some(super::slides::ccm().ahead(s.pos, 700.0));
+        }
+        // OBRRT_GEO=1: a point 700 units along the walk to the flag, else the flag.
+        let g = s.find(self.goal)?.pos;
+        Some(obrrt_core::geo::waypoint(s.zone(), s.pos, g, 700.0).unwrap_or(g))
     }
     fn exists_in(&self, s: &St) -> bool {
         s.zone() == self.zone && self.both(s).is_some()
+    }
+    fn kinship(&self) -> u32 {
+        10
+    }
+}
+
+/// `bhvKoopaRaceEndpoint`'s `value` once Mario has won and the star is still to come (core/src/read.rs).
+const KTQ_WON: i32 = 11;
+
+/// `KoopaRace::Await`: Mario has won (the endpoint's status 1), and Koopa the Quick is still running up: stay
+/// alive and in the course until he gets to the flag and waits (KOOPA_THE_QUICK_ACT_AFTER_RACE), where
+/// `KoopaRace::Claim` takes over (the dialog, then the star: koopa_the_quick_act_after_race). Without it the
+/// trees won the race (zt-ktq-geo-1, 293 wins) but every claim came from a branch that had lost.
+struct KtqAwait {
+    racer: ObjId,
+    goal: ObjId,
+    zone: (u16, u8),
+    star: Option<(i16, u8)>,
+}
+
+impl Objective for KtqAwait {
+    fn kind(&self) -> &'static str {
+        "KoopaRace::Await"
+    }
+    fn key(&self) -> String {
+        format!("KoopaRace::Await {:?} {}", self.zone, self.racer)
+    }
+    fn obj_weight(&self, _b: &St) -> f64 {
+        20.0
+    }
+    fn base_criteria(&self, s: &St) -> bool {
+        s.zone() == self.zone
+            && star_missing(s, self.star)
+            && s.find(self.goal).is_some_and(|g| g.value == KTQ_WON)
+            && s.find(self.racer).is_some_and(|r| r.action != KTQ_ACT_AFTER_RACE)
+    }
+    fn ga_budget(&self) -> Option<obrrt_core::GaBudget> {
+        Some(obrrt_core::GaBudget { population: 8, generations: 3, horizon: 600 })
+    }
+    /// `Done` when KtQ waits at the flag; `Lost` out of the zone or with the win gone; else his distance to the
+    /// flag in Mario's frames (he runs it, so Mario only has to survive).
+    fn eta(&self, s: &St, _start: &St, _mem: &mut Mem) -> Eta {
+        if s.zone() != self.zone {
+            return Eta::Lost;
+        }
+        let (Some(r), Some(g)) = (s.find(self.racer), s.find(self.goal)) else { return Eta::Lost };
+        if r.action == KTQ_ACT_AFTER_RACE {
+            return Eta::Done;
+        }
+        if g.value != KTQ_WON {
+            return Eta::Lost;
+        }
+        Eta::Frames(frames_for(dist(r.pos, g.pos)))
+    }
+    fn success_value(&self) -> f64 {
+        10.0
+    }
+    fn needs_objects(&self) -> bool {
+        true
+    }
+    fn steer_target(&self, s: &St) -> Option<[f32; 3]> {
+        // Stay by the flag, where he stops.
+        s.find(self.goal).map(|g| g.pos)
+    }
+    fn exists_in(&self, s: &St) -> bool {
+        s.zone() == self.zone && s.find(self.goal).is_some_and(|g| g.value == KTQ_WON)
+    }
+    fn kinship(&self) -> u32 {
+        10
+    }
+}
+
+/// `PenguinRace::Await`: Mario got past the finish line first (oRacingPenguinMarioWon, not cheated) and the
+/// penguin is still on his way down (RACE, then FINISH_RACE: he slams into the wall). Stay alive, near the
+/// finish, until he turns up and waits (SHOW_FINAL_TEXT, racing_penguin.inc.c), where `PenguinRace::Claim`
+/// takes over. The race's own `Done` is the win frame, so without this the claim only ever came from a branch
+/// that had no penguin waiting yet (the KoopaRace::Await situation, zt-ktq-geo-1).
+struct PenguinAwait {
+    racer: ObjId,
+    goal: ObjId,
+    zone: (u16, u8),
+    star: Option<(i16, u8)>,
+}
+
+impl PenguinAwait {
+    fn pending(r: &Obj) -> bool {
+        penguin_won(r) && !penguin_cheated(r) && r.action != RACING_PENGUIN_ACT_SHOW_FINAL_TEXT
+    }
+}
+
+impl Objective for PenguinAwait {
+    fn kind(&self) -> &'static str {
+        "PenguinRace::Await"
+    }
+    fn key(&self) -> String {
+        format!("PenguinRace::Await {:?} {}", self.zone, self.racer)
+    }
+    fn obj_weight(&self, _b: &St) -> f64 {
+        20.0
+    }
+    fn base_criteria(&self, s: &St) -> bool {
+        s.zone() == self.zone && star_missing(s, self.star) && s.find(self.racer).is_some_and(Self::pending)
+    }
+    fn ga_budget(&self) -> Option<obrrt_core::GaBudget> {
+        Some(obrrt_core::GaBudget { population: 8, generations: 3, horizon: 600 })
+    }
+    /// `Done` when the penguin waits at the bottom with the win intact; `Lost` out of the zone or once the
+    /// win is gone (cheated, or the flag cleared); else his path left in frames (he slides 70..150 a frame)
+    /// plus Mario's way to within 300 of the finish.
+    fn eta(&self, s: &St, _start: &St, _mem: &mut Mem) -> Eta {
+        if s.zone() != self.zone {
+            return Eta::Lost;
+        }
+        let (Some(r), Some(g)) = (s.find(self.racer), s.find(self.goal)) else { return Eta::Lost };
+        if penguin_cheated(r) || !penguin_won(r) {
+            return Eta::Lost;
+        }
+        if r.action == RACING_PENGUIN_ACT_SHOW_FINAL_TEXT {
+            return Eta::Done;
+        }
+        let penguin = super::slides::ccm().progress(r.pos).remaining as f64 / PENGUIN_SLIDE_SPEED as f64;
+        Eta::Frames(penguin + frames_for((s.dist(g.pos) - 300.0).max(0.0)))
+    }
+    fn success_value(&self) -> f64 {
+        10.0
+    }
+    fn needs_objects(&self) -> bool {
+        true
+    }
+    fn steer_target(&self, s: &St) -> Option<[f32; 3]> {
+        s.find(self.goal).map(|g| g.pos)
+    }
+    fn exists_in(&self, s: &St) -> bool {
+        s.zone() == self.zone && s.find(self.racer).is_some_and(Self::pending)
+    }
+    fn kinship(&self) -> u32 {
+        10
+    }
+}
+
+/// Where the race star comes to rest (it spawns at (-7339, -5700, -6774) + 200 up and falls: racing_penguin.inc.c
+/// `cur_obj_spawn_star_at_y_offset`; a replayed star was taken at (-7356, -5725, -6771)).
+const PENGUIN_STAR_REST: [f32; 3] = [-7339.0, -5725.0, -6774.0];
+
+/// `PenguinRace::Star`: the penguin waits at SHOW_FINAL_TEXT after a fair win. From the claim's dialog (read by
+/// `Dialog::Read`) the star spawns a few frames after the last page (FinalTextbox -1, MarioWon still set), and
+/// Mario has to walk the ~600 units to it. Without this the only base that offered `Star::Collect` was a lucky
+/// dense node later on (v5e from the first win route: all 19 attempts at the spawned star started from one
+/// `Tech::SlideKick~d` node, none from the dialog's own end), and a 30 M run with 33 claims got no star.
+/// `Done` when the star is collected.
+struct PenguinStar {
+    racer: ObjId,
+    zone: (u16, u8),
+    star: (i16, u8),
+}
+
+impl PenguinStar {
+    fn pending(r: &Obj) -> bool {
+        r.action == RACING_PENGUIN_ACT_SHOW_FINAL_TEXT && penguin_won(r) && !penguin_cheated(r)
+    }
+
+    /// The star object once spawned (its rest position), else the spot.
+    fn star_pos(&self, s: &St) -> Option<[f32; 3]> {
+        s.objects().iter().find(|o| crate::star::spawned_star(o) && (o.beh_params >> 24) as u8 == self.star.1).map(crate::star::rest_pos)
+    }
+}
+
+impl Objective for PenguinStar {
+    fn kind(&self) -> &'static str {
+        "PenguinRace::Star"
+    }
+    fn key(&self) -> String {
+        format!("PenguinRace::Star {:?} {}", self.zone, self.racer)
+    }
+    fn obj_weight(&self, _b: &St) -> f64 {
+        50.0
+    }
+    fn base_criteria(&self, s: &St) -> bool {
+        s.zone() == self.zone && !s.has_star(self.star.0, self.star.1) && s.find(self.racer).is_some_and(Self::pending)
+    }
+    fn ga_budget(&self) -> Option<obrrt_core::GaBudget> {
+        Some(obrrt_core::GaBudget { population: 8, generations: 3, horizon: 300 })
+    }
+    fn eta(&self, s: &St, _start: &St, _mem: &mut Mem) -> Eta {
+        if s.zone() != self.zone {
+            return Eta::Lost;
+        }
+        if s.has_star(self.star.0, self.star.1) {
+            return Eta::Done;
+        }
+        let Some(r) = s.find(self.racer) else { return Eta::Lost };
+        let star = self.star_pos(s);
+        // The star not out and the win gone (cheated, or used up): nothing left to wait for.
+        if star.is_none() && !Self::pending(r) {
+            return Eta::Lost;
+        }
+        Eta::Frames(frames_for(s.dist(star.unwrap_or(PENGUIN_STAR_REST))))
+    }
+    fn success_value(&self) -> f64 {
+        20.0
+    }
+    fn needs_objects(&self) -> bool {
+        true
+    }
+    fn steer_target(&self, s: &St) -> Option<[f32; 3]> {
+        Some(self.star_pos(s).unwrap_or(PENGUIN_STAR_REST))
+    }
+    fn exists_in(&self, s: &St) -> bool {
+        s.zone() == self.zone && s.find(self.racer).is_some_and(Self::pending)
     }
     fn kinship(&self) -> u32 {
         10
@@ -778,6 +1064,24 @@ const SNOWMAN_SITE_RADIUS: f32 = 300.0;
 /// The body's rolling speed: 10 u/f at the start of action 1, capped at 70
 /// (snowman.inc.c); a rough middle for a slope run.
 const SNOWMAN_BODY_PACE: f32 = 30.0;
+/// The body's speed after it leaves the path: it turns to Mario, caps at 70 and rolls the flat run to the site.
+const SNOWMAN_ROLL_PACE: f32 = 50.0;
+/// ccm_seg7_trajectory_snowman (levels/ccm/areas/1/trajectory.inc.c): the body's own path (action 1).
+const SNOWMAN_PATH: &[[f32; 3]] = &[
+    [2501.0, 2662.0, -975.0], [2533.0, 2560.0, -800.0], [2566.0, 2300.0, -500.0], [2600.0, 1884.0, 733.0],
+    [2466.0, 1647.0, 1835.0], [2000.0, 1483.0, 2233.0], [766.0, 1321.0, 2400.0], [-872.0, 1190.0, 2033.0],
+    [-3072.0, 1097.0, 1300.0], [-3805.0, 882.0, -366.0], [-3758.0, 819.0, -1513.0], [-3145.0, 786.0, -2426.0],
+    [-1658.0, 546.0, -2853.0], [-138.0, 300.0, -3000.0], [1966.0, -192.0, -2800.0], [3066.0, -456.0, -2800.0],
+    [3933.0, -461.0, -2999.0], [4266.0, -188.0, -3433.0], [3901.0, -402.0, -3800.0], [3133.0, -579.0, -3866.0],
+    [2033.0, -855.0, -3800.0], [766.0, -1073.0, -3633.0], [-1100.0, -1142.0, -3744.0], [-2318.0, -1188.0, -3658.0],
+    [-3318.0, -1228.0, -3375.0], [-4010.0, -1267.0, -2802.0], [-4470.0, -1368.0, -2151.0], [-4679.0, -1358.0, -1321.0],
+    [-4770.0, -1333.0, -648.0], [-4847.0, -1351.0, 40.0],
+];
+
+fn snowman_path() -> &'static super::slides::SlidePath {
+    static P: std::sync::OnceLock<super::slides::SlidePath> = std::sync::OnceLock::new();
+    P.get_or_init(|| super::slides::SlidePath::new(SNOWMAN_PATH))
+}
 /// snowmans_bottom_act_2: at oTimer 200 it gives up and respawns.
 const SNOWMAN_GIVE_UP: f64 = 200.0;
 /// `mem` of LeadBody: bit 0 set once the body was seen in action 2, `f[0]`
@@ -816,14 +1120,16 @@ impl Objective for LeadBody {
     fn key(&self) -> String {
         format!("Snowman::LeadBody {:?} {}", self.zone, self.body)
     }
+    /// 100: a 700-frame chain the tree must keep extending; at 15 the cheap `Snowman::WakeBody` (80 of 85
+    /// attempts) took all the attempts (ccm2-j: 5 LeadBody attempts in 12 M frames).
     fn obj_weight(&self, _b: &St) -> f64 {
-        15.0
+        100.0
     }
     fn base_criteria(&self, s: &St) -> bool {
         s.zone() == self.zone && !s.has_star(self.star.0, self.star.1) && s.find(self.body).is_some_and(|o| matches!(o.action, 1 | 2))
     }
     fn ga_budget(&self) -> Option<obrrt_core::GaBudget> {
-        Some(obrrt_core::GaBudget { population: 16, generations: 5, horizon: 400 })
+        Some(obrrt_core::GaBudget { population: 16, generations: 5, horizon: 700 })
     }
     /// `Done` when the body is in action 3 or 4 on a frame after the start
     /// (v1's success). Else the body's roll to within
@@ -852,9 +1158,29 @@ impl Objective for LeadBody {
                 return Eta::Lost;
             }
         }
-        let body = ((dist(o.pos, SNOWMAN_SITE) - SNOWMAN_SITE_RADIUS).max(0.0) / SNOWMAN_BODY_PACE) as f64;
-        let cp = Self::checkpoint(s).map_or(0.0, |c| frames_for(s.dist(c.pos)));
-        Eta::Frames(body + cp)
+        let roll = |from: [f32; 3]| ((dist(from, SNOWMAN_SITE) - SNOWMAN_SITE_RADIUS).max(0.0) / SNOWMAN_ROLL_PACE) as f64;
+        if o.action == 2 {
+            // Rolling straight on the yaw fixed at the path's end (oSnowmansBottomUnkF8, `value`): Mario can't
+            // change it now. It reaches the site only if that line passes within the site's radius ahead of it.
+            let a = (o.value as u16) as f32 * std::f32::consts::TAU / 65536.0;
+            let (dx, dz) = (SNOWMAN_SITE[0] - o.pos[0], SNOWMAN_SITE[2] - o.pos[2]);
+            let (ahead, side) = (dx * a.sin() + dz * a.cos(), (dx * a.cos() - dz * a.sin()).abs());
+            if ahead < 0.0 || side > SNOWMAN_SITE_RADIUS {
+                return Eta::Lost;
+            }
+            return Eta::Frames(roll(o.pos));
+        }
+        // Action 1: the body's path to its end at SNOWMAN_BODY_PACE; at that frame Mario must be (after the
+        // checkpoint, while it is still there) standing in the cone towards the site, which the body then rolls
+        // at (ccm2-i: a state with the checkpoint passed and Mario away from the site when the body reached the
+        // path's end: it rolled straight on, 644 units west of the site, ETA stuck at 11).
+        let end = *SNOWMAN_PATH.last().unwrap();
+        let path = snowman_path().progress(o.pos).remaining as f64 / SNOWMAN_BODY_PACE as f64;
+        let mario = match Self::checkpoint(s) {
+            Some(c) => frames_for(s.dist(c.pos) + dist(c.pos, SNOWMAN_SITE)),
+            None => frames_for(s.dist(SNOWMAN_SITE)),
+        };
+        Eta::Frames(path.max(mario) + roll(end))
     }
     fn success_value(&self) -> f64 {
         15.0
@@ -944,12 +1270,17 @@ pub fn generate_level(b: &St, out: &mut Vec<Arc<dyn Objective>>) {
     }
     for o in b.objects() {
         match o.bhv_name() {
-            "bhvKoopa" if matches!(byte1(o), 2 | 3) && o.action == KTQ_ACT_RACE => {
+            "bhvKoopa" if matches!(byte1(o), 2 | 3) && o.action != KTQ_ACT_AFTER_RACE => {
                 // koopa_the_quick_act_show_init_text: the nearest endpoint.
                 let star = Some((b.course, byte0(o)));
-                if let Some(g) = nearest_bhv(b, "bhvKoopaRaceEndpoint", o.pos)
-                    && star_missing(b, star)
-                {
+                let Some(g) = nearest_bhv(b, "bhvKoopaRaceEndpoint", o.pos) else { continue };
+                if !star_missing(b, star) {
+                    continue;
+                }
+                if g.value == KTQ_WON {
+                    // Won, KtQ still on his way: wait for him (KoopaRace::Await), then KTQ_CLAIM.
+                    out.push(Arc::new(KtqAwait { racer: o.id, goal: g.id, zone: b.zone(), star }));
+                } else if o.action == KTQ_ACT_RACE {
                     out.push(Arc::new(Race { race: RaceKind::Koopa, racer: o.id, goal: g.id, zone: b.zone(), star }));
                 }
             }
@@ -961,6 +1292,27 @@ pub fn generate_level(b: &St, out: &mut Vec<Arc<dyn Objective>>) {
                     && star_missing(b, star)
                 {
                     out.push(Arc::new(Race { race: RaceKind::Penguin, racer: o.id, goal: g.id, zone: b.zone(), star }));
+                    // Won already, the penguin still racing: wait for him at the bottom.
+                    if PenguinAwait::pending(o) {
+                        out.push(Arc::new(PenguinAwait { racer: o.id, goal: g.id, zone: b.zone(), star }));
+                    }
+                }
+            }
+            // Waiting at the bottom after a fair win: the star to walk to once the dialog is read.
+            "bhvRacingPenguin" if o.action == RACING_PENGUIN_ACT_SHOW_FINAL_TEXT && penguin_won(o) && !penguin_cheated(o) => {
+                let star = (b.course, byte0(o));
+                if !b.has_star(star.0, star.1) {
+                    out.push(Arc::new(PenguinStar { racer: o.id, zone: b.zone(), star }));
+                }
+            }
+            // The penguin slamming into the wall at the bottom (FINISH_RACE), the win in hand.
+            "bhvRacingPenguin" if o.action == RACING_PENGUIN_ACT_FINISH_RACE => {
+                let star = Some((b.course, byte0(o)));
+                if let Some(g) = nearest_bhv(b, "bhvPenguinRaceFinishLine", o.pos)
+                    && star_missing(b, star)
+                    && PenguinAwait::pending(o)
+                {
+                    out.push(Arc::new(PenguinAwait { racer: o.id, goal: g.id, zone: b.zone(), star }));
                 }
             }
             "bhvTuxiesMother" if o.action == 0 => {
@@ -1047,6 +1399,8 @@ mod tests {
         let body = |act: i32, x: f32| {
             let mut o = obj("bhvSnowmansBottom", 3, [-1000.0, -1000.0, 1813.0], act, 0);
             o.pos[0] = x;
+            // Rolling west, straight at the site (the heading in `value`, oSnowmansBottomUnkF8).
+            o.value = 0xC000;
             o
         };
         let cp = obj("bhvSnowmansBodyCheckpoint", 4, [-500.0, -1000.0, 1813.0], 0, 0);

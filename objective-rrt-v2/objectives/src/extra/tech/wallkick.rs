@@ -177,6 +177,18 @@ const MAX_GAIN_TJ: f32 = 1150.0;
 /// A marker object this far below its spawn point is a floor top: coins
 /// and the like float a little above the ground.
 const MARKER_DROP: f32 = 120.0;
+/// A star hovers higher over its ledge: CCM's "Wall Kicks Will Work" star
+/// is placed at y -2200 over an ice platform whose top is y -2518 (318 under
+/// it, levels/ccm/areas/1/collision.inc.c, script.c), so with
+/// [`MARKER_DROP`] the success height (-2320) lay above the platform and
+/// the climb could never be met. Stars are placed up to ~400 over their
+/// floor, so a star marker's floor is taken that far down.
+const STAR_DROP: f32 = 380.0;
+
+/// How far under a marker object its floor top is taken to be.
+fn marker_drop(o: &obrrt_core::Obj) -> f32 {
+    if o.bhv_name().contains("Star") { STAR_DROP } else { MARKER_DROP }
+}
 /// How far from b (horizontally) the marker and the success may be.
 const MARKER_RADIUS: f32 = 1500.0;
 const REACH: f32 = 1800.0;
@@ -346,25 +358,25 @@ impl Climb {
             Mode::Tjwk => (MIN_GAIN_TJ, MAX_GAIN_TJ),
             Mode::SideFlip => (MIN_GAIN, MAX_GAIN_SF),
         };
-        let mut marks: Vec<([f32; 3], f32)> = b
+        let mut marks: Vec<([f32; 3], f32, f32)> = b
             .objects()
             .iter()
-            .filter(|o| o.id.home[0] != i32::MIN && Some(o.slot) != b.held_slot)
+            .filter(|o| o.home != [0.0; 3] && Some(o.slot) != b.held_slot)
             .filter_map(|o| {
-                let gain = o.home[1] - MARKER_DROP - b.pos[1];
+                let gain = o.home[1] - marker_drop(o) - b.pos[1];
                 let d = hdist(o.home, b.pos);
-                (gain >= lo && gain <= hi && d >= 100.0 && d <= MARKER_RADIUS).then_some((o.home, d))
+                (gain >= lo && gain <= hi && d >= 100.0 && d <= MARKER_RADIUS).then_some((o.home, d, marker_drop(o)))
             })
             .collect();
         marks.sort_by(|a, b| a.1.total_cmp(&b.1));
         let mut cells: Vec<[i32; 2]> = Vec::new();
-        for (p, _) in marks {
+        for (p, _, drop) in marks {
             let cell = [(p[0] / 400.0).round() as i32, (p[2] / 400.0).round() as i32];
             if cells.contains(&cell) {
                 continue;
             }
             cells.push(cell);
-            let goal_y = p[1] - MARKER_DROP;
+            let goal_y = p[1] - drop;
             out.push(Arc::new(Climb { mode, zone: b.zone(), anchor: b.pos, target: [p[0], goal_y, p[2]], goal_y, marked: true }));
             if cells.len() == PER_B {
                 return;

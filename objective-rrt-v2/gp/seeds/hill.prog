@@ -1,0 +1,43 @@
+; hill::overlay (objectives/src/extra/tech/lakituskip.rs), translated. Points:
+; T0 door, T1 crouch-slide point C, T2 far along the run-up line, T3 slide exit,
+; T4 WEST, T5 behind C on the line. Approximate where the original computes:
+; hill::target's pure pursuit is T5/T1/T2 by distance, the near_line + on_yaw
+; + ahead window is Dist1 + Ang2; dj_ok is Dj0 (37.4 fv - 500 along the motion);
+; kick_plan is dropped (always a jump kick after a rollout).
+(let NORTH (stick world -32768 1))
+(let SHORT (stick world -32768 0.38))
+(let FACE (stick face 0 1))
+(let DOOR (stick T0 0 1))
+(let KICK (if (last A) (pad AB SHORT) (pad A NORTH)))
+(let FAST (gt Fv 55))
+(let APPROACH
+  (pad _ (if (or (gt Fv 50) (lt Z -177)) DOOR
+         (if (lt Dist1 100) (stick T2 0 1)
+         (if (and (lt Dist1 700) (lt Ang1 45)) (stick T1 0 1)
+         (if (lt Dist5 150) (stick T1 0 1)
+             (stick T5 0 1)))))))
+(if (and (act WALKING) (gt Z 4000) (not FAST))
+    (if (and (lt Dist1 31) (lt Ang2 4.2) (gt Fv 30.5)) (pad z FACE) APPROACH)
+(if (and (act CROUCH_SLIDE) (gt Z 4000) (not FAST) (lt Ang2 5.6)) (pad Za FACE)
+(if (and (act LONG_JUMP) (gt Z 4000)) (pad Z FACE)
+(if (and (act LONG_JUMP_LAND) (floor 19)) (pad ABZ FACE)
+(if (and (or (act STEEP_JUMP) (act DIVE)) (gt Z 3500) (not FAST)) (pad ABZ FACE)
+(if (act DIVE_SLIDE)
+    (if (and (gt Ny 0.99) (gt Fv 60)) (pad a FACE) (pad _ (stick T3 0 1)))
+(if (and FAST (act FORWARD_ROLLOUT)) (pad A NORTH)
+(if (and FAST (act JUMP) (lt Z 2500)) (pad A NORTH)
+(if (and FAST (act JUMP_KICK))
+    (if (gt Z 2500) (pad A NORTH)
+    (if (and (lt Dj0 1125) (lt Fv 106)) (pad _ NORTH) (pad A NORTH)))
+(if (and FAST (act SLIDE_KICK)) (pad _ NORTH)
+(if (and FAST (act SLIDE_KICK_SLIDE)) (pad a NORTH)
+(if (and FAST (act CROUCH_SLIDE)) (pad ZB NORTH)
+(if (act DOUBLE_JUMP) (pad A DOOR)
+(if (and FAST (act FREEFALL_LAND_STOP) (gt Z -177) (lt Z 2500) (not (last A))) (pad A NORTH)
+(if (and FAST (or (act FREEFALL_LAND_STOP) (act PUNCHING) (act MOVE_PUNCHING)) (gt Z -177)) KICK
+(if (and FAST (act FREEFALL_LAND) (gt Z -177))
+    (if (gt Z 2500)
+        (if (gt InAct 3.5) (if (lt Ny 0.8) KICK (pad Z NORTH)) (pad A NORTH))
+        (if (and (lt Dj0 1125) (lt Fv 106)) (pad a NORTH)
+        (if (and (gt InAct 3.5) (gt Z 300)) (pad Z NORTH) (pad _ NORTH))))
+    APPROACH))))))))))))))))

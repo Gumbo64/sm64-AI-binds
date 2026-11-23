@@ -8,7 +8,12 @@ edition.workspace = true
 name = "oss2"
 path = "src/bin/oss2.rs"
 
+[features]
+# OSS_POLICY_SEED=1: the reactive policy inventory seeds the route GA (off by default; obrrt-policy depends on obrrt-search, never the reverse).
+policy-seed = ["dep:obrrt-policy"]
+
 [dependencies]
+obrrt-policy = { path = "../policy", features = ["ga"], optional = true }
 anyhow.workspace = true
 lz4_flex.workspace = true
 rand.workspace = true

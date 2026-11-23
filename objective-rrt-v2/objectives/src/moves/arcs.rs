@@ -1464,7 +1464,7 @@ mod tests {
             floor_obj: None,
             floor_obj_vy: None,
             floor_obj_y: None,
-            action_timer: 0,
+            action_timer: 0, cap_timer: 0,
             wall_normal: None,
             course_stars: [0; 25],
             save_flags: 0,

@@ -1,0 +1,27 @@
+[package]
+name = "obrrt-gp"
+description = "Koza-style genetic programming of Mario movement controllers: typed if-trees over game state, evaluated over several start states."
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "gp"
+path = "src/bin/gp.rs"
+
+[[bin]]
+name = "gabase"
+path = "src/bin/gabase.rs"
+required-features = ["ga"]
+
+[features]
+# The open-loop GA baseline (gabase): obrrt-search is off by default so gp keeps
+# building whatever state search/ is in.
+ga = ["dep:obrrt-search"]
+
+[dependencies]
+anyhow.workspace = true
+rand.workspace = true
+sm64-binds.workspace = true
+obrrt-core.workspace = true
+obrrt-objectives.workspace = true
+obrrt-search = { workspace = true, optional = true }

@@ -323,7 +323,7 @@ fn miss_record(cs: &St, node: u32, owner: &str, clause: &str) -> Value {
     let along = [cs.pos[0] - DUMP_R * r.sin(), cs.pos[1], cs.pos[2] - DUMP_R * r.cos()];
     // A vertex within DUMP_R of either point, or either point over it.
     let near = |v: &[[f32; 3]; 3]| {
-        let t = obrrt_core::geo::Tri { v: *v, n: [0.0, 1.0, 0.0], kind: 0 };
+        let t = obrrt_core::geo::Tri { v: *v, n: [0.0, 1.0, 0.0], kind: 0, room: 0 };
         v.iter().any(|p| [cs.pos, along].iter().any(|c| (p[0] - c[0]).hypot(p[2] - c[2]) <= DUMP_R && (p[1] - c[1]).abs() <= 2.0 * DUMP_R))
             || [cs.pos, along].iter().any(|c| super::scan::inside_xz_pub(&t, c[0], c[2]) && v.iter().any(|p| (p[1] - c[1]).abs() <= 2.0 * DUMP_R))
     };

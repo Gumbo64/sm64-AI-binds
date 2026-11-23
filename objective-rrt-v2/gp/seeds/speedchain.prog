@@ -1,0 +1,17 @@
+; Tech::SpeedChain's overlay (objectives/src/extra/tech/speedchain.rs), with
+; the genome's stick replaced by "at the target".
+(let T (stick T0 0 1))
+(let KICK (if (last A) (pad AB (stick T0 0 0.38)) (pad A T)))
+(if (or (lt Fv 55) (lt Dist0 900))
+    (pad _ T)
+    (if (act DIVE_SLIDE) (if (gt Ny 0.99) (pad a T) (pad _ T))
+    (if (or (act FORWARD_ROLLOUT) (act JUMP_KICK)) (pad A T)
+    (if (act SLIDE_KICK) (pad _ T)
+    (if (act SLIDE_KICK_SLIDE) (pad a T)
+    (if (act CROUCH_SLIDE) (pad ZB T)
+    (if (or (act FREEFALL_LAND_STOP) (act PUNCHING) (act MOVE_PUNCHING)) KICK
+    (if (act FREEFALL_LAND)
+        (if (gt InAct 3.5)
+            (if (lt Ny 0.8) KICK (pad Z T))
+            (pad A T))
+        (pad _ T)))))))))

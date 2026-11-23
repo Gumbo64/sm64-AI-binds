@@ -47,7 +47,7 @@ pub struct DynSurf {
 
 impl DynSurf {
     pub fn tri(&self) -> Tri {
-        Tri { v: self.v.map(|p| p.map(|c| c as f32)), n: self.n, kind: self.kind }
+        Tri { v: self.v.map(|p| p.map(|c| c as f32)), n: self.n, kind: self.kind, room: 0 }
     }
 }
 

@@ -1,8 +1,9 @@
 [workspace]
 resolver = "3"
-members = ["core", "search", "objectives", "run", "pyenv", "oss2", "spec"]
+members = ["core", "search", "objectives", "run", "pyenv", "oss2", "spec", "gp", "policy", "agent"]
 # oss2 (scattershot v2) is built with `-p oss2`; plain `cargo build` leaves it out.
 # spec (declarative JSON objectives, OBRRT_SPEC; tools/spec/) is built with `-p obrrt-spec`.
+# agent (`ar`, agent-driven routes; agent/README.md) is built with `-p obrrt-agent`.
 # pyenv is a Python extension (maturin); plain `cargo build` leaves it out.
 default-members = ["core", "search", "objectives", "run"]
 

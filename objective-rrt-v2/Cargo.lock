@@ -973,6 +973,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "keccak"
+version = "0.1.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cb26cec98cce3a3d96cbb7bced3c4b16e3d13f27ec56dbd62cbc8f39cfb9d653"
+dependencies = [
+ "cpufeatures",
+]
+
+[[package]]
 name = "leb128"
 version = "0.2.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1056,6 +1065,17 @@ checksum = "c60a23ffb90d527e23192f1246b14746e2f7f071cb84476dd879071696c18a4a"
 dependencies = [
  "crc",
  "sha2",
+]
+
+[[package]]
+name = "lzma-sys"
+version = "0.1.20"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5fda04ab3764e6cde78b9974eec4f779acaba7c4e84b36eca3cf77c581b85d27"
+dependencies = [
+ "cc",
+ "libc",
+ "pkg-config",
 ]
 
 [[package]]
@@ -1290,10 +1310,39 @@ dependencies = [
 ]
 
 [[package]]
+name = "obrrt-agent"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "lz4_flex",
+ "obrrt-core",
+ "obrrt-objectives",
+ "obrrt-search",
+ "obrrt-spec",
+ "rand",
+ "rayon",
+ "serde",
+ "serde_json",
+ "sm64-binds",
+]
+
+[[package]]
 name = "obrrt-core"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "rand",
+ "sm64-binds",
+]
+
+[[package]]
+name = "obrrt-gp"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "obrrt-core",
+ "obrrt-objectives",
+ "obrrt-search",
  "rand",
  "sm64-binds",
 ]
@@ -1305,6 +1354,21 @@ dependencies = [
  "obrrt-core",
  "rand",
  "serde_json",
+]
+
+[[package]]
+name = "obrrt-policy"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "obrrt-core",
+ "obrrt-gp",
+ "obrrt-objectives",
+ "obrrt-search",
+ "rand",
+ "serde",
+ "serde_json",
+ "sm64-binds",
 ]
 
 [[package]]
@@ -1329,11 +1393,13 @@ dependencies = [
  "lz4_flex",
  "objective-scattershot",
  "obrrt-core",
+ "obrrt-objectives",
  "rand",
  "rayon",
  "serde",
  "serde_json",
  "sm64-binds",
+ "sm64pow",
 ]
 
 [[package]]
@@ -1347,6 +1413,7 @@ dependencies = [
  "obrrt-search",
  "rand",
  "rayon",
+ "serde",
  "serde_json",
  "sm64-binds",
 ]
@@ -1366,6 +1433,7 @@ dependencies = [
  "objective-scattershot",
  "obrrt-core",
  "obrrt-objectives",
+ "obrrt-policy",
  "obrrt-search",
  "obrrt-spec",
  "rand",
@@ -1984,6 +2052,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "sha3"
+version = "0.10.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "77fd7028345d415a4034cf8777cd4f8ab1851274233b45f84e3d955502d93874"
+dependencies = [
+ "digest",
+ "keccak",
+]
+
+[[package]]
 name = "shared-buffer"
 version = "0.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2062,7 +2140,9 @@ checksum = "826167069c09b99d56f31e9ae5c99049e932a98c9dc2dac47645b08dbbf76ba7"
 
 [[package]]
 name = "sm64-binds"
-version = "2.0.1"
+version = "2.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "515dc6490cce3941cd447ff95923f8859e43b71d8e3b3fcef5162bf95f78b2cc"
 dependencies = [
  "anyhow",
  "flate2",
@@ -2092,6 +2172,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "sm64coin-perturb"
+version = "0.1.0"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "sm64env"
 version = "0.1.0"
 dependencies = [
@@ -2100,10 +2187,24 @@ dependencies = [
  "obrrt-core",
  "obrrt-objectives",
  "obrrt-search",
+ "obrrt-spec",
  "pyo3",
  "rand",
  "rayon",
+ "serde_json",
  "sm64-binds",
+]
+
+[[package]]
+name = "sm64pow"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "serde",
+ "sha3",
+ "sm64-binds",
+ "sm64coin-perturb",
+ "xz2",
 ]
 
 [[package]]
@@ -2712,6 +2813,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "550a2b930b62486a393c52d5c3b84bff264b28aa437ed64694d31e93b1757af7"
 
 [[package]]
+name = "xz2"
+version = "0.1.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "388c44dc09d76f1536602ead6d325eb532f5c122f17782bd57fb47baeeb767e2"
+dependencies = [
+ "lzma-sys",
+]
+
+[[package]]
 name = "zerocopy"
 version = "0.8.63"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2829,3 +2939,7 @@ dependencies = [
  "cc",
  "pkg-config",
 ]
+
+[[patch.unused]]
+name = "sm64-binds"
+version = "2.3.0"

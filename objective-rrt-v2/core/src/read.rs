@@ -80,7 +80,10 @@ pub fn check_layout(game: &SM64Game) -> Result<()> {
         }
         let pos = m.vec3(MARIO + MARIO_pos);
         let opos = m.vec3(obj + OBJ_oPosX);
-        if crate::dist(pos, opos) > 1.0 {
+        // Far apart, not equal: Mario's object can lag his state by a frame (t1 step 578, BBH: 45 units apart
+        // at boot, and the campaign stopped). Wrong offsets give unrelated values; the pool and behaviour
+        // checks above are the strong ones.
+        if crate::dist(pos, opos) > 500.0 {
             bail!("Mario's position {pos:?} and his object's {opos:?} differ: object field offsets are wrong");
         }
         Ok(())
@@ -151,6 +154,7 @@ pub fn read_state(game: &SM64Game, frame: u32, objects: bool) -> St {
             floor_obj_vy: floor_obj.map(|o| m.f32(o + OBJ_oVelY)),
             floor_obj_y: floor_obj.map(|o| m.f32(o + OBJ_oPosY)),
             action_timer: m.i16(MARIO + MARIO_actionTimer) as u16,
+            cap_timer: m.i16(MARIO + MARIO_capTimer) as u16,
             wall_normal: m.surface(MARIO + MARIO_wall).map(|w| m.vec3(w + SURFACE_normal)),
             course_stars: m.bytes(ADDR_gSaveBuffer as usize + save_file * SAVE_FILE_STRIDE + SAVE_FILE_COURSE_STARS),
             save_flags: flags,
@@ -159,6 +163,8 @@ pub fn read_state(game: &SM64Game, frame: u32, objects: bool) -> St {
         if objects {
             // Objectives' static-floor probes (off unless one asked).
             crate::geo::observe_floors(m.0, &st);
+            // OBRRT_GEO: the walkable mesh of this area, built once.
+            crate::geo::observe(m.0, &st);
             // OBRRT_BLJ_SCAN_OBJECTS: the object collision near Mario.
             if crate::dyngeo::on() {
                 crate::dyngeo::attach(&st, crate::dyngeo::read(m.0, st.pos));
@@ -167,6 +173,27 @@ pub fn read_state(game: &SM64Game, frame: u32, objects: bool) -> St {
         st
     })
 }
+
+fn static_id() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("OBRRT_STATIC_ID").is_ok_and(|v| v == "1"))
+}
+
+/// Behaviours without SET_HOME whose objects stay where the level put them.
+const STATIC_BHV: [&str; 12] = [
+    "bhvStar",
+    "bhvRedCoin",
+    "bhvYellowCoin",
+    "bhvOneCoin",
+    "bhvHiddenBlueCoin",
+    "bhvHiddenStar",
+    "bhvHiddenStarTrigger",
+    "bhvHiddenRedCoinStar",
+    "bhvBowserCourseRedCoinStar",
+    "bhvWarp",
+    "bhvFadingWarp",
+    "bhvWarpPipe",
+];
 
 fn read_objects(m: &Mem) -> Vec<Obj> {
     let mario_obj = m.u32(MARIO + MARIO_marioObj) as usize;
@@ -184,7 +211,28 @@ fn read_objects(m: &Mem) -> Vec<Obj> {
             // share an id. Those are told apart by pool slot (stable while the
             // level stays loaded; objects spawn in the same order).
             let rounded = home.map(|v| v.round() as i32);
-            let id_home = if rounded == [0, 0, 0] { [i32::MIN, i as i32, 0] } else { rounded };
+            // OBRRT_STATIC_ID=1: the ones that never move (stars, coins
+            // placed by the level, secrets, warps) are told apart by position
+            // instead. The slot differs by the way an area was entered (SSL's
+            // pyramid in campaign t1 step 153: the star inside was
+            // `bhvStar@-2147483648,<slot>,0` under 11 slots, 11 goals for one
+            // star, each with its own cells, wear and checkpoints).
+            // A spawned star (Toad's, MIPS's, a box's) takes its home from where
+            // Mario stands as it appears (sparkle_spawn_star.inc.c): its id was
+            // a new one for every such place. The castle tree zt-totwc-1 of
+            // 2026-11-10 had all twelve of its goals on Toad's one star
+            // (`bhvSpawnedStarNoLevelExit@1740,-1131,-1918`, `...-2026`, ...),
+            // 332 collections, 38.5% of its frames, and the goal it was sent
+            // for (`Zone::Go`, a lower weight) off the list. By its star number.
+            let id_home = if static_id() && matches!(bhv_name(bhv), Some("bhvSpawnedStar" | "bhvSpawnedStarNoLevelExit")) {
+                [i32::MIN, -1 - (m.u32(o + OBJ_oBehParams) >> 24) as i32, 0]
+            } else if rounded != [0, 0, 0] {
+                rounded
+            } else if static_id() && STATIC_BHV.contains(&bhv_name(bhv).unwrap_or("")) {
+                m.vec3(o + OBJ_oPosX).map(|v| v.round() as i32)
+            } else {
+                [i32::MIN, i as i32, 0]
+            };
             Some(Obj {
                 id: crate::ObjId { bhv, home: id_home },
                 slot: i as u16,
@@ -195,7 +243,41 @@ fn read_objects(m: &Mem) -> Vec<Obj> {
                 interact_status: m.u32(o + OBJ_oInteractStatus),
                 action: m.i32(o + OBJ_oAction),
                 health: m.i32(o + OBJ_oHealth),
-                value: m.i32(o + OBJ_oDamageOrCoinValue),
+                // A coin formation (bhvCoinFormation) has no coin value: its `value` is the
+                // coins it would still spawn, from its collected-coin bits (oCoinUnkF4 at 0xF4,
+                // coin.inc.c): 5 for a line (types 0, 1), 8 for a ring or an arrow. They are
+                // unspawned until Mario is within 2000 units, and the 100-coin macro counts
+                // them (twostar.rs `coin_sources`).
+                value: if bhv_name(bhv) == Some("bhvCoinFormation") {
+                    let n = if (m.u32(o + OBJ_oBehParams) >> 16) & 7 < 2 { 5 } else { 8 };
+                    let got = m.u32(o + 0xF4) & 0xFF;
+                    (0..n).filter(|b| got & (1 << b) == 0).count() as i32
+                } else if bhv_name(bhv) == Some("bhvKoopaRaceEndpoint") {
+                    // The race's outcome (koopa.inc.c bhv_koopa_race_endpoint_update): 10 once the race has
+                    // ended (oKoopaRaceEndpointRaceEnded, 0x104) plus oKoopaRaceEndpointRaceStatus (0xFC: 1 Mario
+                    // won, -1 he was shot from a cannon, back to 0 when the star spawns). 11: won, star to come.
+                    if m.i32(o + 0x104) != 0 { 10 + m.i32(o + 0xFC) } else { m.i32(o + 0xFC) }
+                } else if bhv_name(bhv) == Some("bhvSnowmansBottom") {
+                    // The heading it rolls on (oSnowmansBottomUnkF8, 0xF8, snowman.inc.c): the path's target yaw in
+                    // action 1; in action 2 the yaw fixed at the path's end (towards Mario if he passed the
+                    // checkpoint and stood within 0x2000 of the roll's heading, else straight on).
+                    m.i32(o + 0xF8)
+                } else if bhv_name(bhv) == Some("bhvSwingPlatform") {
+                    // The pendulum's roll (oFaceAngleRoll, 0xD8; swing_platform.inc.c): +-0x2000 over a
+                    // 256-frame period, so the objective can time the crossing.
+                    m.i32(o + 0xD8)
+                } else if bhv_name(bhv) == Some("bhvMrI") {
+                    // Mr. I's turn so far in one direction (oMrIUnkFC, 0xFC, mr_i.inc.c mr_i_act_2): at
+                    // 0x10000 he dies. Reset to 0 whenever his yaw pauses or reverses.
+                    m.i32(o + 0xFC)
+                } else if bhv_name(bhv) == Some("bhvDDDPole") {
+                    // DDD's sliding poles (ddd_pole.inc.c): the sign is oDDDPoleVel's (0xF4, 10 or -10), the
+                    // magnitude oTimer + 1 capped at 31 (it moves only once oTimer > 20).
+                    let sign = if m.f32(o + 0xF4) < 0.0 { -1 } else { 1 };
+                    sign * (m.i32(o + OBJ_oTimer).clamp(0, 30) + 1)
+                } else {
+                    m.i32(o + OBJ_oDamageOrCoinValue)
+                },
                 loot_coins: m.i32(o + OBJ_oNumLootCoins),
                 beh_params: m.u32(o + OBJ_oBehParams),
                 held_state: m.u32(o + OBJ_oHeldState),

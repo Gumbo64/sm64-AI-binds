@@ -144,6 +144,13 @@ pub fn generate(b: &St, o: &Obj, out: &mut Vec<Arc<dyn Objective>>) {
     if spec.travel.is_some() {
         out.push(Arc::new(Ride { ident, zone, spec }));
     }
+    // Off: the star was not had from the gap (zt-wdwdrop-1: WdwDrop::Gap 21%, Star::Collect 0 of 251 after it).
+    if false && o.bhv_name() == "bhvWdwExpressElevator" && b.level as u32 == LEVEL_WDW && !b.has_star(11, 3) {
+        out.push(Arc::new(WdwDrop { zone }));
+    }
+    if o.bhv_name() == "bhvWdwExpressElevator" && b.level as u32 == LEVEL_WDW && !b.has_star(11, 3) {
+        out.push(Arc::new(WdwRide { zone }));
+    }
 }
 
 fn on(spec: &Spec, s: &St, o: &Obj) -> bool {
@@ -282,5 +289,239 @@ impl Objective for Ride {
     }
     fn exists_in(&self, s: &St) -> bool {
         self.plat(s).is_some()
+    }
+}
+
+
+/// `WdwDrop::Gap` (WDW's 4th star, "Express Elevator--Hurry Up!"): send the express elevator down and be back at the
+/// top while it is away. The star (890, 3400, -2040) is in a cage at the top of the elevator's shaft
+/// (wdw/script.c: the cage, bhvWdwExpressElevatorPlatform, at (1024, 3277, -2112); the elevator at (1024, 3277,
+/// -1663)); the elevator in its home blocks the way in. Standing on it starts it: down 20/frame for 132 frames, a
+/// 110-frame wait, back up at 10/frame (express_elevator.inc.c), about 500 frames with the shaft open. Done: the
+/// elevator 300 or more below its home and Mario alive, above it by 300 or more (not riding it down); then
+/// `Star::Collect`, a few frames away, takes over. Three t1 trees (steps 211, 365, 366; 1.2 B frames) stood on the
+/// cage roof 184 above the star ("ETA 6") and never got in.
+pub struct WdwDrop {
+    zone: (u16, u8),
+}
+
+fn express(s: &St) -> Option<&Obj> {
+    s.objects().iter().find(|o| o.bhv_name() == "bhvWdwExpressElevator")
+}
+
+impl Objective for WdwDrop {
+    fn kind(&self) -> &'static str {
+        "WdwDrop::Gap"
+    }
+    fn key(&self) -> String {
+        "WdwDrop".into()
+    }
+    /// A goal (over OBRRT_GOAL_MIN 20): the course's star depends on it.
+    fn obj_weight(&self, _b: &St) -> f64 {
+        30.0
+    }
+    fn base_criteria(&self, s: &St) -> bool {
+        s.zone() == self.zone && !s.has_star(11, 3) && express(s).is_some_and(|o| o.action == 0)
+    }
+    fn exists_in(&self, s: &St) -> bool {
+        s.zone() == self.zone && !s.has_star(11, 3) && express(s).is_some()
+    }
+    fn ga_budget(&self) -> Option<obrrt_core::GaBudget> {
+        Some(obrrt_core::GaBudget { population: 16, generations: 5, horizon: 300 })
+    }
+    fn needs_objects(&self) -> bool {
+        true
+    }
+    fn eta(&self, s: &St, _start: &St, _mem: &mut Mem) -> Eta {
+        if s.zone() != self.zone || !s.alive() {
+            return Eta::Lost;
+        }
+        let Some(o) = express(s) else { return Eta::Lost };
+        let low = o.home[1] - o.pos[1];
+        if low >= 300.0 {
+            // Riding it down is no use: the way in is at the top.
+            return if s.pos[1] >= o.pos[1] + 300.0 { Eta::Done } else { Eta::Lost };
+        }
+        if o.action == 0 {
+            // Get onto it.
+            return Eta::Frames(frames_for(dist(s.pos, o.pos)) + 20.0);
+        }
+        // Moving down with Mario on it: off and up again before it is 300 down.
+        Eta::Frames(((300.0 - low) / 20.0).max(1.0) as f64)
+    }
+    fn success_value(&self) -> f64 {
+        3.0
+    }
+    fn steer_target(&self, s: &St) -> Option<[f32; 3]> {
+        express(s).map(|o| if o.action == 0 { o.pos } else { o.home })
+    }
+}
+
+
+/// The wire cage around WDW's express elevator (levels/wdw/areas/1/collision.inc.c, SURFACE_WALL_MISC): x 640..1178,
+/// z -2175..-1279, roofed at 3523; its west, north and south sides end at y 2304, its east side (x 1178) goes down to
+/// 404. The elevator (bhvWdwExpressElevator, collision x -357..512, z -64..384, top 51 from its origin at (1024,
+/// 3277, -1663)) reaches through that east wall: x 667..1536.
+const CAGE_X: [f32; 2] = [640.0, 1178.0];
+const CAGE_Z: [f32; 2] = [-2175.0, -1279.0];
+const LIFT_TOP: f32 = 51.0;
+const CAGE_ROOF: f32 = 3500.0;
+/// express_elevator.inc.c: down 20/frame for 133 frames, a 110-frame wait, up at 10/frame to its home.
+const LIFT_DOWN: f32 = 20.0 * 133.0;
+const LIFT_WAIT: f64 = 110.0;
+/// Frames for a leg of the climb: flat at the reference pace, up at ~8 u/frame (wall kicks, swimming), down fast.
+fn leg(p: [f32; 3], w: [f32; 3]) -> f64 {
+    let h = ((p[0] - w[0]).powi(2) + (p[2] - w[2]).powi(2)).sqrt();
+    frames_for(h) + ((w[1] - p[1]).max(0.0) / 8.0) as f64 + ((p[1] - w[1]).max(0.0) / 40.0) as f64
+}
+
+/// `WdwRide::Cage` (WDW's 4th star, "Express Elevator--Hurry Up!"): the star (890, 3400, -2040) is inside the cage
+/// at the top of the shaft, beside the elevator's home. Stand on the elevator's part outside the cage (east of x
+/// 1178) to send it down, ride it down, step off at the bottom, go round the end of the east wall (the other sides
+/// are open below 2304) and be on its part inside the cage before it rises: it carries Mario back up into the cage.
+/// Done inside the cage at the top; `Star::Collect` takes over. v2 (this one) from the collision of the tower round
+/// the shaft (levels/wdw/areas/1/collision.inc.c): it is hollow, its floor at y 205 and its walls up to 2304 (the
+/// wire cage above them, to 3523/3584, is closed too), and the only way in is a door at its east foot (the tunnel
+/// x 1178..1280, z -1479..-1279, y 205..404). The elevator's lowest top (668) is ~460 above the floor, its north
+/// half (z < -1727) is open to the platform above, so the trip is: ride down on the outside part, walk in by the
+/// door (with the water under the floor: `WdwWater::Lower`; swimming doesn't fit, wall radius 110 > 100), get up
+/// the shaft's north side (wall kicks) on to the elevator's top while it waits (110 frames) or rises, ride up. v1
+/// pruned every state below the elevator's top - 250 as Lost, which is exactly the states the climb needs;
+/// `swim_route` gives the waypoints and the ETA counts climbs at ~8 u/frame. WdwDrop (in from the top while the
+/// elevator is down) /// failed: the cage is roofed.
+pub struct WdwRide {
+    zone: (u16, u8),
+}
+
+fn in_cage(p: [f32; 3]) -> bool {
+    (CAGE_X[0]..CAGE_X[1]).contains(&p[0]) && (CAGE_Z[0]..CAGE_Z[1]).contains(&p[2])
+}
+
+impl WdwRide {
+    /// Frames until the elevator is home again (0 at home).
+    fn to_home(o: &Obj) -> f64 {
+        let up = ((o.home[1] - o.pos[1]) / 10.0).max(0.0) as f64;
+        match o.action {
+            1 => ((o.pos[1] - (o.home[1] - LIFT_DOWN)) / 20.0).max(0.0) as f64 + LIFT_WAIT + (LIFT_DOWN / 10.0) as f64,
+            2 => LIFT_WAIT + up,
+            3 => up,
+            _ => 0.0,
+        }
+    }
+    /// Where to stand on it: its outside part (x 1400) at home, its inside part (x 900) while it is away.
+    fn spot(o: &Obj, inside: bool) -> [f32; 3] {
+        [if inside { 900.0 } else { 1400.0 }, o.pos[1] + LIFT_TOP, o.home[2] + 160.0]
+    }
+    /// The elevator down and Mario below its top or on its outside part: the waypoints from `s` to its inside part. The tower's walls (levels/wdw/areas/1/collision.inc.c) run from the shaft's
+    /// floor (y 205) up to 2304 (the wire cage above, to 3523); the one way in is a door at its east side, the
+    /// tunnel x 1178..1280, z -1479..-1279, y 205..404, at the foot of the elevator's east end (which hangs
+    /// outside the wall at the top). Inside, the elevator (z -1727..-1279) covers the shaft's south half: up
+    /// the north half (z < -1727, under the static platform), then over its top.
+    fn swim_route(s: &St, o: &Obj) -> Vec<[f32; 3]> {
+        let top = o.pos[1] + LIFT_TOP;
+        let door_out = [1340.0, 250.0, -1380.0];
+        let door_in = [1100.0, 250.0, -1380.0];
+        let north = [900.0, 250.0, -1950.0];
+        let up = [900.0, top + 60.0, -1950.0];
+        if s.pos[0] > 1300.0 {
+            vec![door_out, door_in, north, up]
+        } else if s.pos[0] > CAGE_X[1] + 20.0 {
+            vec![door_in, north, up]
+        } else if s.pos[1] < top - 20.0 && s.pos[2] > o.home[2] - 64.0 {
+            vec![north, up]
+        } else if s.pos[1] < top - 20.0 {
+            vec![up]
+        } else {
+            vec![]
+        }
+    }
+    fn on_inside(s: &St, o: &Obj) -> bool {
+        in_cage(s.pos) && s.pos[2] > o.home[2] - 64.0 && (s.pos[1] - (o.pos[1] + LIFT_TOP)).abs() < 40.0
+    }
+}
+
+impl Objective for WdwRide {
+    fn kind(&self) -> &'static str {
+        "WdwRide::Cage"
+    }
+    fn key(&self) -> String {
+        "WdwRide".into()
+    }
+    /// A goal (over OBRRT_GOAL_MIN 20): the course's star depends on it.
+    fn obj_weight(&self, _b: &St) -> f64 {
+        30.0
+    }
+    fn base_criteria(&self, s: &St) -> bool {
+        s.zone() == self.zone
+            && !s.has_star(11, 3)
+            && express(s).is_some()
+            && !(in_cage(s.pos) && s.pos[1] > 3200.0 && s.pos[1] < CAGE_ROOF)
+    }
+    fn exists_in(&self, s: &St) -> bool {
+        s.zone() == self.zone && !s.has_star(11, 3) && express(s).is_some()
+    }
+    fn ga_budget(&self) -> Option<obrrt_core::GaBudget> {
+        Some(obrrt_core::GaBudget { population: 16, generations: 5, horizon: 300 })
+    }
+    fn needs_objects(&self) -> bool {
+        true
+    }
+    fn eta(&self, s: &St, _start: &St, _mem: &mut Mem) -> Eta {
+        if s.zone() != self.zone || !s.alive() {
+            return Eta::Lost;
+        }
+        let Some(o) = express(s) else { return Eta::Lost };
+        // Under the cage's roof (3523; the trees often stood on it, 184 above the star).
+        if in_cage(s.pos) && s.pos[1] > o.home[1] - 20.0 && s.pos[1] < CAGE_ROOF {
+            return Eta::Done;
+        }
+        let home = o.action == 0 || o.action == 4 || o.home[1] - o.pos[1] < 1.0;
+        if home {
+            // Onto its outside part; then the whole trip.
+            let t = Self::spot(o, false);
+            // Walking distance when the mesh has it (OBRRT_GEO=1): the straight line led the water-raised trees to
+            // the water surface right under the elevator (y 2736, 600 below its top: w3 test).
+            let d = obrrt_core::geo::path_dist(s.zone(), s.pos, t).unwrap_or_else(|| dist(s.pos, t));
+            return Eta::Frames(frames_for(d) + (LIFT_DOWN / 20.0) as f64 + LIFT_WAIT + (LIFT_DOWN / 10.0) as f64);
+        }
+        if Self::on_inside(s, o) {
+            return Eta::Frames(Self::to_home(o).max(1.0));
+        }
+        // To its inside part, at its height round the south end of the east wall (which ends at the elevator's
+        // south edge, z -1279) when outside it.
+        let t = Self::spot(o, true);
+        let top = o.pos[1] + LIFT_TOP;
+        let low = s.pos[1] < top - 20.0 || (s.pos[0] > CAGE_X[1] && s.pos[1] < top + 100.0);
+        let d = if low {
+            // Below its top (or on its outside part): in by the door at the shaft's foot and up the shaft (see
+            // [`Self::swim_route`]); climbs cost more than flat ground.
+            let mut d = 0.0;
+            let mut p = s.pos;
+            for w in Self::swim_route(s, o).into_iter().chain([t]) {
+                d += leg(p, w);
+                p = w;
+            }
+            d
+        } else {
+            leg(s.pos, t)
+        };
+        Eta::Frames(d.max(0.0) + Self::to_home(o))
+    }
+    fn success_value(&self) -> f64 {
+        5.0
+    }
+    fn steer_target(&self, s: &St) -> Option<[f32; 3]> {
+        let o = express(s)?;
+        if o.action == 0 || o.action == 4 {
+            let t = Self::spot(o, false);
+            // A waypoint along the walk there (OBRRT_GEO=1), else the spot itself.
+            return Some(obrrt_core::geo::waypoint(s.zone(), s.pos, t, 300.0).unwrap_or(t));
+        }
+        let t = Self::spot(o, true);
+        let top = o.pos[1] + LIFT_TOP;
+        if s.pos[1] < top - 20.0 || (s.pos[0] > CAGE_X[1] && s.pos[1] < top + 100.0) {
+            return Some(Self::swim_route(s, o).first().copied().unwrap_or(t));
+        }
+        Some(t)
     }
 }

@@ -1,0 +1,19 @@
+{
+ "Boss::Hit": 233.4,
+ "Cannon::Enter": 158.8,
+ "CapSwitch::Press": 244.8,
+ "Chest::Open": 143.6,
+ "Heart::Spin": 126.1,
+ "Mission::ReachBox": 83.2,
+ "Mission::ReachStar": 133.6,
+ "Object::Grab": 230.6,
+ "OneUp::Collect": 137.1,
+ "Painting::Enter": 301.9,
+ "Pole::Climb": 369.8,
+ "Post::Circle": 350.2,
+ "PurpleSwitch::Press": 177.6,
+ "Tech::HyperClimb": 76.2,
+ "WallKick::Chain": 90.0,
+ "Whomp::GroundPound": 261.9,
+ "WhompKing::Pound": 607.9
+}

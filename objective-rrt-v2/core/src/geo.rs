@@ -36,10 +36,16 @@ use crate::{St, dist};
 pub const CELL: f32 = 100.0;
 /// Highest rise one edge may climb (about a double jump).
 pub const JUMP: f32 = 300.0;
+/// Highest rise of a BBH ledge climb (a wall kick up to a ledge grab: the lobby's 414 to 819 at (982, 400), the
+/// first floor's 325 to 819 at (-300, -1400)): the edge limit of the climb mesh of [`climb_zone`].
+pub const LEDGE_JUMP: f32 = 520.0;
 /// Extra cost of a rise steeper than a walkable slope (a jump).
 const JUMP_COST: f32 = 150.0;
 /// Cost multiplier of climbing on a steep floor.
 const STEEP_FACTOR: f32 = 3.0;
+/// BBH's rooms 1 to 13 (the lobby, wings, library, basement and outside);
+/// 14 is the stairs joining rooms 1 and 2 and 15 to 32 are doorways.
+const REAL_ROOMS: i8 = 13;
 /// Added to the straight distance where the target can't be walked to.
 const UNREACHABLE: f32 = 20000.0;
 /// Added to the straight distance where Mario is over no floor (a pit,
@@ -51,7 +57,9 @@ const LOCATE_RINGS: i32 = 8;
 const HALF: i32 = 84;
 const SIDE: i32 = 2 * HALF + 1;
 /// Bytes of fields kept per mesh before its cache is cleared.
-const FIELD_BYTES: usize = 64 << 20;
+// 64 MB cleared every few hundred calls once v4m's objectives asked for walking distances to many targets (t1 step
+// 696, SL: 37 k frames/s, planning 60% of the time, 5 of 16 cores busy; step 695: 222 k).
+const FIELD_BYTES: usize = 1 << 30;
 
 static ENABLED: AtomicBool = AtomicBool::new(false);
 
@@ -81,6 +89,7 @@ pub fn steer_enabled() -> bool {
 struct Node {
     pos: [f32; 3],
     steep: bool,
+    room: i8,
 }
 
 /// One area's navigation graph.
@@ -112,6 +121,10 @@ pub struct Tri {
     pub v: [[f32; 3]; 3],
     pub n: [f32; 3],
     pub kind: i16,
+    /// `Surface::room` (surface_load.c; 0 where the level has no rooms or the
+    /// surface is shared). BBH uses it to keep the walk out of walls
+    /// ([`Mesh::build_rooms`]).
+    pub room: i8,
 }
 
 /// Floors Mario can't stand on or that kill him.
@@ -132,6 +145,21 @@ fn steep_limit(kind: i16) -> f32 {
 
 impl Mesh {
     pub fn build(tris: &[Tri]) -> Mesh {
+        Mesh::build_rooms(tris, false)
+    }
+
+    /// [`Mesh::build`]; with `rooms`, no edge joins two different rooms
+    /// numbered 1 to [`REAL_ROOMS`] (BBH: walls and closed doors between
+    /// rooms, which the floor graph alone walks through; the doorways are
+    /// floors of rooms 14 and up, which stay joined to their neighbours,
+    /// bbh/areas/1/room.inc.c).
+    pub fn build_rooms(tris: &[Tri], rooms: bool) -> Mesh {
+        Mesh::build_rooms_jump(tris, rooms, JUMP)
+    }
+
+    /// [`Mesh::build_rooms`] with edges that rise at most `jump`: BBH's ledge climbs (wall kick and grab, 400-500
+    /// high) are missing from the ordinary graph ([`LEDGE_JUMP`]).
+    pub fn build_rooms_jump(tris: &[Tri], rooms: bool, jump: f32) -> Mesh {
         let mut raw: Vec<(usize, Node)> = Vec::new();
         for t in tris {
             if excluded(t.kind) || t.n[1] < 0.01 {
@@ -155,14 +183,14 @@ impl Mesh {
                     let (x, z) = (ix as f32 * CELL, iz as f32 * CELL);
                     if inside(t, x, z) {
                         any = true;
-                        raw.push((col_index(ix, iz), Node { pos: [x, y_at(x, z), z], steep }));
+                        raw.push((col_index(ix, iz), Node { pos: [x, y_at(x, z), z], steep, room: t.room }));
                     }
                 }
             }
             if !any {
                 let c = [0, 1, 2].map(|k| (t.v[0][k] + t.v[1][k] + t.v[2][k]) / 3.0);
                 if let Some((ix, iz)) = col_of(c[0], c[2]) {
-                    raw.push((col_index(ix, iz), Node { pos: c, steep }));
+                    raw.push((col_index(ix, iz), Node { pos: c, steep, room: t.room }));
                 }
             }
         }
@@ -182,6 +210,10 @@ impl Mesh {
                 match nodes.last_mut() {
                     Some(last) if in_col && n.pos[1] - last.pos[1] < 20.0 => {
                         last.steep &= n.steep;
+                        // A column sample shared with a doorway stays a doorway.
+                        if !(1..=REAL_ROOMS).contains(&n.room) {
+                            last.room = n.room;
+                        }
                         last.pos[1] = last.pos[1].max(n.pos[1]);
                     }
                     _ => nodes.push(n),
@@ -206,12 +238,15 @@ impl Mesh {
                         let (s2, n2) = cols[col_index(jx, jz)];
                         for b in s2..s2 + n2 as u32 {
                             let nb = nodes[b as usize];
+                            if rooms && na.room != nb.room && (1..=REAL_ROOMS).contains(&na.room) && (1..=REAL_ROOMS).contains(&nb.room) {
+                                continue;
+                            }
                             let h = ((na.pos[0] - nb.pos[0]).powi(2) + (na.pos[2] - nb.pos[2]).powi(2)).sqrt();
                             if h > max_h {
                                 continue;
                             }
                             let dy = nb.pos[1] - na.pos[1];
-                            if dy > JUMP {
+                            if dy > jump {
                                 continue;
                             }
                             // A rise steeper than ~40 degrees takes a jump;
@@ -416,7 +451,7 @@ impl Mesh {
                     x
                 }
             };
-            if r.len() >= 8 {
+            if r.len() >= 32 {
                 r.remove(0);
             }
             r.push((me, t, field));
@@ -500,6 +535,13 @@ fn meshes() -> &'static RwLock<HashMap<Zone, Arc<Mesh>>> {
 /// Bumped whenever a mesh is installed, so threads' cached misses expire.
 static GENERATION: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
+/// The zone a BBH area's climb mesh (ledges up to [`LEDGE_JUMP`] high) is stored under: the level's high bit set.
+/// Built beside the ordinary mesh; the objectives for BBH's secret room ask it for the ways up the ordinary
+/// graph can't climb (`mansion.rs`).
+pub fn climb_zone(zone: Zone) -> Zone {
+    (zone.0 | 0x8000, zone.1)
+}
+
 /// Calls `f` with the mesh of a zone, if built. Each thread keeps the last
 /// zone's mesh (or its absence) without touching shared state.
 pub fn with_mesh<R>(zone: Zone, f: impl FnOnce(&Mesh) -> R) -> Option<R> {
@@ -528,6 +570,7 @@ pub fn mesh(zone: Zone) -> Option<Arc<Mesh>> {
 
 /// Installs a mesh for a zone (tests and diagnostics).
 pub fn insert(zone: Zone, m: Mesh) -> Arc<Mesh> {
+    eprintln!("geo: mesh for zone {zone:?}: {} nodes, {} edges", m.len(), m.edges());
     let m = Arc::new(m);
     meshes().write().unwrap().insert(zone, m.clone());
     GENERATION.fetch_add(1, Ordering::AcqRel);
@@ -574,6 +617,11 @@ fn rd_u32(m: &[u8], a: usize) -> Option<u32> {
 fn rd_i16(m: &[u8], a: usize) -> Option<i16> {
     m.get(a..a + 2).map(|b| i16::from_le_bytes(b.try_into().unwrap()))
 }
+fn rd_i8(m: &[u8], a: usize) -> Option<i8> {
+    m.get(a).map(|&b| b as i8)
+}
+/// `struct Surface`: s16 type, s16 force, s8 flags, s8 room (types.h).
+const SURFACE_ROOM: usize = 5;
 fn rd_f32(m: &[u8], a: usize) -> Option<f32> {
     rd_u32(m, a).map(f32::from_bits)
 }
@@ -607,7 +655,7 @@ fn read_list(m: &[u8], list: usize) -> (Vec<Tri>, HashSet<u32>) {
                 if let (Some(kind), Some(a), Some(b), Some(c), Some(nx), Some(ny), Some(nz)) =
                     (rd_i16(m, s), v(0x0A), v(0x10), v(0x16), rd_f32(m, s + 0x1C), rd_f32(m, s + 0x20), rd_f32(m, s + 0x24))
                 {
-                    tris.push(Tri { v: [a, b, c], n: [nx, ny, nz], kind });
+                    tris.push(Tri { v: [a, b, c], n: [nx, ny, nz], kind, room: rd_i8(m, s + SURFACE_ROOM).unwrap_or(0) });
                 }
             }
             node = rd_u32(m, node as usize).unwrap_or(0);
@@ -746,7 +794,7 @@ pub fn observe(m: &[u8], st: &St) {
     let (tris, seen) = read_floors(m);
     if seen.contains(&floor) {
         let t0 = std::time::Instant::now();
-        let mesh = Mesh::build(&tris);
+        let mesh = Mesh::build_rooms(&tris, zone.0 as u32 == crate::layout::LEVEL_BBH);
         if std::env::var("OBRRT_GEO_LOG").is_ok() {
             eprintln!(
                 "geo: zone {:?}: {} floors, {} nodes, {} edges, built in {:.1} ms",
@@ -758,6 +806,9 @@ pub fn observe(m: &[u8], st: &St) {
             );
         }
         insert(zone, mesh);
+        if zone.0 as u32 == crate::layout::LEVEL_BBH {
+            insert(climb_zone(zone), Mesh::build_rooms_jump(&tris, true, LEDGE_JUMP));
+        }
     }
     building().lock().unwrap().remove(&zone);
 }
@@ -928,8 +979,8 @@ mod tests {
             [0.0, dz / l, -dy / l]
         };
         [
-            Tri { v: [[x0, y, z0], [x1, y, z0], [x1, y2, z1]], n, kind: 0 },
-            Tri { v: [[x0, y, z0], [x1, y2, z1], [x0, y2, z1]], n, kind: 0 },
+            Tri { v: [[x0, y, z0], [x1, y, z0], [x1, y2, z1]], n, kind: 0, room: 0 },
+            Tri { v: [[x0, y, z0], [x1, y2, z1], [x0, y2, z1]], n, kind: 0, room: 0 },
         ]
     }
 
@@ -1007,5 +1058,29 @@ mod tests {
         // Down the cliff is direct.
         let back = m.path_dist(top, foot).unwrap();
         assert!(back < 2000.0, "{back}");
+    }
+
+    /// BBH's rooms: two rooms side by side (1 and 2) are not joined by the
+    /// floor graph with the room cut on; a doorway floor (room 15) between
+    /// them joins them.
+    #[test]
+    fn rooms_meet_only_through_doorways() {
+        let room = |mut q: [Tri; 2], r: i8| {
+            q[0].room = r;
+            q[1].room = r;
+            q
+        };
+        let (a, b) = ([100.0, 0.0, 500.0], [900.0, 0.0, 500.0]);
+        let walled: Vec<Tri> = room(quad(0.0, 500.0, 0.0, 1000.0, 0.0, 0.0), 1).into_iter().chain(room(quad(500.0, 1000.0, 0.0, 1000.0, 0.0, 0.0), 2)).collect();
+        let cut = Mesh::build_rooms(&walled, true);
+        assert!(cut.path_dist(a, b).unwrap() >= UNREACHABLE, "{:?}", cut.path_dist(a, b));
+        assert!(Mesh::build(&walled).path_dist(a, b).unwrap() < 1000.0);
+        let door: Vec<Tri> = room(quad(0.0, 450.0, 0.0, 1000.0, 0.0, 0.0), 1)
+            .into_iter()
+            .chain(room(quad(450.0, 550.0, 400.0, 600.0, 0.0, 0.0), 15))
+            .chain(room(quad(550.0, 1000.0, 0.0, 1000.0, 0.0, 0.0), 2))
+            .collect();
+        let d = Mesh::build_rooms(&door, true).path_dist(a, b).unwrap();
+        assert!(d < 2000.0, "{d}");
     }
 }

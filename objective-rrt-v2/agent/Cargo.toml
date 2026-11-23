@@ -1,0 +1,22 @@
+[package]
+name = "obrrt-agent"
+description = "Agent-driven routes: a sliding window of objectives solved by a persistent rolling-horizon GA, with full history (inputs, objectives, GA populations), sparse checkpoints, rewinds and state analysis tools (`ar`)."
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+rand.workspace = true
+rayon.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sm64-binds.workspace = true
+lz4_flex.workspace = true
+obrrt-core.workspace = true
+obrrt-search.workspace = true
+obrrt-objectives.workspace = true
+obrrt-spec.workspace = true
+
+[[bin]]
+name = "ar"
+path = "src/main.rs"

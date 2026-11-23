@@ -12,6 +12,7 @@ use obrrt_core::{GamePad, Generator, Objective, St, read_state};
 use rand::rngs::SmallRng;
 use rand::{Rng, SeedableRng};
 use rayon::prelude::*;
+#[cfg(not(feature = "sm64coin"))]
 use sm64_binds::{SM64GameGenerator, SaveState};
 
 use crate::diag::Diagnostics;
@@ -330,6 +331,87 @@ struct Plan {
     /// its parent (`start`) with `window` first; it takes the attempt's stats.
     window_b: Option<u32>,
     window: Vec<GamePad>,
+    /// OBRRT_ATTEMPT_MODEL: what the model predicted for the first stage.
+    mv: Option<crate::attempt_model::Out>,
+}
+
+/// The macro goals of OBRRT_WIP_FOCUS (see `index_frontier`).
+const MACROS: usize = 5;
+
+/// OBRRT_WIP_FOCUS (share of b draws) and OBRRT_WIP_FOCUS_W (levels of wip kept).
+fn wip_focus() -> (f64, i64) {
+    static S: std::sync::OnceLock<(f64, i64)> = std::sync::OnceLock::new();
+    *S.get_or_init(|| {
+        let p: f64 = std::env::var("OBRRT_WIP_FOCUS").ok().and_then(|v| v.parse().ok()).unwrap_or(0.0);
+        let w: i64 = std::env::var("OBRRT_WIP_FOCUS_W").ok().and_then(|v| v.parse().ok()).unwrap_or(2);
+        (p.clamp(0.0, 1.0), w.max(1))
+    })
+}
+
+/// OBRRT_GOAL_FOCUS (see `index_frontier`): the share of plans drawn toward a
+/// goal; OBRRT_GOAL_FOCUS_C: ETA frames each draw adds to its cell (default
+/// 10); OBRRT_GOAL_FOCUS_FORCE: the share of those plans that attempt the goal
+/// itself from the drawn state (default 0.5; the rest plan from it as usual);
+/// OBRRT_GOAL_MIN: the least objective weight that makes a goal (default 20:
+/// stars, bosses, mission spots).
+/// OBRRT_GOAL_EXPLORE=1: a goal whose best ETA has stopped dropping keeps its
+/// share of the plans, and spends them exploring from its best cells (b there,
+/// the objective drawn as usual) instead of attempting the goal: the share of
+/// forced attempts falls with the goal's weight (to a tenth). Without it the
+/// plans went back to uniform cells: in the SSL pyramid (camp-sslcp-0008, from
+/// a ledge at y 3200, the star at 5050) 150 of 3297 attempts started on the
+/// ledge, 62 of them straight at the star (off the ledge), 3 explored; the
+/// rest built on the 7689 states that had fallen to the floor. The ETA there
+/// is flat along the ledge, so the stall stop (`OBRRT_STALL_ETA`) also counts
+/// a new cell about as near as the best.
+fn goal_explore() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("OBRRT_GOAL_EXPLORE").is_ok_and(|v| v == "1"))
+}
+
+fn goal_focus() -> (f64, f64, f64, f64) {
+    static S: std::sync::OnceLock<(f64, f64, f64, f64)> = std::sync::OnceLock::new();
+    *S.get_or_init(|| {
+        let f = |k: &str, d: f64| std::env::var(k).ok().and_then(|v| v.parse().ok()).unwrap_or(d);
+        (f("OBRRT_GOAL_FOCUS", 0.0).clamp(0.0, 1.0), f("OBRRT_GOAL_FOCUS_C", 10.0).max(0.0), f("OBRRT_GOAL_FOCUS_FORCE", 0.5).clamp(0.0, 1.0), f("OBRRT_GOAL_MIN", 20.0))
+    })
+}
+
+/// OBRRT_GEO_AHEAD: how far along the walkable path an approach move aims.
+fn geo_ahead() -> f32 {
+    static S: std::sync::OnceLock<f32> = std::sync::OnceLock::new();
+    *S.get_or_init(|| std::env::var("OBRRT_GEO_AHEAD").ok().and_then(|v| v.parse().ok()).unwrap_or(700.0))
+}
+
+/// A frontier cell (see `index_frontier`), with its zone.
+type GoalCell = ((u16, u8), (i32, i32, i32, i64, i16, u64));
+
+/// One goal of OBRRT_GOAL_FOCUS: its objective and the best state of each of
+/// its best-ranked cells.
+struct GoalTop {
+    key: String,
+    obj: Arc<dyn Objective>,
+    cells: Vec<(u32, GoalCell)>,
+    weight: f64,
+    /// The pool weight the goal was chosen by.
+    base: f64,
+    /// The checkpoints: per amount of work in progress, the grounded,
+    /// controllable frontier state with the least ETA to the goal (no wear):
+    /// (wip, ETA, node). In summary.json's `goals`, for the campaign to
+    /// continue a course from when its tree found no exit.
+    cps: Vec<(i64, f64, u32)>,
+    /// The ETA of the earliest state on the frontier that has one (the baseline where the root has none: a goal in another area).
+    h1: Option<f64>,
+    /// The root's ETA to the goal, where it has one.
+    h0: Option<f64>,
+}
+
+/// OBRRT_GOAL_WIP_W (default 1500): frames of ETA a unit of work in progress
+/// (red coins, chests, boss hits: St::wip) is worth in the goal ranking, so
+/// the states furthest along a goal with several steps come first.
+fn goal_wip_w() -> f64 {
+    static WW: std::sync::OnceLock<f64> = std::sync::OnceLock::new();
+    *WW.get_or_init(|| std::env::var("OBRRT_GOAL_WIP_W").ok().and_then(|v| v.parse().ok()).unwrap_or(1500.0))
 }
 
 /// OBRRT_PARENT_WINDOW_FRAMES: the copied prefix's minimum length (0: one parent).
@@ -473,7 +555,7 @@ struct Replayed {
 /// `from`'s save, recording the state (and its save, against `from`'s base)
 /// at the end of each; stops at a dead boundary and, with `stay`, after a
 /// boundary outside `from`'s zone.
-fn replay_edges(game: &mut sm64_binds::SM64Game, tree: &Tree, bases: &[Vec<u8>], from: u32, edges: &[u32], stay: bool) -> Result<Replayed> {
+fn replay_edges(game: &mut crate::game::Game, tree: &Tree, bases: &[Vec<u8>], from: u32, edges: &[u32], stay: bool) -> Result<Replayed> {
     let base = tree.base_of(from);
     tree.load_into(from, game, bases)?;
     let from = &tree.nodes[from as usize];
@@ -594,6 +676,17 @@ pub struct Engine {
     zones: HashSet<(u16, u8)>,
     /// The frontier grouped by zone, then by 512-unit cell; rebuilt each round.
     b_index: Vec<Vec<Vec<u32>>>,
+    /// OBRRT_WIP_FOCUS: per macro goal (red coins, coins toward 100, level
+    /// changes, bosses, cap switches), the frontier states furthest along it.
+    wip_top: Vec<Vec<u32>>,
+    /// OBRRT_GOAL_FOCUS: the goals' best cells; draws per (goal, cell); per
+    /// goal (best ETA seen, draws since it last dropped, times it dropped).
+    goal_top: Vec<GoalTop>,
+    goal_wear: HashMap<(String, GoalCell), u32>,
+    goal_stats: HashMap<String, (f64, u32, u32)>,
+    /// OBRRT_ATTEMPT_MODEL: attempts so far per (kind, start state) and per start state.
+    tried_kind: HashMap<(&'static str, u32), u32>,
+    tried_node: HashMap<u32, u32>,
     /// Per b_index zone: its draw weight (value_zones).
     zone_weights: Vec<f64>,
     /// Zone bandit: per zone, (new states, attempts), decaying.
@@ -632,6 +725,10 @@ pub struct Engine {
     /// (parallel), post-merge upkeep, write_outputs, worker load_into (summed
     /// over threads), worker attempt (summed)].
     diag_secs: [f64; 6],
+    /// Seconds in index_frontier's goal ETAs (part of pre).
+    diag_index_secs: f64,
+    /// Seconds in pre's parts: eta snapshot, nostart recheck, rate refresh, wip refresh, index_frontier.
+    diag_pre: [f64; 11],
     /// Route chains: per objective key, the best-route (`hot`) nodes where
     /// it was met (ids ascending); rebuilt with `hot`.
     route_met: HashMap<String, Vec<u32>>,
@@ -648,6 +745,15 @@ pub struct Engine {
     dstats: crate::dense::MergeStats,
     /// Seeds from nearby starts (OBRRT_NEAR_SEED, see near.rs).
     near: crate::near::NearSeed,
+    /// OBRRT_ROAD: the experience roadmap (road.rs).
+    road: Option<crate::road::Road>,
+    /// Plans of this round that are roadmap legs (by start node), for the stats.
+    road_legs: Vec<u32>,
+    /// `OBRRT_STALL_ETA`: each goal's best ETA when it last counted as progress, and whether one has since the last stall check.
+    stall_eta: HashMap<String, f64>,
+    /// OBRRT_GOAL_EXPLORE: per goal, the cells about as near as its best (see `goal_explore`).
+    stall_near: HashMap<String, usize>,
+    eta_improved: bool,
     /// OBRRT_PICK=schema|schema_kin: start selection by schema cells (schemapick.rs).
     spick: Option<crate::schemapick::SchemaPick>,
     /// Sparse saves: rebuild frames already counted into total_frames.
@@ -733,6 +839,7 @@ fn key_hash(k: &str) -> u64 {
 }
 
 impl Engine {
+    #[cfg(not(feature = "sm64coin"))]
     pub fn new(
         cfg: Config,
         game_gen: &SM64GameGenerator,
@@ -741,11 +848,44 @@ impl Engine {
         root: St,
         generator: Arc<dyn Generator>,
     ) -> Result<Engine> {
-        fs::create_dir_all(&cfg.out_dir)?;
         let threads = rayon::current_num_threads();
-        let workers = (0..threads)
-            .map(|_| Ok(std::sync::Mutex::new(Worker::new(game_gen)?)))
-            .collect::<Result<Vec<_>>>()?;
+        let workers = (0..threads).map(|_| Worker::new(game_gen)).collect::<Result<Vec<_>>>()?;
+        Self::with_workers(cfg, workers, boot, root_save, root, generator)
+    }
+
+    /// With feature `sm64coin`: the workers are forks of `proto`, a mining
+    /// game (the block's perturbation armed), and every node's save carries
+    /// the perturbation state with the game memory. `threads` workers.
+    #[cfg(feature = "sm64coin")]
+    pub fn new_mining(
+        cfg: Config,
+        proto: &crate::game::Game,
+        threads: usize,
+        boot: Vec<GamePad>,
+        root_save: crate::game::GameSave,
+        root: St,
+        generator: Arc<dyn Generator>,
+    ) -> Result<Engine> {
+        let workers = (0..threads.max(1)).map(|_| Worker::forked(proto)).collect::<Result<Vec<_>>>()?;
+        Self::with_workers(cfg, workers, boot, root_save, root, generator)
+    }
+
+    /// Frames emulated so far (the tree's budget counter).
+    #[cfg(feature = "sm64coin")]
+    pub fn total_frames_emulated(&self) -> u64 {
+        self.total_frames
+    }
+
+    fn with_workers(
+        cfg: Config,
+        workers: Vec<Worker>,
+        boot: Vec<GamePad>,
+        root_save: crate::game::GameSave,
+        root: St,
+        generator: Arc<dyn Generator>,
+    ) -> Result<Engine> {
+        fs::create_dir_all(&cfg.out_dir)?;
+        let workers = workers.into_iter().map(std::sync::Mutex::new).collect::<Vec<_>>();
         let events = BufWriter::new(File::create(format!("{}/events.jsonl", cfg.out_dir))?);
         let rng = SmallRng::seed_from_u64(cfg.seed);
         let mut cells = HashMap::new();
@@ -777,17 +917,20 @@ impl Engine {
                 z.lifo = true;
             }
         }
+        let mut tree = Tree::new(root);
+        // The root's save: its pages are the base, its perturbation its own.
+        tree.nodes[0].save = Delta::new(0, crate::game::plain(&root_save).as_bytes(), &root_save);
         Ok(Engine {
             rr,
             polish: (cfg.polish > 0.0).then(|| crate::polish::Polish::new(cfg.polish)),
             zs,
             rb,
-            tree: Tree::new(root),
+            tree,
             pool: Pool::default(),
             diag: Diagnostics { chain_prob: cfg.chain_fixed.unwrap_or(cfg.chain_prob), ..Default::default() },
             generator,
             workers,
-            bases: vec![root_save.into_bytes()],
+            bases: vec![crate::game::into_plain(root_save).into_bytes()],
             zone_base: HashMap::from([(root_zone, 0)]),
             boot,
             rng,
@@ -797,6 +940,12 @@ impl Engine {
             tag_stats: BTreeMap::new(),
             zones: HashSet::from([root_zone]),
             b_index: vec![vec![vec![0]]],
+            wip_top: Vec::new(),
+            goal_top: Vec::new(),
+            goal_wear: HashMap::new(),
+            goal_stats: HashMap::new(),
+            tried_kind: HashMap::new(),
+            tried_node: HashMap::new(),
             zone_weights: vec![1.0],
             zone_stats: HashMap::new(),
             route: Vec::new(),
@@ -821,6 +970,8 @@ impl Engine {
             },
             diag_plan_secs: (0.0, 0.0),
             diag_secs: [0.0; 6],
+            diag_index_secs: 0.0,
+            diag_pre: [0.0; 11],
             route_met: HashMap::new(),
             node_rate: (0.0, 0.0, 0),
             live: Vec::new(),
@@ -830,6 +981,11 @@ impl Engine {
             dense: crate::dense::settings().filter(|d| d.modes.any()),
             dstats: Default::default(),
             near: crate::near::NearSeed::new(cfg.seed),
+            road: crate::road::setting().map(crate::road::Road::new),
+            road_legs: Vec::new(),
+            stall_eta: HashMap::new(),
+            stall_near: HashMap::new(),
+            eta_improved: false,
             spick: crate::schemapick::from_env()?,
             rebuild_counted: 0,
             speed: Default::default(),
@@ -1128,16 +1284,145 @@ impl Engine {
     /// zone uniformly, then a cell uniformly (sparse, newly reached regions
     /// are sampled as often as dense ones), then a state.
     fn index_frontier(&mut self) {
+        let mut lap = Instant::now();
+        macro_rules! tick {
+            ($k:expr) => {{
+                self.diag_pre[$k] += lap.elapsed().as_secs_f64();
+                lap = Instant::now();
+            }};
+        }
         let mut zones: BTreeMap<(u16, u8), BTreeMap<(i32, i32, i32, i64, i16, u64), Vec<u32>>> = BTreeMap::new();
         // OBRRT_KEEP_WIP: the states kept for their work under way are b
         // candidates too (incomparable with the frontier, not behind it).
         let wip_kept = if self.tree.keep_wip { self.tree.wip_kept.clone() } else { Vec::new() };
-        for &i in self.tree.frontier.iter().chain(&wip_kept) {
+        // OBRRT_WIP_FOCUS=p (with OBRRT_KEEP_WIP, which stores each state's wip):
+        // this share of b draws come from the states furthest along a macro
+        // goal, so a counted goal is built on instead of restarted. In the
+        // zone-locked VCutM tree of 2026-11-09, 10357 states had no red coin
+        // and 3 had 4. The macro goals each have their own measure and their
+        // own top states (within OBRRT_WIP_FOCUS_W - 1 of the best, default 2
+        // levels), so one goal's easy progress doesn't crowd out another's:
+        // red coins; coins toward the 100-coin star (tens); level changes
+        // (posts and the like); bosses (damage, a spawned star); cap switches.
+        let focus = wip_focus();
+        let mut top: Vec<(i64, Vec<(u32, i64)>)> = vec![(0, Vec::new()); MACROS];
+        // OBRRT_GOAL_FOCUS=p: this share of plans is drawn toward a goal, an
+        // objective in the pool worth at least OBRRT_GOAL_MIN (a star, a boss,
+        // a mission spot). b is otherwise uniform over occupied cells, so in a
+        // large level the states nearest a star are almost never built on: in
+        // the zone-locked BoB tree of 2026-11-09 (150 M frames, no star) the
+        // twelve highest states on the mountain were never a start. Each goal
+        // ranks the cells by their best state's ETA to it plus
+        // OBRRT_GOAL_FOCUS_C frames for every draw the cell has had (so a cell
+        // that leads nowhere, under a wall, is flooded and the next-best cells
+        // take over), and keeps the best three. Goals are drawn by how often
+        // their best ETA has dropped per draw.
+        let gf = goal_focus();
+        let goals: Vec<(String, Arc<dyn Objective>, f64)> = if gf.0 > 0.0 {
+            let mut g: Vec<(f64, String, Arc<dyn Objective>)> = self
+                .pool
+                .entries
+                .iter()
+                .filter(|e| e.base_weight >= gf.3 && !e.obj.modal() && e.obj.fixed().is_none())
+                .map(|e| (e.base_weight, e.obj.key(), e.obj.clone()))
+                .collect();
+            g.sort_by(|a, b| b.0.total_cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
+            g.dedup_by(|a, b| a.1 == b.1);
+            g.truncate(12);
+            g.into_iter().map(|(w, k, o)| (k, o, w)).collect()
+        } else {
+            Vec::new()
+        };
+        let mut goal_best: Vec<HashMap<GoalCell, (u32, f64)>> = vec![HashMap::new(); goals.len()];
+        let mut goal_cp: Vec<std::collections::BTreeMap<i64, (f64, u32)>> = vec![Default::default(); goals.len()];
+        let mut goal_first: Vec<Option<(u32, f64)>> = vec![None; goals.len()];
+        let ww = goal_wip_w();
+        tick!(5);
+        if let Some(r) = self.road.as_mut() {
+            r.observe(&self.tree);
+        }
+        tick!(6);
+        let skip = |i: u32| {
+            let st = &self.tree.nodes[i as usize].st;
+            // A course with every star had has nothing left to find, unless the run is only to leave it
+            // (OBRRT_ANY_EXIT: the campaign's tree after a star had inside the course; t1 step 464, BitFS's one
+            // star held: 1 node, nothing planned, and the star was dropped).
+            (!any_exit() && st.course_done(st.course)) || st.modal() || (self.cfg.rrt_star && self.tree.nodes[i as usize].dominated)
+        };
+        // Each state's ETA to each goal, on every thread: done on the main
+        // thread alone this took 79% of the wall clock in a large tree while
+        // the workers waited (t1 step 186, BitFS: pre 6130 s of 7796 s at 85k
+        // nodes). Per goal: None if it can't start there, else the ETA and,
+        // when the roadmap's field wasn't built yet, the target to ask it.
+        let idx_t = Instant::now();
+        let items: Vec<u32> = self.tree.frontier.iter().chain(&wip_kept).copied().collect();
+        let pre: Vec<Vec<Option<(f64, Option<[f32; 3]>)>>> = {
+            let (tree, road, goals) = (&self.tree, self.road.as_ref(), &goals);
+            let one = |&i: &u32| -> Vec<Option<(f64, Option<[f32; 3]>)>> {
+                if goals.is_empty() || skip(i) {
+                    return Vec::new();
+                }
+                let st = &tree.nodes[i as usize].st;
+                goals
+                    .iter()
+                    .map(|(_, o, _)| {
+                        if !st.alive() || !o.exists_in(st) || !o.base_criteria(st) {
+                            return None;
+                        }
+                        let mut h = obrrt_core::start_eta(o.as_ref(), st);
+                        // OBRRT_GEO=1: rank by the walkable distance to the goal's
+                        // target where the mesh knows it (never less than the ETA): a
+                        // state under a cliff below the goal is far, the path up is
+                        // near. Straight-line ranking left BoB's Koopa race at the
+                        // mountain's foot: 98 attempts, ETA 88-200, none up (2026-11-09).
+                        if obrrt_core::geo::enabled() && h.is_finite() {
+                            if let Some(t) = o.steer_target(st) {
+                                if let Some(d) = obrrt_core::geo::path_dist(st.zone(), st.pos, t) {
+                                    h = h.max(obrrt_core::frames_for(d));
+                                }
+                            }
+                        }
+                        // OBRRT_ROAD: rank by the roadmap's cost (road.rs), never
+                        // less than the ETA.
+                        let mut ask = None;
+                        if let Some(r) = road.filter(|_| h.is_finite()) {
+                            if let Some(t) = o.steer_target(st) {
+                                match r.eta_cached(st, t) {
+                                    Some(e) => h = h.max(e),
+                                    None => ask = Some(t),
+                                }
+                            }
+                        }
+                        Some((h, ask))
+                    })
+                    .collect()
+            };
+            static POOL: std::sync::OnceLock<Option<rayon::ThreadPool>> = std::sync::OnceLock::new();
+            let n = self.workers.len().max(1);
+            match POOL.get_or_init(|| rayon::ThreadPoolBuilder::new().num_threads(n).build().ok()) {
+                Some(p) if n > 1 => p.install(|| items.par_iter().map(one).collect()),
+                _ => items.iter().map(one).collect(),
+            }
+        };
+        self.diag_index_secs += idx_t.elapsed().as_secs_f64();
+        lap = Instant::now();
+        for (k, &i) in items.iter().enumerate() {
             let st = &self.tree.nodes[i as usize].st;
             // A course whose stars are all collected has nothing left to find;
             // dialogs and menus are planned from the modal queue instead.
-            if st.course_done(st.course) || st.modal() || (self.cfg.rrt_star && self.tree.nodes[i as usize].dominated) {
+            if skip(i) {
                 continue;
+            }
+            if focus.0 > 0.0 {
+                let w = self.tree.wip.get(i as usize).copied().unwrap_or(0);
+                let (red, changes, caps) = (st.red_coins.max(0) as i64, st.level_changes(), (st.save_flags & 0xE).count_ones() as i64);
+                let coins = if (1..=15).contains(&st.course) && !st.has_star(st.course, 6) { (st.coins.clamp(0, 100) / 10) as i64 } else { 0 };
+                for (k, v) in [red, coins, changes, w - red - changes - caps, caps].into_iter().enumerate() {
+                    if v > 0 {
+                        top[k].0 = top[k].0.max(v);
+                        top[k].1.push((i, v));
+                    }
+                }
             }
             let c = |v: f32| (v / 512.0).floor() as i32;
             // Level changes (a pounded post, the Chomp freed) get cells of
@@ -1151,8 +1436,98 @@ impl Engine {
             // a different star than the hundreds around it at the same count
             // (a castle exit after WF star 2 among star-6 exits) gets a cell.
             let cell = (c(st.pos[0]), c(st.pos[1]), c(st.pos[2]), st.level_changes(), st.red_coins, starset(st));
+            for gi in 0..goals.len() {
+                let Some((mut h, ask)) = pre[k].get(gi).copied().flatten() else { continue };
+                if let (Some(t), Some(r)) = (ask, self.road.as_mut()) {
+                    h = h.max(r.eta(st, t));
+                }
+                if h.is_finite() {
+                    let e = goal_best[gi].entry((st.zone(), cell)).or_insert((i, h));
+                    if h < e.1 {
+                        *e = (i, h);
+                    }
+                    if i != 0 && goal_first[gi].is_none_or(|f| i < f.0) {
+                        goal_first[gi] = Some((i, h));
+                    }
+                    let grp = st.action & 0x1C0;
+                    if i != 0 && (grp == 0x000 || grp == 0x040) && st.controllable() && st.health >= 0x300 {
+                        let w = self.tree.wip.get(i as usize).copied().unwrap_or(0);
+                        let e = goal_cp[gi].entry(w).or_insert((h, i));
+                        if h < e.0 {
+                            *e = (h, i);
+                        }
+                    }
+                }
+            }
             zones.entry(st.zone()).or_default().entry(cell).or_default().push(i);
         }
+        tick!(7);
+        self.goal_top.clear();
+        for ((((key, obj, base), best), cp), first) in goals.into_iter().zip(goal_best).zip(goal_cp).zip(goal_first) {
+            if best.is_empty() {
+                continue;
+            }
+            let h0 = {
+                let r = &self.tree.nodes[0].st;
+                (r.alive() && obj.exists_in(r) && obj.base_criteria(r)).then(|| obrrt_core::start_eta(obj.as_ref(), r)).filter(|h| h.is_finite()).map(|h| {
+                    match (self.road.as_mut(), obj.steer_target(r)) {
+                        (Some(rd), Some(t)) => h.max(rd.eta(r, t)),
+                        _ => h,
+                    }
+                })
+            };
+            let hmin = best.values().map(|v| v.1).fold(f64::INFINITY, f64::min);
+            // OBRRT_STALL_ETA=<fraction>: a goal's best ETA falling by this
+            // fraction (and 10 frames) since it last did is progress for
+            // OBRRT_STOP_STALL. A course that is one long way (BitDW: campaign
+            // t1 step 142 stopped at 94.5 M with 2 red coins while the tree
+            // was two thirds up the course) has no work in progress to show.
+            static SE: std::sync::OnceLock<Option<f64>> = std::sync::OnceLock::new();
+            if let Some(f) = *SE.get_or_init(|| std::env::var("OBRRT_STALL_ETA").ok().and_then(|v| v.parse().ok()).filter(|&f: &f64| f > 0.0)) {
+                let near = |v: f64| best.values().filter(|b| b.1 <= v + (f * v).max(10.0)).count();
+                match self.stall_eta.get_mut(&key) {
+                    Some(v) => {
+                        if hmin < *v * (1.0 - f) && hmin < *v - 10.0 {
+                            *v = hmin;
+                            self.eta_improved = true;
+                            self.stall_near.insert(key.clone(), near(hmin));
+                        } else if goal_explore() {
+                            // A new cell about as near as the best is progress too: the way on
+                            // from a ledge runs level, and often away from the goal.
+                            let (n, e) = (near(*v), self.stall_near.entry(key.clone()).or_insert(0));
+                            if n > *e {
+                                self.eta_improved |= *e > 0;
+                                *e = n;
+                            }
+                        }
+                    }
+                    None => {
+                        self.stall_eta.insert(key.clone(), hmin);
+                    }
+                }
+            }
+            let mut ranked: Vec<(f64, u32, GoalCell)> = best
+                .into_iter()
+                .map(|(cell, (i, h))| {
+                    let wip = self.tree.wip.get(i as usize).copied().unwrap_or(0) as f64;
+                    (h + gf.1 * self.goal_wear.get(&(key.clone(), cell)).copied().unwrap_or(0) as f64 - ww * wip, i, cell)
+                })
+                .collect();
+            ranked.sort_by(|a, b| a.0.total_cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
+            ranked.truncate(3);
+            let st = self.goal_stats.entry(key.clone()).or_insert((f64::INFINITY, 0, 0));
+            if hmin < st.0 - 5.0 {
+                st.0 = hmin;
+                st.1 = 0;
+                st.2 += 1;
+            }
+            // 1 while its best ETA keeps dropping; 8 / draws since the last drop
+            // once it stalls (a goal the level's layout keeps out of reach,
+            // like a box on an island with no cannon open).
+            let weight = 1.0 / (1.0 + st.1 as f64 / 8.0);
+            self.goal_top.push(GoalTop { key, obj, cells: ranked.into_iter().map(|(_, i, c)| (i, c)).collect(), weight, base, cps: cp.into_iter().map(|(w, (h, i))| (w, h, i)).collect(), h1: first.map(|f| f.1), h0 });
+        }
+        tick!(8);
         // Zone weights: 1 + the most valuable objective (weight × decay ×
         // kind multiplier) some of the zone's frontier states can start.
         // Self objectives (weight 1, everywhere) are the baseline and skipped.
@@ -1186,6 +1561,12 @@ impl Engine {
             })
             .collect();
         self.b_index = zones.into_values().map(|cells| cells.into_values().collect()).collect();
+        self.wip_top = top
+            .into_iter()
+            .map(|(best, v)| v.into_iter().filter(|&(_, x)| x >= (best - (focus.1 - 1)).max(1)).map(|(i, _)| i).collect::<Vec<u32>>())
+            .filter(|v| !v.is_empty())
+            .collect();
+        tick!(9);
         // The best routes: the states leading to each zone's earliest
         // frontier state (b for route_share of plans; RRT* rewires them first).
         {
@@ -1235,6 +1616,7 @@ impl Engine {
                 self.diag.route_chain.route_keys = self.route_met.len() as u64;
             }
         }
+        tick!(10);
     }
 
     /// A dialog or menu state as b: its options have infinite weight (and
@@ -1280,7 +1662,7 @@ impl Engine {
         self.diag.kind(kind).samples += 1;
         self.diag.kind(kind).window_samples += 1;
         self.pool.entries[entry].unattemptable = 0;
-        Some(Plan { stages: vec![(entry, obj)], start: b, b, rewire: None, seed: None, polish: None, targets: None, window_b: None, window: Vec::new() })
+        Some(Plan { stages: vec![(entry, obj)], start: b, b, rewire: None, seed: None, polish: None, targets: None, window_b: None, window: Vec::new(), mv: None })
     }
 
     /// RRT*: the next rewiring attempt, if any is still valid.
@@ -1299,7 +1681,7 @@ impl Engine {
                 }
             };
             self.diag.rewire.attempts += 1;
-            return Some(Plan { stages: vec![(entry, obj)], start: r.from, b: r.from, rewire: Some(r.target), seed: None, polish: None, targets: None, window_b: None, window: Vec::new() });
+            return Some(Plan { stages: vec![(entry, obj)], start: r.from, b: r.from, rewire: Some(r.target), seed: None, polish: None, targets: None, window_b: None, window: Vec::new(), mv: None });
         }
         None
     }
@@ -1396,7 +1778,7 @@ impl Engine {
             }
             Arc::new(out)
         });
-        Some(Plan { stages: vec![(entry, obj)], start: job.from, b: job.from, rewire: None, seed: Some(seed), polish: Some(job), targets, window_b: None, window: Vec::new() })
+        Some(Plan { stages: vec![(entry, obj)], start: job.from, b: job.from, rewire: None, seed: Some(seed), polish: Some(job), targets, window_b: None, window: Vec::new(), mv: None })
     }
 
     /// OBRRT_POLISH: a polish or repair plan's first segment ended at `end`
@@ -1716,7 +2098,7 @@ impl Engine {
             if n.retired
                 || n.st.modal()
                 || !(self.tree.on_frontier(&n.st) || self.tree.is_wip(b))
-                || n.st.course_done(n.st.course)
+                || (!any_exit() && n.st.course_done(n.st.course))
                 || (self.cfg.rrt_star && n.dominated)
             {
                 self.ne.stale += 1;
@@ -1743,7 +2125,7 @@ impl Engine {
                     self.pool.entries[entry].unattemptable = 0;
                     self.ne.planned += 1;
                     let stages = self.extend_chain(entry, obj, start);
-                    out = Some(Plan { stages, start, b, rewire: None, seed: None, polish: None, targets: None, window_b: None, window: Vec::new() });
+                    out = Some(Plan { stages, start, b, rewire: None, seed: None, polish: None, targets: None, window_b: None, window: Vec::new(), mv: None });
                     break;
                 }
                 None => {
@@ -1811,7 +2193,7 @@ impl Engine {
                 || n.st.modal()
                 || !n.st.alive()
                 || !(self.tree.on_frontier(&n.st) || self.tree.is_wip(b))
-                || n.st.course_done(n.st.course)
+                || (!any_exit() && n.st.course_done(n.st.course))
                 || (self.cfg.rrt_star && n.dominated)
                 || rec.is_some_and(|r| r + EA_CELL_MARGIN <= n.st.frame)
             {
@@ -1845,7 +2227,7 @@ impl Engine {
             self.diag.kind(kind).window_samples += 1;
             self.pool.entries[entry].unattemptable = 0;
             let stages = self.extend_chain(entry, obj, b);
-            return Some(Plan { stages, start: b, b, rewire: None, seed: None, polish: None, targets: None, window_b: None, window: Vec::new() });
+            return Some(Plan { stages, start: b, b, rewire: None, seed: None, polish: None, targets: None, window_b: None, window: Vec::new(), mv: None });
         }
         None
     }
@@ -1858,7 +2240,7 @@ impl Engine {
             if let Some((start, obj)) = self.bc.next(&self.tree) {
                 self.pool.insert(obj.clone(), &self.tree.nodes[start as usize].st);
                 let entry = self.pool.find(&obj.key()).unwrap();
-                return Some(Plan { stages: vec![(entry, obj)], start, b: start, rewire: None, seed: None, polish: None, targets: None, window_b: None, window: Vec::new() });
+                return Some(Plan { stages: vec![(entry, obj)], start, b: start, rewire: None, seed: None, polish: None, targets: None, window_b: None, window: Vec::new(), mv: None });
             }
         }
         if self.cfg.rrt_star
@@ -1884,8 +2266,94 @@ impl Engine {
         if self.b_index.is_empty() {
             return None;
         }
-        let b = if !self.route.is_empty() && self.rng.random_bool(self.cfg.route_share) {
+        // OBRRT_GOAL_FOCUS: a goal by its weight, then one of its best cells'
+        // states; the goal itself from there, or b as usual.
+        let mut goal_b = None;
+        // The share falls with the best goal's weight (to a twentieth), so
+        // stalled goals give the plans back.
+        let goal_share = goal_focus().0 * if goal_explore() { 1.0 } else { self.goal_top.iter().map(|g| g.weight).fold(0.0, f64::max).clamp(0.05, 1.0) };
+        if !self.goal_top.is_empty() && self.rng.random_bool(goal_share) {
+            let gw: Vec<(usize, f64)> = self.goal_top.iter().enumerate().map(|(i, g)| (i, g.weight)).collect();
+            let gi = weighted(&mut self.rng, &gw).unwrap_or(0);
+            let g = &self.goal_top[gi];
+            let (b, cell) = g.cells[self.rng.random_range(0..g.cells.len())];
+            let (key, obj) = (g.key.clone(), g.obj.clone());
+            *self.goal_wear.entry((key.clone(), cell)).or_default() += 1;
+            self.goal_stats.entry(key.clone()).or_insert((f64::INFINITY, 0, 0)).1 += 1;
+            let n = &self.tree.nodes[b as usize];
+            if !n.retired && !n.st.modal() {
+                if self.rng.random_bool(goal_focus().2 * if goal_explore() { g.weight.clamp(0.1, 1.0) } else { 1.0 }) {
+                    let st = n.st.clone();
+                    // OBRRT_GEO=1: from beyond the goal's reach, a move to a
+                    // point OBRRT_GEO_AHEAD (default 700) units along the
+                    // walkable path instead (the goal's own straight-line
+                    // steering would walk into the cliff below it).
+                    let way = if obrrt_core::geo::enabled() {
+                        obj.steer_target(&st)
+                            .filter(|&t| obrrt_core::geo::path_dist(st.zone(), st.pos, t).is_some_and(|d| d > 1.5 * geo_ahead()))
+                            .and_then(|t| obrrt_core::geo::waypoint(st.zone(), st.pos, t, geo_ahead()))
+                    } else {
+                        None
+                    };
+                    // OBRRT_ROAD: where the roadmap's path from here beats the
+                    // straight line, its first edge instead (a move to the
+                    // edge's end, seeded with the inputs that made it).
+                    let leg = self.road.as_mut().and_then(|r| obj.steer_target(&st).and_then(|t| r.way(&st, t))).filter(|l| obrrt_core::dist(l.to, st.pos) > 150.0);
+                    // No known way and the goal beyond one attempt (the roadmap's
+                    // cost over 1.5 x the attempt's horizon): progress under the
+                    // roadmap's direct cost instead (`Road::Climb`). BitDW's
+                    // `BowserStage::Enter` took 27-31% of the frames from half
+                    // a course away, 760 attempts, none in.
+                    let far = match (&leg, self.road.as_mut(), obj.steer_target(&st)) {
+                        (None, Some(r), Some(t)) => {
+                            let hz = obj.ga_budget().map_or(200, |g| g.horizon) as f64;
+                            (r.eta(&st, t) > 1.5 * hz).then(|| (t, r.climb()))
+                        }
+                        _ => None,
+                    };
+                    let mut seed = None;
+                    let (key, obj): (String, Arc<dyn Objective>) = match (leg, way) {
+                        (Some(l), _) => {
+                            let m: Arc<dyn Objective> = Arc::new(obrrt_objectives::mario::PosDist::leg(&st, l.to, l.frames));
+                            seed = l.node.and_then(|n| self.tree.nodes.get(n as usize)).filter(|n| !n.inputs.is_empty()).map(|n| n.inputs.clone());
+                            if let Some(r) = self.road.as_mut() {
+                                r.stats.legs += 1;
+                                r.stats.legs_seeded += seed.is_some() as u64;
+                            }
+                            self.road_legs.push(b);
+                            (m.key(), m)
+                        }
+                        (None, None) if far.is_some() => {
+                            let (t, (per, jump)) = far.unwrap();
+                            let m: Arc<dyn Objective> = Arc::new(obrrt_objectives::mario::PosDist::climb(&st, t, per, jump));
+                            if let Some(r) = self.road.as_mut() {
+                                r.stats.climbs += 1;
+                            }
+                            (m.key(), m)
+                        }
+                        (None, Some(p)) if obrrt_core::dist(p, st.pos) > 150.0 => {
+                            let m: Arc<dyn Objective> = Arc::new(obrrt_objectives::mario::PosDist::new(&st, p));
+                            (m.key(), m)
+                        }
+                        _ => (key, obj),
+                    };
+                    self.pool.insert(obj.clone(), &st);
+                    if let Some(entry) = self.pool.find(&key) {
+                        self.tree.nodes[b as usize].stats.as_b += 1;
+                        return Some(Plan { stages: vec![(entry, obj)], start: b, b, rewire: None, seed, polish: None, targets: None, window_b: None, window: Vec::new(), mv: None });
+                    }
+                }
+                goal_b = Some(b);
+            }
+        }
+        let b = if let Some(b) = goal_b {
+            b
+        } else if !self.route.is_empty() && self.rng.random_bool(self.cfg.route_share) {
             self.route[self.rng.random_range(0..self.route.len())]
+        } else if !self.wip_top.is_empty() && self.rng.random_bool(wip_focus().0) {
+            // A macro goal uniformly, then one of its top states.
+            let m = &self.wip_top[self.rng.random_range(0..self.wip_top.len())];
+            m[self.rng.random_range(0..m.len())]
         } else {
             let zw: Vec<(usize, f64)> = self.zone_weights.iter().copied().enumerate().collect();
             let zi = weighted(&mut self.rng, &zw).unwrap_or(0);
@@ -1909,10 +2377,15 @@ impl Engine {
         }
         self.insert_learned(b, &b_st);
         // Steps 3-4, retrying a few times when a pick has no eligible start.
-        for _ in 0..4 {
+        // OBRRT_ATTEMPT_MODEL: the sampler proposes up to K (objective, start)
+        // pairs and one is drawn by what the model expects of it per frame.
+        let am = crate::attempt_model::model();
+        let (am_k, am_beta) = crate::attempt_model::settings();
+        let mut proposals: Vec<(usize, Arc<dyn Objective>, u32, crate::attempt_model::Out)> = Vec::new();
+        for _ in 0..if am.is_some() { 2 * am_k } else { 4 } {
             // Wall time per pick (diagnostics only, never decisions).
             let pick_t = Instant::now();
-            let entry = self.sample_entry(b, false)?;
+            let Some(entry) = self.sample_entry(b, false) else { break };
             self.pool.rate.sample_secs += pick_t.elapsed().as_secs_f64();
             let obj = self.pool.entries[entry].obj.clone();
             let kind = obj.kind();
@@ -1922,10 +2395,17 @@ impl Engine {
             let secs = pick_t.elapsed().as_secs_f64();
             if picked.is_some() { self.pool.rate.pick_secs += secs } else { self.pool.rate.nostart_secs += secs }
             match picked {
+                Some(start) if am.is_some() => {
+                    let out = am.unwrap().eval(&self.model_input(obj.as_ref(), start));
+                    proposals.push((entry, obj, start, out));
+                    if proposals.len() >= am_k {
+                        break;
+                    }
+                }
                 Some(start) => {
                     self.pool.entries[entry].unattemptable = 0;
                     let stages = self.extend_chain(entry, obj, start);
-                    return Some(Plan { stages, start, b, rewire: None, seed: None, polish: None, targets: None, window_b: None, window: Vec::new() });
+                    return Some(Plan { stages, start, b, rewire: None, seed: None, polish: None, targets: None, window_b: None, window: Vec::new(), mv: None });
                 }
                 None => {
                     self.diag.kind(kind).no_start += 1;
@@ -1961,8 +2441,48 @@ impl Engine {
                 }
             }
         }
+        if !proposals.is_empty() {
+            // Per frame at this run's own mean cost of the kind (the model's
+            // cost head is from runs before the reach budget and the gate).
+            let cost = |k: &str| self.diag.kinds.get(k).filter(|ks| ks.attempts >= 3).map_or(30000.0, |ks| ks.frames as f64 / ks.attempts as f64) + crate::diag::ATTEMPT_OVERHEAD;
+            let w: Vec<(usize, f64)> = proposals.iter().enumerate().map(|(i, p)| (i, (crate::attempt_model::score(&p.3).max(1e-4) / cost(p.1.kind())).powf(am_beta))).collect();
+            let (entry, obj, start, out) = proposals.swap_remove(weighted(&mut self.rng, &w).unwrap_or(0));
+            self.pool.entries[entry].unattemptable = 0;
+            let stages = self.extend_chain(entry, obj, start);
+            return Some(Plan { stages, start, b, rewire: None, seed: None, polish: None, targets: None, window_b: None, window: Vec::new(), mv: Some(out) });
+        }
         self.pool.rate.plans_none += 1;
         None
+    }
+
+    /// OBRRT_ATTEMPT_MODEL: what the model sees of attempting `obj` from `start`.
+    fn model_input<'a>(&self, obj: &'a dyn Objective, start: u32) -> crate::attempt_model::Input<'a> {
+        let n = &self.tree.nodes[start as usize];
+        let s = &n.st;
+        let kind = obj.kind();
+        let h = obrrt_core::start_eta(obj, s);
+        let (kind_n, kind_s) = self.diag.kinds.get(kind).map_or((0.0, 0.0), |k| (k.attempts as f64, k.successes as f64));
+        crate::attempt_model::Input {
+            kind,
+            level: s.level,
+            action: s.action,
+            start_eta: h.is_finite().then_some(h),
+            stage: 0.0,
+            plan_len: 1.0,
+            kind_n,
+            kind_s,
+            kn_n: self.tried_kind.get(&(kind, start)).copied().unwrap_or(0) as f64,
+            node_n: self.tried_node.get(&start).copied().unwrap_or(0) as f64,
+            frames_before: self.total_frames as f64,
+            y: s.pos[1] as f64,
+            hspeed: (s.vel[0] * s.vel[0] + s.vel[2] * s.vel[2]).sqrt() as f64,
+            fwd_vel: s.forward_vel as f64,
+            stars: s.stars as f64,
+            coins: s.coins as f64,
+            red: s.red_coins as f64,
+            route_frame: s.frame as f64 - self.tree.nodes[0].st.frame as f64,
+            depth: n.depth as f64,
+        }
     }
 
     /// OBRRT_RATE_NOSTART_SKIP: whether some live state with id >= `from`
@@ -2335,7 +2855,7 @@ impl Engine {
                     let base = match self.zone_base.get(&zone) {
                         Some(&b) => b,
                         None => {
-                            self.bases.push(packed.apply(&self.bases)?.into_bytes());
+                            self.bases.push(crate::game::into_plain(packed.apply(&self.bases)?).into_bytes());
                             let b = (self.bases.len() - 1) as u16;
                             self.zone_base.insert(zone, b);
                             b
@@ -2655,6 +3175,9 @@ impl Engine {
             if crate::speed::settings().faster_only {
                 ev["accepted"] = serde_json::json!(success);
             }
+            if let Some(m) = plan.mv.filter(|_| i == 0) {
+                ev["mv"] = serde_json::json!({"success": m.success, "pays": m.pays, "star": m.star, "cost": m.cost[1], "seg": m.seg[1], "value": m.value});
+            }
             writeln!(self.events, "{ev}")?;
             if let Some(id) = added.filter(|_| novel) {
                 // A new state may make decayed objectives worth trying again
@@ -2799,7 +3322,7 @@ impl Engine {
                     let base = match self.zone_base.get(&zone) {
                         Some(&b) => b,
                         None => {
-                            self.bases.push(packed.apply(&self.bases)?.into_bytes());
+                            self.bases.push(crate::game::into_plain(packed.apply(&self.bases)?).into_bytes());
                             let b = (self.bases.len() - 1) as u16;
                             self.zone_base.insert(zone, b);
                             b
@@ -3035,12 +3558,12 @@ impl Engine {
         print!("{}", self.eta.report(8));
         self.bc.write(&self.cfg.out_dir, &self.tree)?;
         self.events.flush()?;
-        let mut csv = String::from("id,parent,depth,x,y,z,level,area,stars,keys,coins,frame,via,as_b,as_start,successes,added,barren,hspeed,fwd_vel,action,red_coins,act,star_flags,retired\n");
+        let mut csv = String::from("id,parent,depth,x,y,z,level,area,stars,keys,coins,frame,via,as_b,as_start,successes,added,barren,hspeed,fwd_vel,action,red_coins,act,star_flags,retired,caps,save_flags,health\n");
         for (i, n) in self.tree.nodes.iter().enumerate() {
             let s = &n.st;
             let st = &n.stats;
             csv += &format!(
-                "{i},{},{},{:.0},{:.0},{:.0},{},{},{},{},{},{},{},{},{},{},{},{},{:.1},{:.1},{:#x},{},{},{},{}\n",
+                "{i},{},{},{:.0},{:.0},{:.0},{},{},{},{},{},{},{},{},{},{},{},{},{:.1},{:.1},{:#x},{},{},{},{},{},{:#x},{:#x}\n",
                 n.parent.map_or(-1, |p| p as i64),
                 n.depth,
                 s.pos[0],
@@ -3071,7 +3594,13 @@ impl Engine {
                     .map(|(c, f)| format!("{}:{f:x}", c + 1))
                     .collect::<Vec<_>>()
                     .join(" "),
-                n.retired as u8
+                n.retired as u8,
+                // Cap switches pressed (save flags: 2 wing, 4 metal, 8 vanish).
+                s.save_flags & 0xE,
+                // The whole save flags word (the moat drained 0x200, keys, doors, castle stars).
+                s.save_flags,
+                // Health (0x880 full; one segment is 0x100).
+                s.health
             );
         }
         fs::write(format!("{}/nodes.csv", self.cfg.out_dir), csv)?;
@@ -3198,8 +3727,11 @@ impl Engine {
             for (k, v) in ["pre_secs", "run_secs", "post_secs", "write_secs", "worker_load_secs", "worker_attempt_secs"].iter().zip(d) {
                 summary["timing"][*k] = serde_json::json!(v);
             }
-            println!("   timing: pre {:.1}s plan {:.1}s run {:.1}s merge {:.1}s post {:.1}s write {:.1}s; workers load {:.1}s attempt {:.1}s",
-                d[0], self.diag_plan_secs.0, d[1], self.diag_plan_secs.1, d[2], d[3], d[4], d[5]);
+            summary["timing"]["index_secs"] = serde_json::json!(self.diag_index_secs);
+            let q = self.diag_pre;
+            println!("   pre parts: eta {:.1}s nostart {:.1}s rate {:.1}s wip {:.1}s index {:.1}s (setup {:.1}s road {:.1}s loop {:.1}s goals {:.1}s zones {:.1}s routes {:.1}s)", q[0], q[1], q[2], q[3], q[4], q[5], q[6], q[7], q[8], q[9], q[10]);
+            println!("   timing: pre {:.1}s (goal etas {:.1}s) plan {:.1}s run {:.1}s merge {:.1}s post {:.1}s write {:.1}s; workers load {:.1}s attempt {:.1}s",
+                d[0], self.diag_index_secs, self.diag_plan_secs.0, d[1], self.diag_plan_secs.1, d[2], d[3], d[4], d[5]);
         }
         if crate::movegenome::enabled() {
             println!("   {}", crate::movegenome::stats_line());
@@ -3275,6 +3807,30 @@ impl Engine {
         if let Some(g) = crate::gammaset::summary() {
             summary["gamma_set"] = g;
         }
+        if let Some(r) = self.road.as_mut() {
+            summary["road"] = serde_json::json!(r.summary());
+            r.save();
+        }
+        // The goals' checkpoints (GoalTop::cp), heaviest goal first.
+        let mut goals: Vec<serde_json::Value> = Vec::new();
+        for g in &self.goal_top {
+            let cps: Vec<serde_json::Value> = g
+                .cps
+                .iter()
+                .map(|&(wip, eta, n)| {
+                    let st = &self.tree.nodes[n as usize].st;
+                    serde_json::json!({ "node": n, "eta": eta, "wip": wip, "level": st.level, "area": st.area, "frame": st.frame, "pos": st.pos })
+                })
+                .collect();
+            if !cps.is_empty() {
+                goals.push(serde_json::json!({
+                    "key": g.key, "kind": g.obj.kind(), "weight": g.base, "eta0": g.h0, "eta1": g.h1,
+                    "wip0": self.tree.wip.first().copied().unwrap_or(0), "cps": cps,
+                }));
+            }
+        }
+        goals.sort_by(|a, b| b["weight"].as_f64().unwrap_or(0.0).total_cmp(&a["weight"].as_f64().unwrap_or(0.0)));
+        summary["goals"] = serde_json::json!(goals);
         summary["door_overshoot"] = serde_json::json!(crate::diag::door_overshoots());
         fs::write(format!("{}/summary.json", self.cfg.out_dir), serde_json::to_string_pretty(&summary)?)?;
         self.diag.window_starts.clear();
@@ -3366,12 +3922,15 @@ impl Engine {
             let tree = &self.tree;
             // From the parent (`Tree::load_into`: its save, or with sparse
             // saves its anchor's and the inputs), or from the root's save.
+            #[cfg(feature = "sm64coin")]
+            let mut replay = |_: Option<u32>, _: &[Vec<u8>]| -> Result<(St, crate::game::GameSave)> { unimplemented!("state tree: sm64coin feature") };
+            #[cfg(not(feature = "sm64coin"))]
             let mut replay = |from: Option<u32>, bases: &[Vec<u8>]| -> Result<(St, SaveState)> {
                 match from {
                     Some(p) => {
                         tree.load_into(p, &mut worker.base, bases)?;
                     }
-                    None => worker.base.load_state(&Delta::default().apply(bases)?)?,
+                    None => worker.base.load_state(&tree.nodes[0].save.apply(bases)?)?,
                 }
                 for p in &inputs {
                     worker.base.step_game(*p)?;
@@ -3395,7 +3954,7 @@ impl Engine {
             let base = match self.zone_base.get(&zone) {
                 Some(&b) => b,
                 None => {
-                    self.bases.push(save.as_bytes().to_vec());
+                    self.bases.push(crate::game::plain(&save).as_bytes().to_vec());
                     let b = (self.bases.len() - 1) as u16;
                     self.zone_base.insert(zone, b);
                     b
@@ -3606,7 +4165,7 @@ impl Engine {
             let base = match self.zone_base.get(&zone) {
                 Some(&b) => b,
                 None => {
-                    self.bases.push(packed.apply(&self.bases)?.into_bytes());
+                    self.bases.push(crate::game::into_plain(packed.apply(&self.bases)?).into_bytes());
                     let b = (self.bases.len() - 1) as u16;
                     self.zone_base.insert(zone, b);
                     b
@@ -3715,7 +4274,7 @@ impl Engine {
         let base = match self.zone_base.get(&zone) {
             Some(&b) => b,
             None => {
-                self.bases.push(packed.apply(&self.bases)?.into_bytes());
+                self.bases.push(crate::game::into_plain(packed.apply(&self.bases)?).into_bytes());
                 let b = (self.bases.len() - 1) as u16;
                 self.zone_base.insert(zone, b);
                 b
@@ -3854,24 +4413,72 @@ impl Engine {
         }
         // Stop on wall-clock time, or on emulated frames (max_frames) so runs
         // compare equally whatever the thread count or CPU sharing.
+        // OBRRT_STOP_EXIT_GRACE=<frames> (with OBRRT_ZONE_LOCK): stop this many
+        // emulated frames after the first good exit of the zone, or at once
+        // when it is 0; the frames after it are for a faster exit.
+        let grace: Option<u64> = std::env::var("OBRRT_STOP_EXIT_GRACE").ok().and_then(|v| v.parse().ok());
+        let mut stop_at: Option<u64> = None;
+        // OBRRT_STOP_STALL=<frames>: stop when the tree's work in progress
+        // (its best St::wip: red coins, chests, boss hits) and its progress
+        // (keys, stars) haven't improved for this many emulated frames. The
+        // budget then follows the tree: a course with nothing to build on
+        // gives up early; one gaining red coins keeps going (a fixed 150 M
+        // gave 4 of BoB's 8 red coins, 2026-11-09 w4-bob).
+        let stall: Option<u64> = std::env::var("OBRRT_STOP_STALL").ok().and_then(|v| v.parse().ok());
+        let (mut best_wip, mut best_prog, mut improved_at) = (i64::MIN, (0u8, 0i16), 0u64);
+        let mut idle_rounds = 0u32;
+        // Rounds in a row that emulated no frames: attempts from a doomed start (campaign t1 step 398: a coin leg
+        // from LLL with Mario in hard knockback at 1 health segment ran 4.5 M attempts of 0 frames for 7.6 hours,
+        // since the frame budget never came).
+        let (mut dead_rounds, mut last_frames) = (0u32, u64::MAX);
         while begin.elapsed() < Duration::from_secs_f64(self.cfg.minutes * 60.0)
             && self.cfg.max_frames.is_none_or(|m| self.total_frames < m)
+            && stop_at.is_none_or(|s| self.total_frames < s)
         {
+            if let (Some(g), None) = (grace, stop_at) {
+                if self.tree.good_exits > 0 {
+                    stop_at = Some(self.total_frames + g);
+                    println!("zone lock: first good exit at {} frames; stopping at {}", self.total_frames, self.total_frames + g);
+                }
+            }
+            if let Some(st) = stall {
+                let wip = self.tree.wip.iter().copied().max().unwrap_or(0);
+                let prog = (self.tree.frontier_progress.0, self.tree.frontier_progress.1);
+                if wip > best_wip || prog > best_prog || std::mem::take(&mut self.eta_improved) {
+                    (best_wip, best_prog, improved_at) = (wip.max(best_wip), prog.max(best_prog), self.total_frames);
+                } else if self.total_frames > improved_at + st + st * best_wip.max(0) as u64 / 4 && stop_at.is_none() {
+                    // The wait grows with the work done (a quarter of the stall
+                    // per unit of wip): BoB with 6 of 8 red coins stopped 50 M
+                    // after the sixth (campaign t1 step 101).
+                    println!("stall: no new work in progress since {} frames (best wip {best_wip}); stopping at {}", improved_at, self.total_frames);
+                    break;
+                }
+            }
             round += 1;
             let pre_t = Instant::now();
             // OBRRT_ETA_LEARN: this round's factors (merges only add samples).
+            let mut lap = Instant::now();
+            let mut tick = |k: usize, d: &mut [f64; 11]| {
+                d[k] += lap.elapsed().as_secs_f64();
+                lap = Instant::now();
+            };
             self.eta.snapshot();
+            tick(0, &mut self.diag_pre);
             if self.cfg.sampler_rate {
                 let p = self.cfg.rate;
                 if p.nostart_skip {
                     self.nostart_recheck();
                 }
+                tick(1, &mut self.diag_pre);
                 self.pool.rate_refresh(self.total_frames, &p);
             } else if self.cfg.entry_bandit {
                 self.pool.redraw(&mut self.rng);
             }
+            tick(2, &mut self.diag_pre);
             self.tree.wip_refresh();
+            tick(3, &mut self.diag_pre);
             self.index_frontier();
+            tick(4, &mut self.diag_pre);
             self.ne.budget = if self.cfg.new_eligible { ((self.cfg.round_plans as f64 * NE_SHARE).ceil() as usize).max(1) } else { 0 };
             if self.cfg.earliest {
                 self.ea.budget = ((self.cfg.round_plans as f64 * self.cfg.earliest_share).ceil() as usize).max(1);
@@ -3927,8 +4534,40 @@ impl Engine {
                 None => 0,
             };
             let mut plans: Vec<Plan> = (0..self.cfg.round_plans.saturating_sub(grafts.len() + shares.len() + n_polish))
-                .filter_map(|_| self.plan().inspect(|_| self.bc.made += 1))
+                .filter_map(|_| {
+                    let p = self.plan().inspect(|_| self.bc.made += 1);
+                    // OBRRT_ATTEMPT_MODEL: counted when planned, so the plans of
+                    // one round see each other (the model was trained on counts
+                    // in attempt order).
+                    if let Some(p) = p.as_ref().filter(|_| crate::attempt_model::model().is_some()) {
+                        *self.tried_kind.entry((p.stages[0].1.kind(), p.start)).or_default() += 1;
+                        *self.tried_node.entry(p.start).or_default() += 1;
+                    }
+                    p
+                })
                 .collect();
+            // Nothing to plan (a course with every star had: no frontier state
+            // is a base) spun forever before 2026-11-09 (campaign t1 step 97,
+            // TotWC, 40 minutes at one core, no frames): a few empty rounds end
+            // the run.
+            if plans.is_empty() && grafts.is_empty() && shares.is_empty() && n_polish == 0 {
+                idle_rounds += 1;
+                if idle_rounds >= 20 {
+                    println!("nothing to plan for {idle_rounds} rounds; stopping");
+                    break;
+                }
+            } else {
+                idle_rounds = 0;
+            }
+            if self.total_frames == last_frames {
+                dead_rounds += 1;
+                if dead_rounds >= 50 {
+                    println!("no frames emulated for {dead_rounds} rounds; stopping");
+                    break;
+                }
+            } else {
+                (dead_rounds, last_frames) = (0, self.total_frames);
+            }
             for _ in 0..n_polish {
                 if let Some(p) = self.plan_polish() {
                     plans.push(p);
@@ -3937,7 +4576,7 @@ impl Engine {
             if self.near.on.is_some() {
                 for (i, p) in plans.iter_mut().enumerate() {
                     let o = &p.stages[0].1;
-                    if self.bc.is_pending(i) || p.rewire.is_some() || p.polish.is_some() || o.modal() || !o.fixed().is_none() {
+                    if self.bc.is_pending(i) || p.rewire.is_some() || p.polish.is_some() || p.seed.is_some() || o.modal() || !o.fixed().is_none() {
                         continue;
                     }
                     p.seed = self.near.pick(&self.tree, &o.key(), p.start);
@@ -4060,7 +4699,7 @@ impl Engine {
                     let mut rng = SmallRng::seed_from_u64(*seed);
                     let stages: Vec<&dyn Objective> = plan.stages.iter().map(|(_, o)| o.as_ref()).collect();
                     let base = tree.base_of(plan.start);
-                    let pack = |s: &SaveState| Delta::new(base, &bases[base as usize], s);
+                    let pack = |s: &crate::game::GameSave| Delta::new(base, &bases[base as usize], s);
                     let novel = |k: u64, f: u32| tree.dense_novel(k, f);
                     let req = dense.map(|d| crate::ga::DenseReq {
                         modes: d.modes,
@@ -4111,7 +4750,11 @@ impl Engine {
             let merge_t = Instant::now();
             for (i, (plan, r)) in plans.iter().zip(results).enumerate() {
                 let bc = self.bc.is_pending(i).then(|| (self.tree.nodes.len(), r.as_ref().ok().map(crate::backchain::outcome)));
-                if plan.seed.is_some() {
+                if plan.stages[0].1.kind() == "Road::Leg" {
+                    if let (Some(road), Ok(att)) = (self.road.as_mut(), r.as_ref()) {
+                        road.stats.legs_ok += att.segments.first().is_some_and(|s| s.success) as u64;
+                    }
+                } else if plan.seed.is_some() {
                     if let Ok(att) = r.as_ref() {
                         self.near.stats.seed_met += att.ga.and_then(|g| g.seed).is_some_and(|s| s.0) as u64;
                         self.near.stats.successes += att.segments.first().is_some_and(|s| s.success) as u64;
@@ -4251,4 +4894,12 @@ fn same_state(a: &St, b: &St) -> bool {
         && a.level == b.level
         && a.area == b.area
         && objs
+}
+
+/// OBRRT_ANY_EXIT=1: this run is only to leave the course (search/src/tree.rs).
+fn any_exit() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    // OBRRT_FINAL=1 (the last search, BitS and the Bowser 3 arena): at 120 stars every course counts as done, which
+    // planned nothing at all ("nothing to plan for 20 rounds", b3 test from a BitS state with its star had).
+    *ON.get_or_init(|| std::env::var("OBRRT_ANY_EXIT").is_ok_and(|v| v == "1") || std::env::var("OBRRT_FINAL").is_ok_and(|v| v == "1"))
 }

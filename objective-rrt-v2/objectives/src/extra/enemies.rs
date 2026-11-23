@@ -14,6 +14,8 @@
 //!   gate to BoB's star 6 (the speedrun clip; see `clip.rs`).
 //! - `Boo::HitFromBehind`: small Boos (blue coins, ghost hunt and
 //!   merry-go-round Big Boo progress) and the courtyard's caged Boo.
+//! - `Boo::GhostHunt`: all five of BBH's ghost hunt Boos (star 1).
+//! - `MerryGoRound::Enter`: into BBH's merry-go-round enclosure (star 2).
 //! - `MrI::Circle`, `MrBlizzard::Circle`: run circles round them.
 //! - `Klepto::Hit`: make the condor drop SSL's star or Mario's cap.
 //! - `Ukiki::ToCage`, `Ukiki::RetrieveCap`: TTM's monkeys.
@@ -40,7 +42,10 @@ mod bully;
 mod circle;
 pub mod clip;
 mod common;
+mod eel;
 mod klepto;
+mod merrygoround;
+pub mod mansion;
 mod moneybag;
 mod piranha;
 mod throw;
@@ -73,10 +78,21 @@ pub fn generate(b: &St, o: &Obj, out: &mut Vec<Arc<dyn Objective>>) {
             if x.base_criteria(b) {
                 out.push(Arc::new(x));
             }
+            // BBH's big one: its climb under the vanish cap as a stage of its own.
+            for (gate, boxed) in [(false, true), (false, false), (true, false)] {
+                if let Some(c) = circle::Climb::new(b, o, gate, boxed) {
+                    out.push(Arc::new(c));
+                }
+            }
         }
         "bhvMrBlizzard" => out.push(Arc::new(circle::Circle::mr_blizzard(b, o))),
         "bhvKlepto" => {
             if let Some(x) = klepto::Hit::new(b, o) {
+                out.push(Arc::new(x));
+            }
+        }
+        "bhvUnagi" => {
+            if let Some(x) = eel::TouchTail::new(b, o) {
                 out.push(Arc::new(x));
             }
         }
@@ -103,6 +119,12 @@ pub fn generate(b: &St, o: &Obj, out: &mut Vec<Arc<dyn Objective>>) {
 /// Objectives that come from the level rather than one object (called once
 /// per `b`).
 pub fn generate_level(b: &St, out: &mut Vec<Arc<dyn Objective>>) {
+    if let Some(x) = boo::GhostHunt::new(b) {
+        out.push(Arc::new(x));
+    }
+    if let Some(x) = merrygoround::Enter::new(b) {
+        out.push(Arc::new(x));
+    }
     if let Some(x) = clip::GateClip::new(b).filter(|_| super::tech::enabled("gateclip")) {
         if super::tech::freesetup::on() {
             out.extend(x.free_variants().into_iter().map(|v| Arc::new(v) as Arc<dyn Objective>));

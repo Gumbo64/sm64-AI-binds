@@ -11,6 +11,8 @@
 //!   one left, from states with more red coins first. The 8th makes the red
 //!   coin star appear (bhvHiddenRedCoinStar / bhvBowserCourseRedCoinStar,
 //!   hidden_star.inc.c), which `Star::Collect` then takes.
+//! - `RedCoin::Ride`: HMC's red coins on the checkered track platform's route
+//!   (the "elevate" of "Elevate for 8 Red Coins"); see [`RedRide`].
 //! - `CrazyBox::Bounce(id)`: a bhvJumpingBox (jumping_box.inc.c) is grabbed;
 //!   pressing A while holding it starts ACT_CRAZY_BOX_BOUNCE
 //!   (mario_actions_stationary.c / _moving.c), and the third bounce's landing
@@ -161,8 +163,19 @@ impl RedNext {
         if s.zone() != self.zone {
             return None;
         }
-        s.objects().iter().filter(|o| o.bhv_name() == "bhvRedCoin").map(|o| o.pos).min_by(|a, b| s.dist(*a).total_cmp(&s.dist(*b)))
+        // OBRRT_RED_V2=1 with OBRRT_GEO=1: the nearest by walking distance where the mesh knows it (a coin
+        // behind a wall or up a cliff is far), else straight.
+        let d = |p: [f32; 3]| if red_v2() { obrrt_core::geo::path_dist(s.zone(), s.pos, p).unwrap_or_else(|| s.dist(p)) } else { s.dist(p) };
+        s.objects().iter().filter(|o| o.bhv_name() == "bhvRedCoin").map(|o| o.pos).min_by(|a, b| d(*a).total_cmp(&d(*b)))
     }
+}
+
+/// OBRRT_RED_V2=1: red coins by walking distance and with longer attempts (600 frames, not 240). The red-coin
+/// stars were the search's weakest: HMC `RedCoin::Next` 1 success of 768 attempts; t1 spent 3.1 B frames on
+/// HMC's and ended with 7 of 8 coins.
+fn red_v2() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("OBRRT_RED_V2").is_ok_and(|v| v == "1"))
 }
 
 /// RedCoin::Next start bias per red coin already had: v1's 2 heuristic
@@ -181,13 +194,19 @@ impl Objective for RedNext {
         format!("RedNext {:?}", self.zone)
     }
     fn obj_weight(&self, _b: &St) -> f64 {
-        5.0
+        // OBRRT_GOAL_WIDE=1: a goal (weight 25), so the goal focus builds on
+        // the states nearest the next coin, ranked with their red coins
+        // (engine `index_frontier`, OBRRT_GOAL_WIP_W). No red-coin star had
+        // been found by any tree before 2026-11-09: states with 2 of 8 were a
+        // few hundred among tens of thousands and almost never a start.
+        static W: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        if *W.get_or_init(|| std::env::var("OBRRT_GOAL_WIDE").is_ok_and(|v| v == "1")) { 25.0 } else { 5.0 }
     }
     fn base_criteria(&self, s: &St) -> bool {
         self.nearest(s).is_some() && self.star.is_none_or(|(c, i)| !s.has_star(c, i))
     }
     fn ga_budget(&self) -> Option<obrrt_core::GaBudget> {
-        Some(obrrt_core::GaBudget { population: 20, generations: 5, horizon: 240 })
+        Some(obrrt_core::GaBudget { population: 20, generations: 5, horizon: if red_v2() { 600 } else { 240 } })
     }
     fn eta(&self, s: &St, start: &St, _mem: &mut Mem) -> Eta {
         if s.zone() != self.zone {
@@ -196,7 +215,11 @@ impl Objective for RedNext {
         if s.alive() && s.red_coins > start.red_coins {
             return Eta::Done;
         }
-        approach(s, self.nearest(s))
+        // WDW's downtown: the coins' boxes break only on dry ground (rides/water.rs `town_drain_frames`).
+        match approach(s, self.nearest(s)) {
+            Eta::Frames(f) => Eta::Frames(f + crate::extra::rides::water::town_drain_frames(s)),
+            e => e,
+        }
     }
     fn start_bias(&self, s: &St) -> f64 {
         // v1 ranked by red coins left (2 heuristic units each), then the
@@ -211,6 +234,190 @@ impl Objective for RedNext {
     }
     fn steer_target(&self, s: &St) -> Option<[f32; 3]> {
         self.nearest(s)
+    }
+    fn exists_in(&self, s: &St) -> bool {
+        self.base_criteria(s)
+    }
+}
+
+/// HMC's checkered platform (`bhvPlatformOnTrack`, behParam 0x09A40000 in hmc/script.c, path 4 of
+/// sPlatformOnTrackPaths = hmc_seg7_trajectory_0702B86C): it waits for Mario to stand on it for 20 frames, then
+/// follows the waypoints below at 10 units a frame (platform_on_track.inc.c, `act_move_along_track`, ~1400
+/// frames to the end); if Mario is off it for 150 frames it blinks and resets to waypoint 0.
+pub(crate) const HMC_TRACK: [[f32; 3]; 14] = [
+    [1272.0, 2000.0, 5120.0],
+    [1272.0, 2000.0, 3500.0],
+    [1800.0, 2100.0, 3000.0],
+    [4100.0, 2100.0, 3000.0],
+    [4640.0, 2160.0, 3980.0],
+    [5416.0, 2100.0, 3642.0],
+    [6720.0, 1950.0, 4440.0],
+    [6700.0, 1880.0, 5040.0],
+    [6060.0, 1880.0, 5640.0],
+    [5440.0, 1850.0, 6200.0],
+    [3820.0, 1990.0, 7130.0],
+    [1270.0, 1990.0, 7130.0],
+    [1272.0, 2000.0, 6000.0],
+    [1272.0, 2000.0, 5400.0],
+];
+const TRACK_SPEED: f64 = 10.0;
+/// Standing on it before it starts (`act_wait_for_mario`: oTimer > 20).
+const TRACK_WAIT: f64 = 20.0;
+/// Blinking out and resetting after Mario got off (150 + 40 blinks).
+const TRACK_RESET: f64 = 190.0;
+/// A red coin counts as on the track when within this horizontally and 0..TRACK_LIFT above it (a jump from the
+/// platform takes it: coin 7 (4640, 2250, 3980) is 90 above waypoint 4, coin 8 (6400, 2090, 5320) is 210 above
+/// the leg from waypoint 7 to 8).
+const TRACK_NEAR: f32 = 250.0;
+const TRACK_LIFT: f32 = 400.0;
+/// Done when the platform is this close (along the track) before the coin's nearest point, with Mario on it.
+const TRACK_LEAD: f32 = 120.0;
+
+pub(crate) fn track_len() -> Vec<f32> {
+    let mut l = vec![0.0];
+    for w in HMC_TRACK.windows(2) {
+        let n = l.len();
+        let h = ((w[1][0] - w[0][0]).powi(2) + (w[1][2] - w[0][2]).powi(2)).sqrt();
+        l.push(l[n - 1] + h);
+    }
+    l
+}
+
+/// Position along the track (arc length) of the point nearest `p` horizontally, and that distance and the
+/// track's height there.
+pub(crate) fn track_project(p: [f32; 3]) -> (f32, f32, f32) {
+    let len = track_len();
+    let mut best = (0.0, f32::MAX, 0.0);
+    for (i, w) in HMC_TRACK.windows(2).enumerate() {
+        let (dx, dz) = (w[1][0] - w[0][0], w[1][2] - w[0][2]);
+        let l2 = dx * dx + dz * dz;
+        let t = (((p[0] - w[0][0]) * dx + (p[2] - w[0][2]) * dz) / l2).clamp(0.0, 1.0);
+        let (qx, qz) = (w[0][0] + t * dx, w[0][2] + t * dz);
+        let d = ((p[0] - qx).powi(2) + (p[2] - qz).powi(2)).sqrt();
+        if d < best.1 {
+            best = (len[i] + t * l2.sqrt(), d, w[0][1] + t * (w[1][1] - w[0][1]));
+        }
+    }
+    best
+}
+
+/// `RedCoin::Ride` (HMC star 2, "Elevate for 8 Red Coins"): ride the checkered track platform to where it
+/// passes the red coins still left. The red coin room's coins 7 and 8 hang over its route and nowhere else is
+/// within reach of them: coin 8 at (6400, 2090, 5320) sits on an isolated beam 160 above the platform's leg
+/// (6700, 1880, 5040) to (6060, 1880, 5640), reached by standing on the platform for ~900 frames (its route
+/// from waypoint 0 is 8.7 k units at 10 a frame; `RedCoin::Next` heads for the nearest coin in a straight line
+/// over 240 or 600 frames, i.e. away from the platform, and its states with 6 or 7 coins never boarded it:
+/// t1 steps 299-307 and 681-685 ended at 6 to 7 of 8). The ETA is the board (walk to it, 20 frames wait) plus
+/// the track distance to the nearest ahead coin; Done: standing on it within `TRACK_LEAD` before that coin
+/// (the jump is then `RedCoin::Next`'s, a few frames), or a red coin taken.
+pub struct RedRide {
+    zone: (u16, u8),
+}
+
+impl RedRide {
+    pub fn new(b: &St) -> Option<RedRide> {
+        if b.level as u32 != obrrt_core::layout::LEVEL_HMC || b.has_star(6, 1) || b.red_coins >= 8 {
+            return None;
+        }
+        let r = RedRide { zone: b.zone() };
+        (r.plat(b).is_some() && r.coins(b).next().is_some()).then_some(r)
+    }
+
+    fn plat<'a>(&self, s: &'a St) -> Option<&'a Obj> {
+        if s.zone() != self.zone {
+            return None;
+        }
+        s.objects().iter().find(|o| o.bhv_name() == "bhvPlatformOnTrack")
+    }
+
+    /// Arc positions of the red coins left that the track passes.
+    fn coins<'a>(&self, s: &'a St) -> impl Iterator<Item = f32> + 'a {
+        s.objects().iter().filter(|o| o.bhv_name() == "bhvRedCoin").filter_map(|o| {
+            let (a, d, y) = track_project(o.pos);
+            (d < TRACK_NEAR && (0.0..TRACK_LIFT).contains(&(o.pos[1] - y))).then_some(a)
+        })
+    }
+
+    fn on(&self, s: &St, p: &Obj) -> bool {
+        s.floor_obj == Some(p.slot) && ((s.pos[0] - p.pos[0]).powi(2) + (s.pos[2] - p.pos[2]).powi(2)).sqrt() < 400.0
+    }
+
+    /// Frames until the platform is `lead` before the nearest coin ahead of it (or, past the last, after it has
+    /// reset and come round); with the flag: whether it is already there.
+    fn ride(&self, s: &St, p: &Obj) -> (f64, bool) {
+        let len = *track_len().last().unwrap();
+        let (a, d, _) = track_project(p.pos);
+        // A platform off its track (falling at the end) restarts.
+        let a = if d < 100.0 { a } else { 0.0 };
+        let waiting = if p.action == 1 { TRACK_WAIT } else { 0.0 };
+        let mut best: Option<f32> = None;
+        for c in self.coins(s) {
+            let ahead = c - TRACK_LEAD - a;
+            if ahead >= -TRACK_LEAD * 2.0 {
+                best = Some(best.map_or(ahead, |b: f32| b.min(ahead)));
+            }
+        }
+        match best {
+            Some(ahead) => (waiting + ahead.max(0.0) as f64 / TRACK_SPEED, ahead <= 0.0),
+            None => {
+                let first = self.coins(s).fold(f32::MAX, f32::min);
+                ((len - a) as f64 / TRACK_SPEED + TRACK_RESET + TRACK_WAIT + (first - TRACK_LEAD).max(0.0) as f64 / TRACK_SPEED, false)
+            }
+        }
+    }
+}
+
+impl Objective for RedRide {
+    /// Dense adds (`OBRRT_DENSE_EVERY=obj`): a state every 15 frames, none mid-arc.
+    fn dense_keep(&self) -> obrrt_core::DenseKeep {
+        obrrt_core::DenseKeep::Every { n: 15, air: false }
+    }
+    fn kind(&self) -> &'static str {
+        "RedCoin::Ride"
+    }
+    fn key(&self) -> String {
+        format!("RedRide {:?}", self.zone)
+    }
+    fn obj_weight(&self, _b: &St) -> f64 {
+        // A goal (over OBRRT_GOAL_MIN 20) like RedCoin::Next: the goal focus then builds on the states nearest
+        // the platform. At 8 (a stepping stone) the first test (h2, 15 M frames) made 10 attempts in all.
+        25.0
+    }
+    fn base_criteria(&self, s: &St) -> bool {
+        !s.has_star(6, 1)
+            && self.coins(s).next().is_some()
+            && self.plat(s).is_some_and(|p| p.action != 4 && !(self.on(s, p) && self.ride(s, p).1))
+    }
+    fn ga_budget(&self) -> Option<obrrt_core::GaBudget> {
+        Some(obrrt_core::GaBudget { population: 16, generations: 5, horizon: 400 })
+    }
+    fn eta(&self, s: &St, start: &St, _mem: &mut Mem) -> Eta {
+        if s.zone() != self.zone {
+            return Eta::Lost;
+        }
+        if s.alive() && s.red_coins > start.red_coins {
+            return Eta::Done;
+        }
+        let Some(p) = self.plat(s) else { return Eta::Lost };
+        let (ride, there) = self.ride(s, p);
+        if self.on(s, p) {
+            return if there && s.alive() { Eta::Done } else { Eta::Frames(ride) };
+        }
+        // Not on it: the straight line to the platform (walking distance is wrong there: the mesh has no floor under it, only the
+        // pit's far below, so `path_dist` is off by thousands), then the ride.
+        Eta::Frames(frames_for(s.dist(p.pos)) + 10.0 + ride)
+    }
+    fn success_value(&self) -> f64 {
+        2.0
+    }
+    fn needs_objects(&self) -> bool {
+        true
+    }
+    fn arrival(&self, _s: &St) -> obrrt_core::Arrival {
+        obrrt_core::Arrival::Stop
+    }
+    fn steer_target(&self, s: &St) -> Option<[f32; 3]> {
+        self.plat(s).map(|p| p.pos)
     }
     fn exists_in(&self, s: &St) -> bool {
         self.base_criteria(s)
@@ -349,5 +556,43 @@ mod tests {
         // Dropped and deleted without coins: lost.
         let gone = st(9, [600.0, 0.0, 0.0], vec![]);
         assert_eq!(fold(&c, &[far, gone]).1[1], Eta::Lost);
+    }
+
+    /// HMC's track platform: walk to it, ride it (ETA falls 1 a frame, the wait counted), Done standing on it
+    /// 120 before red coin 8's nearest point (6400, 2090, 5320), which sits 210 above the leg 7 -> 8.
+    #[test]
+    fn red_ride_follows_the_track() {
+        use obrrt_core::layout::LEVEL_HMC;
+        let coin = |p| obj("bhvRedCoin", 5, p, 0, 0);
+        let plat = |p: [f32; 3], act| obj("bhvPlatformOnTrack", 9, p, act, 0);
+        let objs = |pl: [f32; 3], act| vec![coin([6400.0, 2090.0, 5320.0]), plat(pl, act)];
+        let base = st(LEVEL_HMC, [800.0, 2048.0, 5120.0], objs([1272.0, 2000.0, 5120.0], 1));
+        let r = RedRide::new(&base).expect("coin 8 is on the track");
+        let at = |pl: [f32; 3], on: bool| {
+            let mut s = st(LEVEL_HMC, pl, objs(pl, 2));
+            s.pos[1] += 60.0;
+            s.floor_obj = on.then_some(9);
+            s
+        };
+        let wait = {
+            let mut s = at([1272.0, 2000.0, 5120.0], true);
+            s.objects = base.objects.clone();
+            s
+        };
+        let mid = at([4640.0, 2160.0, 3980.0], true);
+        let late = at([6700.0, 1880.0, 5040.0], true);
+        let there = at([6476.0, 1880.0, 5250.0], true);
+        let (a, b, c, d, e) = (
+            r.eta(&base, &base, &mut Mem::default()).frames(),
+            r.eta(&wait, &base, &mut Mem::default()).frames(),
+            r.eta(&mid, &base, &mut Mem::default()).frames(),
+            r.eta(&late, &base, &mut Mem::default()).frames(),
+            r.eta(&there, &base, &mut Mem::default()),
+        );
+        assert!(a > b && b > c && c > d, "{a} {b} {c} {d}");
+        assert_eq!(e, Eta::Done, "late {d}");
+        // Off the platform at the same place is further than on it.
+        let off = at([4640.0, 2160.0, 3980.0], false);
+        assert!(r.eta(&off, &base, &mut Mem::default()).frames() >= c);
     }
 }

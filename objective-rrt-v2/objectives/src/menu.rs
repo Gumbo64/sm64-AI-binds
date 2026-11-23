@@ -305,14 +305,19 @@ impl SelectAct {
             }
         } else if (1..=6).contains(&b.act_init) && !b.has_star(course, b.act_init - 1) {
             acts.push(b.act_init);
+        } else if b.act_init > 6 {
+            // Five act stars and the 100-coin star (six obtained): seven
+            // slots show, every one selectable, and the act under the cursor
+            // loads (bhv_act_selector_init sets the default to the slot count).
+            acts.extend((1..=6u8).filter(|&a| !b.has_star(course, a - 1)));
         }
         if acts.is_empty() {
             // Course done: still leave the screen (the first missing act or 1).
             acts.push(b.act_init.clamp(1, 6));
         }
         // Selectable acts, in cursor order: collected ones and the first
-        // missing one (all six once the acts are done).
-        let selectable: Vec<u8> = (1..=6u8).filter(|&a| acts_done || b.has_star(course, a - 1) || a == b.act_init).collect();
+        // missing one (all six once the acts are done, or with seven slots).
+        let selectable: Vec<u8> = (1..=6u8).filter(|&a| acts_done || b.act_init > 6 || b.has_star(course, a - 1) || a == b.act_init).collect();
         acts.into_iter()
             .map(|act| {
                 let target = selectable.iter().position(|&a| a == act).unwrap_or(0) as i32;

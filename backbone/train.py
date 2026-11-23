@@ -53,6 +53,21 @@ def v4_sources():
     return out
 
 
+def v7_sources():
+    """v2-era data biased to fast play (rlv2/extract_v7.sh): TAS, best routes
+    (no nodes, like the TAS), a little of two v2 trees."""
+    import glob as _g
+    v2 = os.path.join(HERE, "..", "objective-rrt-v2", "runs")
+    out = []
+    for d in sorted(_g.glob(os.path.join(HERE, "data", "v7", "*"))):
+        run = os.path.basename(d)
+        if not os.path.isdir(os.path.join(d, "s0")):
+            continue
+        out.append((d, None if run.startswith("r-") else os.path.join(v2, run, "nodes.csv")))
+    out.append((os.path.join(HERE, "data", "tas120"), None))
+    return out
+
+
 class Stream(torch.utils.data.IterableDataset):
     def __init__(self, store, batch, seed, tas_frac):
         self.store, self.batch, self.seed, self.tas_frac = store, batch, seed, tas_frac
@@ -473,6 +488,7 @@ def main():
     ap.add_argument("--v4", action="store_true", help="all extracted trees, time-to-star labels and goals")
     ap.add_argument("--init", default=None, help="checkpoint to start from")
     ap.add_argument("--edges", action="store_true", help="v6: credit-weighted objective-rrt edges (subgoal edge mode)")
+    ap.add_argument("--v7", action="store_true", help="v2-era sources (data/v7 + TAS), no star labels")
     ap.add_argument("--class-min", dest="class_min", action="store_true",
                     help="time-to-star labels: fastest of any tree from the same state class (v5)")
     cfg = ap.parse_args()
@@ -484,7 +500,7 @@ def main():
     sch = Schema()
     nodes = os.path.join(RUN, "nodes.csv")
     t0 = time.time()
-    srcs = v4_sources() if cfg.v4 else SOURCES
+    srcs = v7_sources() if cfg.v7 else v4_sources() if cfg.v4 else SOURCES
     tr = Store(srcs, nodes, sch).setup_pairs("train")
     va = Store(srcs, nodes, sch).setup_pairs("val")
     if cfg.v4:
@@ -534,7 +550,7 @@ def main():
     if mlflow.get_experiment_by_name(exp) is None:
         mlflow.create_experiment(exp, artifact_location=os.path.join(HERE, "mlartifacts"))
     mlflow.set_experiment(exp)
-    ckdir = os.path.join(HERE, "checkpoints")
+    ckdir = os.path.join(HERE, "checkpoints", "v7") if cfg.v7 else os.path.join(HERE, "checkpoints")
     os.makedirs(ckdir, exist_ok=True)
     p1 = int(cfg.steps * cfg.phase1)
     with mlflow.start_run(run_name=cfg.run_name) as run:

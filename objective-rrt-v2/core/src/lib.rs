@@ -196,6 +196,8 @@ pub struct St {
     /// `actionTimer`: frames in the current action for actions that count
     /// it (e.g. the long-jump landing's A window).
     pub action_timer: u16,
+    /// Frames left on Mario's cap (`MARIO_capTimer`, 0 without a timed cap): the wing/metal/vanish cap's window.
+    pub cap_timer: u16,
     /// Normal of the wall Mario last collided with (`m->wall`), if any. The
     /// game sets it in its ground and air steps and doesn't always clear it,
     /// so it can be a frame stale.
@@ -286,6 +288,9 @@ impl St {
     /// compared within a level.
     pub fn wip(&self) -> i64 {
         let mut w = self.red_coins.max(0) as i64 + self.level_changes();
+        // Cap switches pressed (save flag bits 1-3): pressing one is work done
+        // that neither the star count nor the objects show.
+        w += (self.save_flags & 0xE).count_ones() as i64;
         if let Some(f) = WIP_EXTRA.get() {
             w += f(self);
         }
@@ -295,6 +300,13 @@ impl St {
                 "bhvWigglerHead" | "bhvEyerokHand" => 4,
                 "bhvStarSpawnCoordinates" | "bhvSpawnedStar" | "bhvSpawnedStarNoLevelExit" => {
                     w += 3;
+                    continue;
+                }
+                // A treasure chest opened in order (treasure_chest.inc.c: the
+                // bottom's action 1; a wrong one resets the set): the JRB ship
+                // and cave and DDD's chests, work no count shows (2026-11-09).
+                "bhvTreasureChestBottom" => {
+                    w += (o.action == 1) as i64;
                     continue;
                 }
                 _ => continue,
@@ -356,6 +368,14 @@ impl St {
         self.in_dialog() || self.in_save_menu() || self.act_select
     }
 
+    /// The ending has begun: the castle grounds (level 16) after the Grand Star's jumbo-star flight, in Peach's
+    /// scene or the credits (sm64.h `ACT_END_PEACH_CUTSCENE` 0x1918, `ACT_CREDITS_CUTSCENE` 0x1319,
+    /// `ACT_END_WAVING_CUTSCENE` 0x131A). It needs no input and never gives control back (tools/seg120/credits.py),
+    /// so a search's press-A-until-in-control tail stops here instead of counting the run as lost.
+    pub fn ending(&self) -> bool {
+        self.level == 16 && matches!(self.action, 0x1918 | 0x1319 | 0x131A)
+    }
+
     /// Whether star `index` (0-5 acts, 6 the 100-coin star) of `course` is
     /// collected.
     pub fn has_star(&self, course: i16, index: u8) -> bool {
@@ -363,7 +383,14 @@ impl St {
     }
 
     /// Whether every star of `course` is collected (main courses have 7,
-    /// Bowser courses 1, the Princess's Secret Slide 2, other secrets 1).
+    /// Bowser courses 1, the Princess's Secret Slide 2, other secrets 1),
+    /// and, in a cap course (20 metal, 21 wing, 22 vanish), its switch is
+    /// pressed (save_file.h SAVE_FLAG_HAVE_METAL_CAP 0x4, _WING_CAP 0x2,
+    /// _VANISH_CAP 0x8). Without the switch a cap course counted as done
+    /// with its star, and the engine plans nothing from the states of a done
+    /// course (goal cells, the new-eligible and early-arrival queues): the
+    /// 26-star route of campaign t1 left the wing cap tower with the star
+    /// and the switch unpressed (2026-11-10).
     pub fn course_done(&self, course: i16) -> bool {
         let all = match course {
             1..=15 => 0x7F,
@@ -371,7 +398,13 @@ impl St {
             16..=24 => 0x01,
             _ => return false,
         };
-        self.course_stars[course as usize - 1] & all == all
+        let cap = match course {
+            20 => 0x4,
+            21 => 0x2,
+            22 => 0x8,
+            _ => 0,
+        };
+        self.save_flags & cap == cap && self.course_stars[course as usize - 1] & all == all
     }
 
     pub fn objects(&self) -> &[Obj] {
@@ -391,6 +424,21 @@ impl St {
         dist(self.pos, p)
     }
 
+    /// Where the state counts as being for a climb's costs (search/src/road.rs,
+    /// `Road::Climb`): its position, or for an airborne state the floor under
+    /// it. A wall-kick chain's peak is no height gained unless there is
+    /// something to land on: in SSL's pyramid the corner cell 1100 units above
+    /// the pole's top made the pole's top the "nearest" state to the star, and
+    /// every state further along the way up ranked behind it (camp-sslcp-0001,
+    /// 2026-11-10). Flying and cannon shots keep their own height.
+    pub fn footing(&self) -> [f32; 3] {
+        let air = self.action & 0x1C0 == 0x080 && self.action != layout::ACT_FLYING && self.action != layout::ACT_SHOT_FROM_CANNON;
+        if air && self.floor_y > -10000.0 && self.floor_y < self.pos[1] {
+            [self.pos[0], self.floor_y, self.pos[2]]
+        } else {
+            self.pos
+        }
+    }
     pub fn hdist(&self, p: [f32; 3]) -> f32 {
         ((self.pos[0] - p[0]).powi(2) + (self.pos[2] - p[2]).powi(2)).sqrt()
     }

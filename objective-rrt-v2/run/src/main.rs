@@ -496,6 +496,21 @@ fn main() -> Result<()> {
         root.objects().len(),
         rayon_threads()
     );
+    // OBRRT_GEO=1: walkable distances over the level's floors (core/src/geo.rs),
+    // for the goal focus's ranking and its approach moves (search/src/engine.rs).
+    if std::env::var("OBRRT_GEO").is_ok_and(|v| v == "1") {
+        obrrt_core::geo::set_enabled(true);
+    }
+    // OBRRT_ZONE_LOCK=1: the tree stays in the root's level (search/src/tree.rs).
+    // Every star count stays open unless OBRRT_STAR_WINDOW says otherwise: a
+    // star that doesn't end the visit (100 coins) mustn't close the others.
+    if std::env::var("OBRRT_ZONE_LOCK").is_ok_and(|v| v == "1") {
+        obrrt_search::tree::ZONE_LOCK.store(root.level as i32, std::sync::atomic::Ordering::Relaxed);
+        if std::env::var_os("OBRRT_STAR_WINDOW").is_none() {
+            obrrt_search::tree::STAR_WINDOW.store(99, std::sync::atomic::Ordering::Relaxed);
+        }
+        println!("zone lock: level {}", root.level);
+    }
     let save = game.save_state();
     // OBRRT_SPEC=<file.json or dir>: declarative objectives (spec/) added to
     // the Registry's; unset, the Registry itself.

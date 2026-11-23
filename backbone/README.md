@@ -71,3 +71,15 @@ What each point label ("Objectives that made the states here") means in a race:
 
 A follow run has one chain: `inverse` (model inputs) and `reference`
 (the reference's inputs, used in dialogs, menus and cutscenes).
+
+## rlv2: route RL and the trace follower (objective-rrt-v2)
+
+`rlv2/` uses `objective-rrt-v2/pyenv` built privately into `rlv2/lib/sm64env.so`
+(from a source snapshot in `objective-rrt-v2/builds/rl-src`, target `builds/rl-target`; the venv's
+`sm64env` stays v1's). MLflow experiment `sm64-rl`. Launch with `rlv2/launch.sh <name> <log> <cmd...>`
+(detached, nice 5, real PID in `run/rlv2/<name>.pid`).
+
+- `train_rl.py`, `eval_legs.py`: PPO on route legs (`--seq`: several in a row), GA's ETA reward, resets from savestates along demos.
+- `train_bc.py`, `train_follow.py`, `eval_follow.py`, `eval_whole.py`, `diag_follow.py`: a deterministic follower of any waypoints.
+  `--ref` adds the trace's aligned inputs to the observation; `--z-ckpt` adds the backbone's z.
+- `extract_v7.sh`, `train.py --v7`: backbone v7 on v2-era data (`data/v7` + `data/tas120`), checkpoints in `checkpoints/v7`.

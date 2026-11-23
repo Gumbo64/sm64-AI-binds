@@ -88,6 +88,9 @@ fn nearest<'a>(s: &'a St, f: impl Fn(&Obj) -> bool) -> Option<&'a Obj> {
 /// success (the spot, or this star only, not any star collected on the
 /// way) is `Done`; out of the zone without the star, `Lost`.
 fn reach_eta(s: &St, zone: (u16, u8), pos: [f32; 3], r: f32, star: (i16, u8)) -> Eta {
+    // SSL / SL (OBRRT_GEO=1): the walkable distance (walk.rs); Done and the
+    // reach radius stay straight-line (the spot is in the air, a star's
+    // hitbox).
     if s.has_star(star.0, star.1) {
         return Eta::Done;
     }
@@ -95,7 +98,7 @@ fn reach_eta(s: &St, zone: (u16, u8), pos: [f32; 3], r: f32, star: (i16, u8)) ->
         return Eta::Lost;
     }
     let d = s.dist(pos);
-    if d <= r { Eta::Done } else { Eta::Frames(frames_for(d)) }
+    if d <= r { Eta::Done } else { Eta::Frames(frames_for(crate::walk::dist(s, pos).max(d))) }
 }
 
 /// How close counts as reaching a spot: a star's hitbox is 80 wide
@@ -170,8 +173,8 @@ impl Objective for ReachSpot {
     fn success_value(&self) -> f64 {
         5.0
     }
-    fn steer_target(&self, _s: &St) -> Option<[f32; 3]> {
-        Some(self.spot.pos)
+    fn steer_target(&self, s: &St) -> Option<[f32; 3]> {
+        Some(crate::walk::steer(s, self.spot.pos))
     }
     fn kinship(&self) -> u32 {
         10
@@ -418,6 +421,9 @@ impl Objective for Coins {
         if s.level != self.level {
             return Eta::Lost;
         }
+        if twostar::on() {
+            return twostar::coins_plan_eta(s, self.target);
+        }
         coins_eta(s.coins, self.target, nearest_coin(s).map(|c| s.dist(c)))
     }
     fn success_value(&self) -> f64 {
@@ -435,6 +441,162 @@ impl Objective for Coins {
 }
 
 // ---------------------------------------------------------------------------
+// THI: Five Itty Bitty Secrets.
+
+/// `Secrets::Tour`: THI's tiny island (area 2) holds the five
+/// `bhvHiddenStarTrigger` of "Five Itty Bitty Secrets" (star 4, bit 3 of the
+/// save flags; levels/thi/areas/2/macro.inc.c: the lake shore (1980, -880,
+/// 2100) and (-1330, -900, 1945), the mountainside (140, -153, 360) and
+/// (-1392, 92, -633), and the summit pool (0, 1150, -450) under the mountain
+/// top plug, bhvThiTinyIslandTop, thi_top.inc.c). The fifth makes
+/// `bhvHiddenStar` spawn the star at (0, -700, -4500) (hidden_star.inc.c).
+/// (Not "Make Wiggler Squirm": that is star 6, a `bhvWigglerHead` in area 3
+/// that gives its star after 3 stomps, wiggler.inc.c; the run has it.)
+///
+/// One `SecretTrigger::Touch` per secret rates each by the straight line,
+/// and every secret was reached by some branch of t1's step 654 tree (nodes
+/// within 6-66 units of each of the five), but no branch held more than two:
+/// nothing made a state that had touched some better than one that had not.
+/// This one is the whole round: the ETA is the walk to the nearest secret
+/// left, then on to the next nearest (greedy, walking distances with
+/// `OBRRT_GEO=1`, which the campaign sets in THI), then to the star's spot;
+/// it drops at every touch by the secret's leg. `Done` once the count of
+/// triggers left is below the start's (v1's success), so the chain goes on
+/// from each touched state; `Lost` when the start has none left (the star is
+/// `Mission::ReachHiddenStar`'s) or out of the zone.
+pub struct SecretTour {
+    spot: &'static Spot,
+}
+
+impl SecretTour {
+    pub fn new(b: &St) -> Option<SecretTour> {
+        let spot = table::SPOTS
+            .iter()
+            // Any course's five-secrets star (THI's first; from 2026-11-14 also WDW's "Secrets in the Shallows &
+            // Sky" and SSL's "Pyramid Puzzle", where t1's step 702 touched secrets one at a time, 97 of 250).
+            .find(|p| p.kind == SpotKind::HiddenStar && b.zone() == p.zone() && !b.has_star(p.course, p.index))?;
+        (b.objects.is_some() && count_bhv(b, "bhvHiddenStarTrigger") > 0).then_some(SecretTour { spot })
+    }
+
+    fn left(s: &St) -> Vec<[f32; 3]> {
+        s.objects().iter().filter(|o| o.bhv_name() == "bhvHiddenStarTrigger").map(|o| o.pos).collect()
+    }
+
+    /// Walking distance where the mesh knows both points, else straight.
+    fn leg(&self, a: [f32; 3], b: [f32; 3]) -> f32 {
+        obrrt_core::geo::path_dist(self.spot.zone(), a, b).unwrap_or_else(|| dist(a, b))
+    }
+
+    /// [`Self::leg`] from a state's point of view: WDW with its water up (diamonds take it to 2560 + waves) is
+    /// swum, not walked: the mesh of floors then sees Mario at the surface over no floor and every leg comes
+    /// back as "unreachable" (+20000; v2 test: tours of 82000 units, 10 k a leg, no gradient at all).
+    fn leg_in(&self, s: &St, a: [f32; 3], b: [f32; 3]) -> f32 {
+        // SSL's pyramid: the three slab secrets are reached from above (see `pyramid`).
+        if s.zone() == super::pyramid::ZONE && super::pyramid::is_slab_trigger(b) {
+            return super::pyramid::to_slab(s, a, b);
+        }
+        if s.level as u32 == LEVEL_WDW && s.water_level > 300 { dist(a, b) } else { self.leg(a, b) }
+    }
+
+    /// Frames of the greedy round from `s` over `left` to the star's spot. WDW's airborne secret (see
+    /// [`wet_need`](super::rides::water::wet_need)) comes last, after the diamond that raises the water to it.
+    fn tour(&self, s: &St, mut left: Vec<[f32; 3]>) -> f64 {
+        let mut at = s.pos;
+        let mut d = 0.0;
+        let mut extra = 0.0;
+        let need = super::rides::water::wet_need(s).filter(|&n| (s.water_level as i32) < n);
+        let mut wet = Vec::new();
+        if need.is_some() {
+            let (w, dry): (Vec<_>, Vec<_>) = left.into_iter().partition(|t| t[1] > 600.0 && t[1] < 700.0 && t[0] < -3500.0);
+            (wet, left) = (w, dry);
+        }
+        for pass in 0..2 {
+            if pass == 1 {
+                // The water first: to a diamond that takes the level to `need`, and the frames it needs.
+                let Some(n) = need else { break };
+                if let Some((o, _, f)) = super::rides::water::raise_plan(s, at, n, s.water_level as f32) {
+                    if let Some(o) = o {
+                        d += self.leg_in(s, at, o.pos);
+                        at = o.pos;
+                    }
+                    extra += f;
+                }
+                left = std::mem::take(&mut wet);
+            }
+            while !left.is_empty() {
+                let (i, l) = left
+                    .iter()
+                    .enumerate()
+                    .map(|(i, &t)| (i, self.leg_in(s, at, t)))
+                    .min_by(|a, b| a.1.total_cmp(&b.1))
+                    .unwrap();
+                d += l;
+                at = left.swap_remove(i);
+            }
+        }
+        frames_for(d + self.leg_in(s, at, self.spot.pos)) + extra
+    }
+}
+
+impl Objective for SecretTour {
+    /// Dense adds (`OBRRT_DENSE_EVERY=obj`): collecting and fighting: a state every 15 frames, none mid-arc.
+    fn dense_keep(&self) -> obrrt_core::DenseKeep {
+        obrrt_core::DenseKeep::Every { n: 15, air: false }
+    }
+    fn kind(&self) -> &'static str {
+        "Secrets::Tour"
+    }
+    fn key(&self) -> String {
+        format!("SecretTour {}-{}", self.spot.course, self.spot.index)
+    }
+    fn obj_weight(&self, _b: &St) -> f64 {
+        30.0
+    }
+    fn base_criteria(&self, s: &St) -> bool {
+        s.zone() == self.spot.zone() && !s.has_star(self.spot.course, self.spot.index) && s.objects.is_some() && count_bhv(s, "bhvHiddenStarTrigger") > 0
+    }
+    fn ga_budget(&self) -> Option<obrrt_core::GaBudget> {
+        Some(obrrt_core::GaBudget { population: 16, generations: 5, horizon: 240 })
+    }
+    fn eta(&self, s: &St, start: &St, _mem: &mut Mem) -> Eta {
+        let p = self.spot;
+        if s.has_star(p.course, p.index) {
+            return Eta::Done;
+        }
+        if s.zone() != p.zone() || start.objects.is_none() {
+            return Eta::Lost;
+        }
+        let left_start = count_bhv(start, "bhvHiddenStarTrigger");
+        if left_start == 0 {
+            return Eta::Lost;
+        }
+        if s.objects.is_none() {
+            return Eta::Frames(frames_for(s.dist(p.pos)) + left_start as f64 * UNSEEN_TARGET_FRAMES);
+        }
+        let left = Self::left(s);
+        if left.len() < left_start {
+            return Eta::Done;
+        }
+        Eta::Frames(self.tour(s, left))
+    }
+    fn success_value(&self) -> f64 {
+        6.0
+    }
+    fn needs_objects(&self) -> bool {
+        true
+    }
+    fn steer_target(&self, s: &St) -> Option<[f32; 3]> {
+        nearest(s, |o| o.bhv_name() == "bhvHiddenStarTrigger").map(|o| o.pos)
+    }
+    fn kinship(&self) -> u32 {
+        10
+    }
+    fn exists_in(&self, s: &St) -> bool {
+        s.level as u32 == self.spot.level && !s.has_star(self.spot.course, self.spot.index)
+    }
+}
+
+// ---------------------------------------------------------------------------
 // The Princess's Secret Slide under 21 seconds.
 
 /// SURFACE_TIMER_START / SURFACE_TIMER_END quads, from
@@ -447,6 +609,14 @@ const PSS_END_CENTER: [f32; 3] = [-6357.0, -4500.0, 3149.0];
 /// `pss_end_slide`: the star needs a timer under 630 frames; frames since a
 /// start before the timer starts bound it from above.
 const PSS_FRAMES: u32 = 620;
+
+/// Speed (units a frame) the ETA assumes down the slide: 21 s = 630 frames over the ~60000-unit
+/// path (slides.rs; its corners are cut a little) needs about 95.
+const PSS_SLIDE_SPEED: f32 = 90.0;
+
+/// The fastest the slide can be gone down, per frame along the path (pss2: speeds up to 113 on
+/// butt slides; generous for the path's corners).
+const PSS_FASTEST: f32 = 140.0;
 
 pub struct PssUnder21;
 
@@ -497,15 +667,24 @@ impl Objective for PssUnder21 {
         if Self::at_end(s) {
             return Eta::Done;
         }
-        Eta::Frames(frames_for(dist(s.pos, PSS_END_CENTER)))
+        // The length left along the slide (slides.rs: the path derived from its floor triangles) at
+        // the speed of a slide held downhill; the straight line ignored the winding (a fifth of it).
+        // Straying counts twice: test pss1 (40 M) rated states that fell off the slide to the void floor
+        // (y -7640, its nearest path point the end) as arrived.
+        let pr = super::slides::pss().progress(s.pos);
+        // Too slow to ever make it: pss2 (40 M) saw sustained slide speeds of up to 113, so with the
+        // path's corners cut a little nothing is faster than PSS_FASTEST per frame.
+        if pr.off < 1000.0 && elapsed as f32 + pr.remaining / PSS_FASTEST > PSS_FRAMES as f32 {
+            return Eta::Lost;
+        }
+        Eta::Frames(((pr.remaining + 2.0 * pr.off) / PSS_SLIDE_SPEED) as f64)
     }
     fn success_value(&self) -> f64 {
         10.0
     }
     fn steer_target(&self, s: &St) -> Option<[f32; 3]> {
-        // Down the slide: its course isn't a straight line, so only steer
-        // until the start quad, then let the genome drive.
-        (s.pos[0] > PSS_START_X).then_some([PSS_START_X - 200.0, s.pos[1], -5631.0])
+        // Down the slide: 600 units along its path (slides.rs).
+        Some(super::slides::pss().ahead(s.pos, 600.0))
     }
     fn exists_in(&self, s: &St) -> bool {
         s.level as u32 == LEVEL_PSS && !s.has_star(19, 1)
@@ -526,6 +705,12 @@ pub fn generate(_b: &St, _o: &Obj, _out: &mut Vec<Arc<dyn Objective>>) {}
 
 /// Objectives that come from the level rather than one object (called once
 /// per `b`).
+/// Whether a star spot of the table in (`level`, `area`) is one `s` hasn't
+/// collected (so an area change to there is a goal, warps.rs).
+pub fn area_has_missing_star(s: &St, level: u32, area: u8) -> bool {
+    table::SPOTS.iter().any(|p| p.level == level && p.area == area && !s.has_star(p.course, p.index))
+}
+
 pub fn generate_level(b: &St, out: &mut Vec<Arc<dyn Objective>>) {
     let level = b.level as u32;
     let course = course_of_level(level);
@@ -556,6 +741,17 @@ pub fn generate_level(b: &St, out: &mut Vec<Arc<dyn Objective>>) {
         if let Some(r) = twostar::CoinRun::new(b) {
             out.push(Arc::new(r));
         }
+        // OBRRT_TWOSTAR, wing cap on: a coin ring in the air.
+        if let Some(r) = twostar::WingRing::new(b) {
+            out.push(Arc::new(r));
+        }
+        // OBRRT_TWOSTAR, wing cap on and not flying: into flight (a triple jump, a cannon shot).
+        if let Some(f) = twostar::FlyStart::new(b) {
+            out.push(Arc::new(f));
+        }
+    }
+    if let Some(t) = SecretTour::new(b) {
+        out.push(Arc::new(t));
     }
     if level == LEVEL_PSS && !b.has_star(19, 1) {
         out.push(Arc::new(PssUnder21));

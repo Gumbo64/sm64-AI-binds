@@ -1,0 +1,42 @@
+train logs/kingloop/best-fast-king-blj-tas.ramp0.m64 1726
+train logs/kingloop/best-fast-king-blj-tas.ramp0.m64 1739
+train logs/kingloop/best-fast-king-blj-tas.ramp0.m64 1754
+train logs/kingloop/best-fast-king-blj-tas.ramp0.m64 1774
+train logs/kingloop/partial-fast-king-superjump-c.m64 1728
+train logs/kingloop/partial-fast-king-superjump-c.m64 1741
+train logs/kingloop/partial-fast-king-superjump-c.m64 1756
+train logs/kingloop/partial-fast-king-superjump-c.m64 1776
+train gp/movies/l1-r4-s2-lakitu.m64 1767
+train gp/movies/l1-r4-s2-lakitu.m64 1780
+train gp/movies/l1-r4-s2-lakitu.m64 1795
+train gp/movies/l1-r4-s2-lakitu.m64 1815
+val gp/movies/q6-rrfobnb-s3-lakitu.m64 2038
+val gp/movies/q6-rrfobnb-s3-lakitu.m64 2051
+val gp/movies/q6-rrfobnb-s3-lakitu.m64 2066
+val gp/movies/q6-rrfobnb-s3-lakitu.m64 2086
+train ref/tas/full-70star-U.m64 1727
+train ref/tas/full-70star-U.m64 1747
+test logs/kingloop/partial-fast-king-tree-d.m64 1727
+test logs/kingloop/partial-fast-king-tree-d.m64 1740
+test logs/kingloop/partial-fast-king-tree-d.m64 1755
+test logs/kingloop/partial-fast-king-tree-d.m64 1775
+test logs/kingloop/partial-fast-king-speed-blj.m64 1727
+test logs/kingloop/partial-fast-king-speed-blj.m64 1740
+test logs/kingloop/partial-fast-king-speed-blj.m64 1755
+test logs/kingloop/partial-fast-king-speed-blj.m64 1775
+test ref/tas/full-120star-2012-U.m64 1727
+test ref/tas/full-120star-2012-U.m64 1747
+test ref/tas/full-120star-2026-U.m64 1715
+test ref/tas/full-120star-2026-U.m64 1728
+test ref/tas/full-120star-2026-U.m64 1743
+train logs/kingloop/best-fast-king-blj-tas.ramp0.m64 1726 noise=3:1
+val logs/kingloop/best-fast-king-blj-tas.ramp0.m64 1739 noise=4:51
+train logs/kingloop/best-fast-king-blj-tas.ramp0.m64 1754 noise=5:3
+train logs/kingloop/partial-fast-king-superjump-c.m64 1728 noise=7:5
+val logs/kingloop/partial-fast-king-superjump-c.m64 1741 noise=3:55
+train logs/kingloop/partial-fast-king-superjump-c.m64 1756 noise=4:7
+train gp/movies/l1-r4-s2-lakitu.m64 1767 noise=6:9
+val gp/movies/l1-r4-s2-lakitu.m64 1780 noise=7:59
+train gp/movies/l1-r4-s2-lakitu.m64 1795 noise=3:11
+train ref/tas/full-70star-U.m64 1727 noise=5:13
+val ref/tas/full-70star-U.m64 1747 noise=6:63

@@ -9,6 +9,9 @@
 //! first `OBRRT_RH_K` frames committed, every plan shifted and re-planned
 //! (the curiosity GA's loop, rust/src/population.rs).
 
+/// The agent tools' long-lived rolling-horizon controller (objective-rrt-v2/agent).
+pub mod rhstep;
+
 use std::cmp::Ordering;
 use std::f32::consts::TAU;
 use std::sync::OnceLock;
@@ -18,7 +21,7 @@ use obrrt_core::{Budget, Eta, GaBudget, GamePad, Mem, Objective, PadOverlay, Pad
 use rand::Rng;
 use rand::rngs::SmallRng;
 use sm64_binds::buttons::{A_BUTTON, B_BUTTON, Z_TRIG};
-use sm64_binds::{SM64Game, SaveState};
+use crate::game::{Game as SM64Game, GameSave as SaveState};
 
 /// Most frames the automatic tail spends pressing A through menus, dialog and
 /// warps before giving up.
@@ -48,6 +51,15 @@ pub struct Rh {
     pub hot: usize,
     /// Cap on the committed length (frames).
     pub maxlen: usize,
+    /// Plays go on past a stage met where Mario isn't controllable (agent
+    /// tools' lagged window, ga/rhstep.rs); off: such a play is cut there.
+    pub through: bool,
+    /// In dialogs, cutscenes and menus (but for a modal stage) plays press A
+    /// on alternate frames instead of their own inputs (agent tools).
+    pub press: bool,
+    /// The discount starts after this many frames of a play (agent tools:
+    /// the frames behind the frontier count undiscounted); 0: from the start.
+    pub flat: usize,
 }
 
 /// `OBRRT_RH=1`: attempts use the rolling-horizon controller instead of
@@ -76,6 +88,9 @@ pub fn rh() -> &'static Rh {
             stall: env("OBRRT_RH_STALL", 6usize).max(1),
             hot: env("OBRRT_RH_HOT", 3usize).max(1),
             maxlen: env("OBRRT_RH_MAXLEN", 900usize).max(60),
+            through: false,
+            press: false,
+            flat: 0,
         }
     })
 }
@@ -90,8 +105,22 @@ pub struct Worker {
 }
 
 impl Worker {
+    #[cfg(not(feature = "sm64coin"))]
     pub fn new(game_gen: &sm64_binds::SM64GameGenerator) -> Result<Worker> {
         Ok(Worker { base: game_gen.create_game()?, cur: game_gen.create_game()?, tmp: game_gen.create_game()? })
+    }
+
+    /// The state tree and attempts over raw-memory saves are default-only.
+    #[cfg(feature = "sm64coin")]
+    pub fn new(_: &sm64_binds::SM64GameGenerator) -> Result<Worker> {
+        anyhow::bail!("Worker::new: unavailable with feature sm64coin (use Worker::forked)")
+    }
+
+    /// A worker whose games are forks of `proto` (a mining game carries the
+    /// block's seed, so it can't come from the generator).
+    #[cfg(feature = "sm64coin")]
+    pub fn forked(proto: &SM64Game) -> Result<Worker> {
+        Ok(Worker { base: proto.fork()?, cur: proto.fork()?, tmp: proto.fork()? })
     }
 }
 
@@ -207,6 +236,47 @@ thread_local! {
     static TAIL: std::cell::RefCell<Option<Vec<GamePad>>> = const { std::cell::RefCell::new(None) };
 }
 
+/// A rollout that met all its stages, for [`set_met_sink`].
+#[derive(Clone)]
+pub struct MetRollout {
+    pub genome: Vec<GamePad>,
+    /// The state at the last stage's Done (no objects).
+    pub end: St,
+}
+
+thread_local! {
+    /// The route mender (spec/src/bin/mend.rs): while set, every rollout on
+    /// this thread that meets all its stages is kept here, whichever survive
+    /// selection (the capacity keeps the soonest). None otherwise: nothing
+    /// is recorded and no draw or decision depends on it.
+    static MET_SINK: std::cell::RefCell<Option<(usize, Vec<MetRollout>)>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Starts collecting met rollouts on this thread, at most `cap`.
+pub fn set_met_sink(cap: usize) {
+    MET_SINK.with(|s| *s.borrow_mut() = Some((cap, Vec::new())));
+}
+
+/// Stops collecting; the met rollouts, soonest first.
+pub fn take_met_sink() -> Vec<MetRollout> {
+    MET_SINK.with(|s| s.borrow_mut().take()).map_or(Vec::new(), |(_, v)| v)
+}
+
+fn sink_met(genome: &[GamePad], end: &St) {
+    MET_SINK.with(|s| {
+        let mut g = s.borrow_mut();
+        let Some((cap, v)) = g.as_mut() else { return };
+        let at = v.partition_point(|m| m.genome.len() <= genome.len());
+        if at >= *cap || v.iter().any(|m| m.genome.len() == genome.len() && m.genome == genome) {
+            return;
+        }
+        let mut end = end.clone();
+        end.objects = None;
+        v.insert(at, MetRollout { genome: genome.to_vec(), end });
+        v.truncate(*cap);
+    });
+}
+
 thread_local! {
     /// OBRRT_PARENT_WINDOW: inputs every first-generation rollout starts with.
     static WINDOW: std::cell::RefCell<Vec<GamePad>> = const { std::cell::RefCell::new(Vec::new()) };
@@ -227,6 +297,137 @@ pub fn set_window(w: Vec<GamePad>) {
 /// Sets the carried plan for the next attempt on this thread.
 pub fn set_tail(t: Option<Vec<GamePad>>) {
     TAIL.with(|r| *r.borrow_mut() = t);
+}
+
+/// A source of whole-attempt seeds that does not live in this crate (the
+/// reactive policy inventory, `obrrt-policy`, which depends on this crate).
+/// Given the attempt's start (`base` is free to be played on and is restored
+/// afterwards), it returns candidate pad sequences from the start, best first,
+/// with the emulator frames each cost to find.
+pub trait SeedSource: Send + Sync {
+    fn seeds(
+        &self,
+        base: &mut SM64Game,
+        start: &St,
+        save: &SaveState,
+        stage: &dyn Objective,
+        rng: &mut SmallRng,
+    ) -> Vec<(Vec<GamePad>, u64)>;
+}
+
+static SEED_SOURCE: std::sync::RwLock<Option<std::sync::Arc<dyn SeedSource>>> = std::sync::RwLock::new(None);
+
+/// Installs (or removes) the process-wide [`SeedSource`]. It is only
+/// consulted when `OBRRT_POLICY_SEED=1` (or [`set_policy_seed`] turned it on).
+pub fn set_seed_source(s: Option<std::sync::Arc<dyn SeedSource>>) {
+    *SEED_SOURCE.write().unwrap() = s;
+}
+
+static POLICY_SEED_FORCED: std::sync::atomic::AtomicI8 = std::sync::atomic::AtomicI8::new(-1);
+
+/// API switch for the policy seeds: Some(b) overrides the environment,
+/// None restores `OBRRT_POLICY_SEED`.
+pub fn set_policy_seed(on: Option<bool>) {
+    POLICY_SEED_FORCED.store(on.map_or(-1, |b| b as i8), std::sync::atomic::Ordering::Relaxed);
+}
+
+/// `OBRRT_POLICY_SEED=0|1` (0): attempts ask the [`SeedSource`] (when one is
+/// installed). Without a seed of their own they take its best plan as the
+/// seed; with one (the route's inputs) it stays and one policy plan is added
+/// as an extra first-generation individual. `OBRRT_POLICY_SEED_EXTRA` (0)
+/// more plans are added in either case. The
+/// seed's emulator frames are added to the attempt's.
+pub fn policy_seed_on() -> bool {
+    match POLICY_SEED_FORCED.load(std::sync::atomic::Ordering::Relaxed) {
+        0 => false,
+        1 => true,
+        _ => {
+            static ON: OnceLock<bool> = OnceLock::new();
+            *ON.get_or_init(|| std::env::var("OBRRT_POLICY_SEED").is_ok_and(|v| v == "1"))
+        }
+    }
+}
+
+fn policy_seed_extra() -> usize {
+    static N: OnceLock<usize> = OnceLock::new();
+    *N.get_or_init(|| std::env::var("OBRRT_POLICY_SEED_EXTRA").ok().and_then(|v| v.parse().ok()).unwrap_or(0))
+}
+
+/// A policy-driven breeding operator that does not live in this crate (the
+/// reactive policy inventory): `repolicy` of the standalone hybrid. One
+/// [`BreedSession`] per GA attempt (so what it learns about the start stays
+/// in the attempt).
+pub trait BreedHook: Send + Sync {
+    fn session(&self) -> Box<dyn BreedSession>;
+}
+
+pub trait BreedSession {
+    /// A child of a parent: `prefix` is the parent's pads up to the cut and
+    /// `states` its trajectory over them (`states[0]` the attempt's start,
+    /// `states.len() == prefix.len() + 1`). `game` is free to use: the hook
+    /// replays `prefix` from `save` (the attempt's start) to the cut state,
+    /// lets a policy play at most `horizon - prefix.len()` frames from there
+    /// and returns the realised pads (prefix included) and the emulator
+    /// frames it spent (prefix replay included). `None`: no child.
+    #[allow(clippy::too_many_arguments)]
+    fn breed(
+        &mut self,
+        game: &mut SM64Game,
+        start: &St,
+        save: &SaveState,
+        stage: &dyn Objective,
+        prefix: &[GamePad],
+        states: &[St],
+        horizon: usize,
+        rng: &mut SmallRng,
+    ) -> Option<(Vec<GamePad>, u64)>;
+}
+
+static BREED_HOOK: std::sync::RwLock<Option<std::sync::Arc<dyn BreedHook>>> = std::sync::RwLock::new(None);
+
+/// Installs (or removes) the process-wide [`BreedHook`]. It is only used
+/// when `OBRRT_POLICY_REPOLICY` is above 0 (or [`set_policy_repolicy`]).
+pub fn set_breed_hook(h: Option<std::sync::Arc<dyn BreedHook>>) {
+    *BREED_HOOK.write().unwrap() = h;
+}
+
+static REPOLICY_FORCED: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(-1);
+
+/// API override of `OBRRT_POLICY_REPOLICY` (None restores the environment).
+pub fn set_policy_repolicy(p: Option<f64>) {
+    REPOLICY_FORCED.store(p.map_or(-1, |p| (p * 1e6) as i64), std::sync::atomic::Ordering::Relaxed);
+}
+
+/// `OBRRT_POLICY_REPOLICY=p` (0, off): per-offspring probability of the
+/// policy breeding operator (a parent's pads to a random cut, then an
+/// inventory policy plays on; the realised pads are the child; origin
+/// `repolicy`). With `OBRRT_POLICY_REPOLICY_MARKET=1` the probability is
+/// `2 p` times the operator's share of the credit (score gained per
+/// emulator frame, EMA over generations, against all other operators),
+/// within [p/4, 4p].
+pub fn policy_repolicy() -> f64 {
+    let f = REPOLICY_FORCED.load(std::sync::atomic::Ordering::Relaxed);
+    if f >= 0 {
+        return f as f64 / 1e6;
+    }
+    static P: OnceLock<f64> = OnceLock::new();
+    *P.get_or_init(|| std::env::var("OBRRT_POLICY_REPOLICY").ok().and_then(|v| v.parse().ok()).unwrap_or(0.0))
+}
+
+fn repolicy_market() -> bool {
+    static M: OnceLock<bool> = OnceLock::new();
+    *M.get_or_init(|| std::env::var("OBRRT_POLICY_REPOLICY_MARKET").is_ok_and(|v| v == "1"))
+}
+
+/// Process-wide tallies of the policy breeding operator: children made,
+/// attempts won by one, emulator frames spent in the hook (replayed prefix +
+/// policy), attempts that used it.
+pub static REPOLICY_STATS: [std::sync::atomic::AtomicU64; 4] =
+    [std::sync::atomic::AtomicU64::new(0), std::sync::atomic::AtomicU64::new(0), std::sync::atomic::AtomicU64::new(0), std::sync::atomic::AtomicU64::new(0)];
+
+thread_local! {
+    /// Extra first-generation individuals from the [`SeedSource`], for this attempt.
+    static EXTRA_SEEDS: std::cell::RefCell<Vec<Vec<GamePad>>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 
 /// Share of children of a parent with key frames (a keyed overlay's) that
@@ -654,7 +855,9 @@ fn play(
     let (mut sum, mut disc) = (0.0, 1.0);
     let mut reward = |r: f64, sums: &mut Vec<f64>| {
         sum += disc * r;
-        disc *= rh.gamma;
+        if sums.len() >= rh.flat {
+            disc *= rh.gamma;
+        }
         sums.push(sum);
     };
     for f in 0..len {
@@ -689,6 +892,7 @@ fn play(
             }
             _ => pad,
         };
+        let pad = if rh.press && !obj.modal() && (!last.controllable() || last.modal()) { GamePad::new(if abs % 2 == 0 { A_BUTTON } else { 0 }, 0, 0) } else { pad };
         game.step_game(pad)?;
         e.stepped += 1;
         let st = read_state(game, start.frame + abs as u32 + 1, objects);
@@ -756,7 +960,7 @@ fn play(
                 }
                 break;
             }
-            if stage < stages.len() && !st.controllable() {
+            if stage < stages.len() && !st.controllable() && !rh.through {
                 e.end = End::Cut;
             }
         } else {
@@ -1236,6 +1440,39 @@ impl Worker {
         dense: Option<&DenseReq>,
     ) -> Result<Attempt> {
         let tail = TAIL.with(|t| t.borrow_mut().take()).filter(|t| !t.is_empty());
+        // OBRRT_POLICY_SEED: a seed from the installed source when the caller has none.
+        let mut policy_frames = 0u64;
+        let mut policy_pick: Option<Vec<GamePad>> = None;
+        EXTRA_SEEDS.with(|e| e.borrow_mut().clear());
+        let caller_seed = seed.is_some();
+        if policy_seed_on() {
+            let src = SEED_SOURCE.read().unwrap().clone();
+            if let Some(src) = src {
+                let own;
+                let sv = match save {
+                    Some(s) => s,
+                    None => {
+                        own = self.base.save_state();
+                        &own
+                    }
+                };
+                let mut got = src.seeds(&mut self.base, start, sv, stages[0], rng);
+                self.base.load_state(sv)?;
+                policy_frames = got.iter().map(|g| g.1).sum();
+                got.retain(|g| !g.0.is_empty());
+                if !got.is_empty() {
+                    let mut it = got.into_iter().map(|g| g.0);
+                    // The caller's own seed (the route's inputs) stays the seed; the
+                    // policy plans then come in as extra first-generation individuals.
+                    if !caller_seed {
+                        policy_pick = it.next();
+                    }
+                    let extra: Vec<Vec<GamePad>> = it.take(policy_seed_extra() + caller_seed as usize).collect();
+                    EXTRA_SEEDS.with(|e| *e.borrow_mut() = extra);
+                }
+            }
+        }
+        let seed = if policy_pick.is_some() { policy_pick.as_deref() } else { seed };
         // OBRRT_CALM: random genomes' A presses scaled by how useful
         // jumping looks from the start (the mover's jump_useful).
         if calm() {
@@ -1253,7 +1490,11 @@ impl Worker {
             self.attempt_open(&mut dc, stages, start, save, rng, params, seed, tail)
         };
         A_MULT.with(|a| a.set(1.0));
-        out
+        EXTRA_SEEDS.with(|e| e.borrow_mut().clear());
+        out.map(|mut a| {
+            a.frames += policy_frames;
+            a
+        })
     }
 
     /// The first generation, as v1's: per slot a policy-seeded plan
@@ -1348,6 +1589,13 @@ impl Worker {
             } else {
                 Gen::new(random_inputs(rng, h), None, ORIGIN_RANDOM)
             });
+        }
+        for x in EXTRA_SEEDS.with(|e| std::mem::take(&mut *e.borrow_mut())) {
+            let raw = x.len();
+            let mut pl = Gen::new(x, None, ORIGIN_SEED);
+            pl.raw = raw;
+            pl.full = true;
+            pop.push(pl);
         }
         if let Some(t) = tail {
             let mut g = Gen::new(t, steer_after, ORIGIN_TAIL);
@@ -1616,7 +1864,7 @@ impl Worker {
             // options are objectives of their own, see Objective::modal).
             let mut st = read_state(&self.tmp, start.frame + played as u32, true);
             let mut extra = 0;
-            while !st.controllable() && !st.modal() && extra < TAIL_LIMIT {
+            while !st.controllable() && !st.modal() && !st.ending() && extra < TAIL_LIMIT {
                 let pad = GamePad::new(if extra % 4 == 0 { A_BUTTON } else { 0 }, 0, 0);
                 self.tmp.step_game(pad)?;
                 inputs.push(pad);
@@ -1628,7 +1876,7 @@ impl Worker {
             // a price paid, not a failure: a star touched during a death's
             // fade-out still counts, and the death warp is just the way out.
             let gained = st.progress() > start.progress();
-            if !(st.controllable() || st.modal()) || (!gained && (!st.alive() || st.lives < start.lives)) {
+            if !(st.controllable() || st.modal() || st.ending()) || (!gained && (!st.alive() || st.lives < start.lives)) {
                 segments.push(Segment { inputs: Vec::new(), end: None, success: false, progress, model: None, tail: Vec::new(), played: 0 });
                 return Ok(Attempt { segments, frames, died: true, ga, dense });
             }
@@ -1775,6 +2023,57 @@ fn tail_on() -> bool {
 /// The GA budget of objectives without [`Objective::ga_budget`]:
 /// `OBRRT_GA_POP` / `OBRRT_GA_GENS` / `OBRRT_GA_HORIZON`, default 16 / 5 /
 /// 150 (v1's most common budget).
+/// OBRRT_REACH_PRIOR=<file>: a JSON object, objective kind -> the start ETA
+/// (frames) beyond which attempts of that kind have not succeeded in past
+/// runs (backbone/attempts/reach.py, from every attempt logged). An attempt
+/// from further away still moves Mario toward the objective and adds a state,
+/// but at the full budget it cost about five times a move: Boss::Hit from
+/// over 200 frames away was 13,607 attempts, 1 success and 0.96 B frames.
+fn reach_prior() -> &'static std::collections::HashMap<String, f64> {
+    static R: OnceLock<std::collections::HashMap<String, f64>> = OnceLock::new();
+    R.get_or_init(|| {
+        let Ok(path) = std::env::var("OBRRT_REACH_PRIOR") else { return Default::default() };
+        let text = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("OBRRT_REACH_PRIOR {path}: {e}"));
+        serde_json::from_str(&text).unwrap_or_else(|e| panic!("OBRRT_REACH_PRIOR {path}: {e}"))
+    })
+}
+
+/// OBRRT_REACH_BUDGET=pop,gens,horizon: the budget of an attempt from beyond
+/// its kind's reach (default 12,3,120: about what a move costs).
+fn reach_budget() -> GaBudget {
+    static B: OnceLock<GaBudget> = OnceLock::new();
+    *B.get_or_init(|| {
+        let v: Vec<usize> = std::env::var("OBRRT_REACH_BUDGET").ok().map(|s| s.split(',').filter_map(|x| x.trim().parse().ok()).collect()).unwrap_or_default();
+        if v.len() == 3 { GaBudget { population: v[0].max(1), generations: v[1].max(1), horizon: v[2].max(1) } } else { GaBudget { population: 12, generations: 3, horizon: 120 } }
+    })
+}
+
+/// OBRRT_RESCUE_PRIOR=<file>: a JSON object, objective kind -> how often an
+/// attempt of that kind still met its objective when no rollout of
+/// generation 0 did, in past runs (backbone/attempts/rescue.py). Across the
+/// 776,061 single-objective attempts on disk on 2026-11-09, generation 0 met
+/// the objective in 25% and 92.5% of those succeeded; of the rest 8.2%
+/// succeeded, and they took 83% of all frames. So for a kind whose rescue
+/// rate is under OBRRT_RESCUE_MIN (default 0.05), an attempt whose
+/// generation 0 missed stops after OBRRT_GATE_GENS more generations (default
+/// 2) unless one has met the objective by then: it still adds its best end
+/// state, as an approach. Returns that number of generations for `o`.
+fn gen0_gate(o: &dyn Objective) -> Option<usize> {
+    static R: OnceLock<(std::collections::HashMap<String, f64>, f64, usize)> = OnceLock::new();
+    let (prior, min, gens) = R.get_or_init(|| {
+        let Ok(path) = std::env::var("OBRRT_RESCUE_PRIOR") else { return Default::default() };
+        let text = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("OBRRT_RESCUE_PRIOR {path}: {e}"));
+        let f = |k: &str, d: f64| std::env::var(k).ok().and_then(|v| v.parse().ok()).unwrap_or(d);
+        (serde_json::from_str(&text).unwrap_or_else(|e| panic!("OBRRT_RESCUE_PRIOR {path}: {e}")), f("OBRRT_RESCUE_MIN", 0.05), f("OBRRT_GATE_GENS", 2.0) as usize)
+    });
+    prior.get(o.kind()).is_some_and(|r| r < min).then_some(*gens)
+}
+
+/// Whether `start` is further from `o` than its kind's reach (false without a prior).
+pub fn beyond_reach(o: &dyn Objective, start: &St) -> bool {
+    reach_prior().get(o.kind()).is_some_and(|&r| obrrt_core::start_eta(o, start) > r)
+}
+
 fn default_budget() -> GaBudget {
     static B: OnceLock<GaBudget> = OnceLock::new();
     *B.get_or_init(|| {
@@ -2120,6 +2419,9 @@ impl Worker {
                 }
             }
         }
+        if ends.len() == stages.len() && !died {
+            sink_met(&genome[..*ends.last().unwrap()], &traj[*ends.last().unwrap()]);
+        }
         let at = at.min(traj.len() - 1);
         let traj_len = traj.len();
         let final_eta = if ends.len() < stages.len() { prev } else { 0.0 };
@@ -2216,7 +2518,13 @@ impl Worker {
         } else {
             let (mut population, mut generations, mut horizon) = (1, 1, 0);
             for o in stages {
-                let b = o.ga_budget().unwrap_or_else(default_budget);
+                let mut b = o.ga_budget().unwrap_or_else(default_budget);
+                // OBRRT_REACH_PRIOR: from further than the kind has ever
+                // succeeded from, the attempt is an approach, at a move's budget.
+                if stages.len() == 1 && beyond_reach(*o, start) {
+                    let d = reach_budget();
+                    b = GaBudget { population: b.population.min(d.population), generations: b.generations.min(d.generations), horizon: b.horizon.min(d.horizon) };
+                }
                 population = population.max(b.population);
                 generations = generations.max(b.generations);
                 horizon += b.horizon;
@@ -2337,6 +2645,18 @@ impl Worker {
                 }
                 pop.push(r?);
             }
+            // OBRRT_POLICY_SEED (+_EXTRA): further source plans, played as given.
+            for x in EXTRA_SEEDS.with(|e| std::mem::take(&mut *e.borrow_mut())) {
+                let mut g = x;
+                g.truncate(horizon);
+                RAW_PREFIX.with(|r| r.set(true));
+                let r = self.rollout(dc, stages, start, &g, None, horizon);
+                RAW_PREFIX.with(|r| r.set(seed.is_some()));
+                let mut r = r?;
+                r.origin = ORIGIN_SEED;
+                frames += r.genome.len() as u64;
+                pop.push(r);
+            }
             // OBRRT_MODEL (model.rs): rollouts from the learned model on top
             // of the first generation (none when the model is off).
             if let Some(ms) = crate::model::settings() {
@@ -2380,13 +2700,28 @@ impl Worker {
             let mut found_at = None;
             let mut made = [0u64; ORIGINS.len()];
             let mut breeds = 0u64;
+            // OBRRT_POLICY_REPOLICY: the policy breeding operator (single stage only).
+            let rp_p = if stages.len() == 1 { policy_repolicy() } else { 0.0 };
+            let mut rp_session = if rp_p > 0.0 { BREED_HOOK.read().unwrap().clone().map(|h| h.session()) } else { None };
+            let rp_save = if rp_session.is_some() { Some(self.base.save_state()) } else { None };
+            let (mut rp_credit, mut rp_other) = (1.0f64, 1.0f64);
+            let mut rp_ref = 0.0f64;
+            let (mut rp_n_h, mut rp_fr_h, mut rp_f0, mut rp_made_total) = (0u64, 0u64, 0u64, 0u64);
+            if rp_session.is_some() {
+                REPOLICY_STATS[3].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            }
             // OBRRT_GA_QD (qd.rs): the archive of distinct outcomes.
             let qd = crate::qd::settings();
             let mut arch = qd.map(|_| crate::qd::Archive::default());
             let qd_target = if qd.is_some() { stages[0].steer_target(start) } else { None };
             let (mut q_uni, mut q_eli) = (0u64, 0u64);
+            // OBRRT_RESCUE_PRIOR: see gen0_gate.
+            let gate = if stages.len() == 1 && gen0.0 < 1 && seed.is_none() { gen0_gate(stages[0]) } else { None };
             for generation in 1..generations {
                 pop.sort_by(|a, b| b.better(a));
+                if gate.is_some_and(|g| generation > g) && pop[0].ends.len() < stages.len() {
+                    break;
+                }
                 if let (Some(q), Some(a)) = (qd, arch.as_mut()) {
                     for r in &pop {
                         qd_insert(a, q, r, stages.len(), start, qd_target);
@@ -2398,8 +2733,28 @@ impl Worker {
                         Some(_) => break,
                     }
                 }
+                // OBRRT_POLICY_REPOLICY_MARKET: credit of the last breed's children.
+                if rp_session.is_some() && generation > 1 {
+                    let (mut gh, mut go) = (0.0, 0.0);
+                    for r in pop.iter().filter(|r| r.generation as usize == generation - 1) {
+                        let g = (r.fitness - rp_ref).max(0.0);
+                        if r.origin == ORIGIN_REPOLICY { gh += g } else { go += g }
+                    }
+                    let fr_o = frames.saturating_sub(rp_f0).saturating_sub(rp_fr_h).max(1) as f64;
+                    if rp_n_h > 0 {
+                        rp_credit = 0.7 * rp_credit + 0.3 * gh / (rp_fr_h.max(1) as f64) * 1e3;
+                    }
+                    if rp_made_total > rp_n_h {
+                        rp_other = 0.7 * rp_other + 0.3 * go / fr_o * 1e3;
+                    }
+                    (rp_n_h, rp_fr_h, rp_made_total) = (0, 0, 0);
+                }
                 breeds += 1;
                 let elite = (population / 4).max(1).min(pop.len());
+                if rp_session.is_some() {
+                    rp_ref = pop[..elite].iter().map(|r| r.fitness).sum::<f64>() / elite as f64;
+                }
+                rp_f0 = frames;
                 // OBRRT_MOVE_GA: policy lineages fill at most half the elite
                 // (the best always stays), so similar policy rollouts don't
                 // crowd out the other genomes.
@@ -2427,6 +2782,41 @@ impl Worker {
                     }
                 }
                 while pop.len() < population {
+                    // OBRRT_POLICY_REPOLICY: cut a parent, let an inventory policy play on.
+                    if let (Some(sess), Some(sv)) = (rp_session.as_mut(), rp_save.as_ref()) {
+                        let p_eff = if repolicy_market() {
+                            (rp_p * 2.0 * rp_credit / (rp_credit + rp_other)).clamp(rp_p * 0.25, (rp_p * 4.0).min(0.9))
+                        } else {
+                            rp_p
+                        };
+                        rp_made_total += 1;
+                        if rng.random_bool(p_eff.min(1.0)) {
+                            let parent = &pop[rng.random_range(0..elite)];
+                            let cut = rng.random_range(0..parent.genome.len().max(1)).min(parent.genome.len());
+                            if let Some((pads, spent)) =
+                                sess.breed(&mut self.tmp, start, sv, stages[0], &parent.genome[..cut], &parent.traj[..=cut], horizon, rng)
+                            {
+                                let (lineage, rmode) = (parent.plan, seed.is_some());
+                                let mut g = pads;
+                                g.truncate(horizon);
+                                RAW_PREFIX.with(|r| r.set(true));
+                                let child = self.rollout(dc, stages, start, &g, None, horizon);
+                                RAW_PREFIX.with(|r| r.set(rmode));
+                                let mut child = child?;
+                                child.generation = generation as u16;
+                                child.origin = ORIGIN_REPOLICY;
+                                child.plan = lineage;
+                                frames += spent + child.genome.len() as u64;
+                                rp_n_h += 1;
+                                rp_fr_h += spent + child.genome.len() as u64;
+                                REPOLICY_STATS[0].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                                REPOLICY_STATS[2].fetch_add(spent, std::sync::atomic::Ordering::Relaxed);
+                                made[ORIGIN_REPOLICY as usize] += 1;
+                                pop.push(child);
+                                continue;
+                            }
+                        }
+                    }
                     // OBRRT_GA_QD: a uniform archive pick (a γ, then a bin)
                     // some of the time; else the elite as before.
                     let qpick = match (qd, arch.as_ref()) {
@@ -2605,6 +2995,9 @@ impl Worker {
             }
             let best = pop.swap_remove(0);
             door_overshoot(stages[0], start, &best.traj, &best.ends);
+            if rp_session.is_some() && best.origin == ORIGIN_REPOLICY {
+                REPOLICY_STATS[1].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            }
             if move_ga {
                 crate::movegenome::record(&crate::movegenome::Outcome {
                     plans: &plans,
@@ -2713,7 +3106,7 @@ impl Worker {
             // options are objectives of their own, see Objective::modal).
             let mut st = read_state(&self.tmp, start.frame + played as u32, true);
             let mut extra = 0;
-            while !st.controllable() && !st.modal() && extra < TAIL_LIMIT {
+            while !st.controllable() && !st.modal() && !st.ending() && extra < TAIL_LIMIT {
                 let pad = GamePad::new(if extra % 4 == 0 { A_BUTTON } else { 0 }, 0, 0);
                 self.tmp.step_game(pad)?;
                 inputs.push(pad);
@@ -2725,7 +3118,7 @@ impl Worker {
             // a price paid, not a failure: a star touched during a death's
             // fade-out still counts, and the death warp is just the way out.
             let gained = st.progress() > start.progress();
-            if !(st.controllable() || st.modal()) || (!gained && (!st.alive() || st.lives < start.lives)) {
+            if !(st.controllable() || st.modal() || st.ending()) || (!gained && (!st.alive() || st.lives < start.lives)) {
                 segments.push(Segment { inputs: Vec::new(), end: None, success: false, progress, model: None, tail: Vec::new(), played: 0 });
                 return Ok(Attempt { segments, frames, died: true, ga, dense });
             }

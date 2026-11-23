@@ -21,6 +21,7 @@ mod painting;
 mod painting_table;
 pub mod setup;
 mod star;
+pub mod walk;
 
 use std::sync::Arc;
 
@@ -67,6 +68,11 @@ fn npc_weight(b: &St, o: &obrrt_core::Obj) -> Option<f64> {
         }
     }
     match o.bhv_name() {
+        // WDW's buddy opens the cannon into the downtown tunnel (extra/warps.rs wdw_town_missing): a goal while a
+        // downtown star is missing and the cannon's lid is still shut.
+        "bhvBobombBuddyOpensCannon" if extra::warps::wdw_town_missing(b) && b.objects().iter().any(|x| x.bhv_name() == "bhvCannonClosed") => {
+            Some(30.0)
+        }
         "bhvBobombBuddyOpensCannon" => Some(8.0),
         "bhvBobombBuddy" => Some(0.5),
         // Toads whose dialog (1st behaviour byte) is a star dialog give a
@@ -160,13 +166,39 @@ impl Generator for Registry {
             out.push(Arc::new(mario::Wait::new(b, [15, 30, 60, 90][rng.random_range(0..4)])));
         }
         if mario::GoToCastle::applies(b) {
-            out.push(Arc::new(mario::GoToCastle::new(b)));
+            // OBRRT_ZONE_LOCK: a per-zone tree doesn't leave by the pause menu.
+            static LOCK: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+            if !*LOCK.get_or_init(|| std::env::var("OBRRT_ZONE_LOCK").is_ok_and(|v| v == "1")) {
+                out.push(Arc::new(mario::GoToCastle::new(b)));
+            }
         }
         // Objects near Mario, by what they let him do.
         for o in b.objects() {
-            if dist(o.pos, b.pos).min(dist(star::rest_pos(o), b.pos)) > OBJECT_RADIUS {
+            // OBRRT_GOAL_WIDE=1: an object further than OBJECT_RADIUS still
+            // gives its goals (objectives worth at least OBRRT_GOAL_MIN, default
+            // 20: bosses, the big bullies, Klepto with the star, warps to an
+            // area with a star). In the zone-locked BoB tree gf2 (2026-11-09)
+            // no state came within 5000 units of King Bob-omb in 60 M frames,
+            // so Boss::Hit never entered the pool and nothing drew the tree up
+            // the mountain; the audit (STAR120-AUDIT.md) lists eight more such
+            // goals far from their course's entry.
+            static WIDE: std::sync::OnceLock<(bool, f64)> = std::sync::OnceLock::new();
+            let (wide, goal_min) = *WIDE.get_or_init(|| {
+                (std::env::var("OBRRT_GOAL_WIDE").is_ok_and(|v| v == "1"), std::env::var("OBRRT_GOAL_MIN").ok().and_then(|v| v.parse().ok()).unwrap_or(20.0))
+            });
+            let far = dist(o.pos, b.pos).min(dist(star::rest_pos(o), b.pos)) > OBJECT_RADIUS;
+            if far && !wide {
                 continue;
             }
+            let mark = out.len();
+            let near_len = |out: &mut Vec<Arc<dyn Objective>>| {
+                if far {
+                    let mut i = mark;
+                    while i < out.len() {
+                        if out[i].obj_weight(b) >= goal_min { i += 1 } else { out.swap_remove(i); }
+                    }
+                }
+            };
             match o.interact_type {
                 // Hidden blue coins are coins even while invisible and
                 // intangible; they're collectable only once out (action 2),
@@ -206,6 +238,7 @@ impl Generator for Registry {
             if BOSSES.contains(&o.bhv_name()) && !boss::boss_star(o.bhv_name()).is_some_and(|(c, i)| b.has_star(c, i)) {
                 out.push(Arc::new(boss::Hit::new(b, o)));
             }
+            near_len(&mut out);
         }
         extra::generate_level(b, &mut out);
         if b.level as u32 == LEVEL_CASTLE {
@@ -215,4 +248,13 @@ impl Generator for Registry {
         }
         out
     }
+}
+
+/// `OBRRT_EXIT_SKIP=<levels>` (search/src/tree.rs): courses whose entry is not
+/// a good exit of the tree. Their paintings are not attempted and their other
+/// ways in weigh next to nothing (extra/warps.rs `dest_worth`). Empty when
+/// unset.
+pub fn exit_skip() -> &'static [u32] {
+    static S: std::sync::OnceLock<Vec<u32>> = std::sync::OnceLock::new();
+    S.get_or_init(|| std::env::var("OBRRT_EXIT_SKIP").map_or(Vec::new(), |v| v.split(',').filter_map(|x| x.trim().parse().ok()).collect()))
 }

@@ -12,6 +12,8 @@
 //! - `SecretTrigger::Touch` / `OneUpTrigger::Touch`: the invisible secrets
 //!   (5 make a star) and the triggers that reveal hidden 1-ups.
 //! - `RedCoin::Next`: the course's next red coin, wherever it is.
+//! - `RedCoin::Ride`: HMC's red coins that only the track platform passes.
+//! - `DddPole::Hop`: DDD's red coins by riding the sliding poles (ddd_pole.rs).
 //! - `CoinFormation::Sweep`: every coin of a line, ring or arrow at once.
 //! - `CrazyBox::Bounce`: ride a jumping box until it breaks into 5 coins.
 //! - `Heart::Spin`: run through a spinning heart to heal.
@@ -22,8 +24,9 @@ use obrrt_core::{Obj, Objective, St};
 
 mod blue;
 mod caps;
-mod coins;
+pub(crate) mod coins;
 mod common;
+mod ddd_pole;
 mod heart;
 mod oneup;
 mod triggers;
@@ -54,7 +57,24 @@ pub fn generate(b: &St, o: &Obj, out: &mut Vec<Arc<dyn Objective>>) {
 /// Objectives that come from the level rather than one object (called once
 /// per `b`).
 pub fn generate_level(b: &St, out: &mut Vec<Arc<dyn Objective>>) {
-    if let Some(r) = coins::RedNext::new(b) {
+    if let Some(r) = blue::Run::new(b) {
+        out.push(Arc::new(r));
+    }
+    // DDD's red coins hang over the sliding poles. `RedCoin::Next` (a straight line to the nearest coin) got a
+    // 2nd to 4th coin in a 40 M test from a 2-coin start (23 successes of 158), but from 4 coins on (the south
+    // row done, the rest over the poles 2, 7, 8, 9 and the platforms between) it took 126 of 160 attempts at
+    // an ETA of 20-60 and none succeeded; `DddPole::Hop` plans those rides, so from 4 coins it replaces it.
+    if let Some(h) = ddd_pole::Hop::new(b) {
+        out.push(Arc::new(h));
+        if b.red_coins < 4 {
+            if let Some(r) = coins::RedNext::new(b) {
+                out.push(Arc::new(r));
+            }
+        }
+    } else if let Some(r) = coins::RedNext::new(b) {
+        out.push(Arc::new(r));
+    }
+    if let Some(r) = coins::RedRide::new(b) {
         out.push(Arc::new(r));
     }
 }

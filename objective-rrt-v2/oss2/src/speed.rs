@@ -91,6 +91,22 @@ impl SpeedConfig {
             ensure!((0.0..=1.0).contains(&p), "OSS_PROP: a share in 0..=1, not {v}");
             c.prop = p;
         }
+        // OSS_POLICY_SEED=1: every route-GA attempt first rolls out the active policies of the inventory
+        // (OBRRT_POLICY_INV, default policy/runs/inventory; OBRRT_POLICY_SEED_EXTRA more plans as extra
+        // gen-0 individuals) and adds the plans that finish ReachRoute next to the route-input seed, which
+        // stays the fallback when no policy finishes. Their emulator frames count in the attempt.
+        if std::env::var("OSS_POLICY_SEED").is_ok_and(|v| v == "1") {
+            #[cfg(feature = "policy-seed")]
+            {
+                let mut p = obrrt_policy::seed::SeedCfg::from_env();
+                p.done_only = true;
+                let n = obrrt_policy::seed::install(p);
+                obrrt_search::ga::set_policy_seed(Some(true));
+                eprintln!("oss2: policy seeds on ({n} active policies)");
+            }
+            #[cfg(not(feature = "policy-seed"))]
+            bail!("OSS_POLICY_SEED=1 needs a build with --features policy-seed");
+        }
         Ok(c)
     }
 

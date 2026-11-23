@@ -254,6 +254,11 @@ impl Objective for Enter {
         if !(self.in_room(s) && !s.course_done(obrrt_core::course_of_level(self.painting.dest))) {
             return false;
         }
+        // OBRRT_EXIT_SKIP: a course the tree is told to skip (campaign t1
+        // step 172: 20% of a castle tree's frames went into such paintings).
+        if crate::exit_skip().contains(&self.painting.dest) {
+            return false;
+        }
         if self.progress.is_some_and(|p| p != s.progress_set()) {
             return false;
         }

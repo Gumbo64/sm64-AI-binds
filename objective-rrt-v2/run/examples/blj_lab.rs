@@ -313,7 +313,7 @@ fn read_ceils(m: &[u8]) -> Vec<obrrt_core::geo::Tri> {
             let surf = u32_(m, node + 4) as usize;
             if surf != 0 && seen.insert(surf) {
                 let v = |k: usize| [i16_(m, surf + k) as f32, i16_(m, surf + k + 2) as f32, i16_(m, surf + k + 4) as f32];
-                out.push(obrrt_core::geo::Tri { v: [v(0x0A), v(0x10), v(0x16)], n: [f32_(m, surf + 0x1C), f32_(m, surf + 0x20), f32_(m, surf + 0x24)], kind: i16_(m, surf) });
+                out.push(obrrt_core::geo::Tri { v: [v(0x0A), v(0x10), v(0x16)], n: [f32_(m, surf + 0x1C), f32_(m, surf + 0x20), f32_(m, surf + 0x24)], kind: i16_(m, surf), room: 0 });
             }
             node = u32_(m, node) as usize;
         }

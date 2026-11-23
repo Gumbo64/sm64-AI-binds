@@ -498,7 +498,7 @@ mod tests {
         let mut n = [u[1] * w[2] - u[2] * w[1], u[2] * w[0] - u[0] * w[2], u[0] * w[1] - u[1] * w[0]];
         let l = (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt();
         n = n.map(|x| x / l);
-        Tri { v, n, kind }
+        Tri { v, n, kind, room: 0 }
     }
     /// An upward-facing floor (normal y > 0) whatever the winding.
     fn floor(v: [[f32; 3]; 3], kind: i16) -> Tri {
@@ -561,9 +561,9 @@ mod tests {
             floor([[-50.0, 26.0, 0.0], [450.0, 26.0, 300.0], [-50.0, 26.0, 300.0]], 0x15),
         ];
         // Riser facing -z (front = lower floor).
-        let r = Tri { v: [[0.0, 0.0, 0.0], [400.0, 0.0, 0.0], [400.0, 26.0, 0.0]], n: [0.0, 0.0, -1.0], kind: 0 };
+        let r = Tri { v: [[0.0, 0.0, 0.0], [400.0, 0.0, 0.0], [400.0, 26.0, 0.0]], n: [0.0, 0.0, -1.0], kind: 0, room: 0 };
         // Tall wall at x = 0 facing +x (toward the riser).
-        let w = Tri { v: [[0.0, -50.0, -300.0], [0.0, -50.0, 300.0], [0.0, 400.0, 0.0]], n: [1.0, 0.0, 0.0], kind: 0 };
+        let w = Tri { v: [[0.0, -50.0, -300.0], [0.0, -50.0, 300.0], [0.0, 400.0, 0.0]], n: [1.0, 0.0, 0.0], kind: 0, room: 0 };
         (fl, vec![r, w])
     }
 

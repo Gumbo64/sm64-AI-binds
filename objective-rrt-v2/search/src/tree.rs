@@ -25,6 +25,31 @@ pub static RETIRE_SUBSET_CAP: std::sync::atomic::AtomicUsize = std::sync::atomic
 /// leads to. Not with OBRRT_RETIRE_SUBSET, whose sets have their own rule.
 pub static STAR_WINDOW: std::sync::atomic::AtomicI16 = std::sync::atomic::AtomicI16::new(1);
 
+/// OBRRT_ZONE_LOCK=1 (per-zone trees of the 120-star plan): the level the
+/// tree is locked to (the root's), -1 when off. A state in another level is
+/// kept as an exit (its path is a segment out of the zone, with whatever it
+/// collected) but is never a start, never on the frontier and never
+/// advances it. A Bowser course's arena counts as the course.
+pub static ZONE_LOCK: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(-1);
+
+/// OBRRT_EXIT_SKIP=<levels>: courses whose entry is not a good exit of the
+/// castle (the campaign's list of courses it has given up on for now).
+static EXIT_SKIP: std::sync::OnceLock<Vec<u16>> = std::sync::OnceLock::new();
+
+/// Whether `level` is outside the locked zone.
+pub fn outside_lock(level: u16) -> bool {
+    let l = ZONE_LOCK.load(std::sync::atomic::Ordering::Relaxed);
+    if l < 0 || level as i32 == l {
+        return false;
+    }
+    // The castle (inside, grounds, courtyard) is one zone.
+    let hub = |x: i32| matches!(x, 6 | 16 | 26);
+    if hub(l) && hub(level as i32) {
+        return false;
+    }
+    !matches!((l, level), (17, 30) | (19, 33) | (21, 34))
+}
+
 /// The lowest progress still on the frontier when the best is `p`.
 fn window_floor(p: (u8, i16)) -> (u8, i16) {
     let w = STAR_WINDOW.load(std::sync::atomic::Ordering::Relaxed);
@@ -196,6 +221,8 @@ pub struct Node {
 }
 
 pub struct Tree {
+    /// OBRRT_ZONE_LOCK: exits of the zone that are worth having (see `add`).
+    pub good_exits: u64,
     pub nodes: Vec<Node>,
     pub children: Vec<Vec<u32>>,
     /// The best (keys, stars) reached, and the nodes that have it.
@@ -278,6 +305,7 @@ impl Tree {
             }],
             children: vec![Vec::new()],
             frontier_progress: progress,
+            good_exits: 0,
             frontier: vec![0],
             delta_bytes: 0,
             hold_retire: false,
@@ -428,6 +456,9 @@ impl Tree {
             r.write().unwrap().insert(st.zone(), crate::speed::ctx(&st), st.pos, st.frame);
         }
         let progress = st.progress();
+        // An exit is a state Mario can act from: the menus on the way out or in
+        // (star select, the save prompt) stay inside, so they can be answered.
+        let outside = outside_lock(st.level) && st.controllable() && !st.modal() && !st.in_dialog();
         self.delta_bytes += save.bytes();
         let depth = self.nodes[parent as usize].depth + 1;
         obrrt_core::hooks::node_added(id, parent, &st);
@@ -453,6 +484,90 @@ impl Tree {
         self.gen_step.push(!via.ends_with("~d"));
         self.note_added(id, parent);
         self.wip.push(if self.keep_wip { self.nodes[id as usize].st.wip() } else { 0 });
+        if outside {
+            // An exit of the locked zone: recorded, then retired at once. A
+            // good one: more progress than the root's (a course), or any
+            // course entered (the castle).
+            let l = ZONE_LOCK.load(std::sync::atomic::Ordering::Relaxed);
+            let skip = EXIT_SKIP.get_or_init(|| std::env::var("OBRRT_EXIT_SKIP").map_or(Vec::new(), |v| v.split(',').filter_map(|x| x.trim().parse().ok()).collect()));
+            let level = self.nodes[id as usize].st.level;
+            // A cap-switch course (TotWC, CotMC, VCutM) whose switch the root
+            // hasn't pressed: only an exit with it pressed is good. The star
+            // there ends the visit, and campaign t1 left the Tower of the
+            // Wing Cap with its star and no wing cap (step 95, seen by the
+            // user in the replay, 2026-11-10).
+            let cap_bit = match l {
+                29 => 0x2u32,
+                28 => 0x4,
+                18 => 0x8,
+                _ => 0,
+            };
+            let need = cap_bit & !self.nodes[0].st.save_flags;
+            // A course tree entering a cap-switch course with its switch
+            // unpressed (and not skipped) is good as well: the Cavern of the
+            // Metal Cap is entered from HMC, not from the castle, and a cap is a
+            // precondition of stars elsewhere.
+            let into_cap = match level {
+                29 => 0x2u32,
+                28 => 0x4,
+                18 => 0x8,
+                _ => 0,
+            } & !self.nodes[id as usize].st.save_flags
+                != 0
+                && i32::from(level) != l
+                && !skip.contains(&level);
+            // OBRRT_ANY_EXIT=1: any way out of a course is good. The campaign's tree
+            // after its coin legs starts inside the course with the 100-coin star had
+            // (that star doesn't end the visit); it only has to leave.
+            static ANY_EXIT: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+            let any = *ANY_EXIT.get_or_init(|| std::env::var("OBRRT_ANY_EXIT").is_ok_and(|v| v == "1"));
+            let good = if need != 0 { self.nodes[id as usize].st.save_flags & need != 0 } else { progress > self.nodes[0].st.progress() || into_cap || any };
+            // OBRRT_FINAL=1: the run's last search (Bowser in the Sky, Bowser 3). Only the grand star counts: it
+            // starts the ending, which leaves the arena for the castle grounds (level 16; the reference movie:
+            // 34 -> 16, Peach's scene, then the credits). The grand star raises no star or key count, and a fall
+            // or a death leaves for BitS or the castle, so no other exit is good.
+            static FINAL: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+            let good = if *FINAL.get_or_init(|| std::env::var("OBRRT_FINAL").is_ok_and(|v| v == "1")) { level == 16 } else { good };
+            // The castle: a course entered that isn't skipped, and nothing else. An exit
+            // into a skipped course with a castle star had on the way (Toad's) used to
+            // count by its progress: campaign t1 step 166, sent to the Tower of the
+            // Wing Cap alone, stopped at 9.9 M frames on an entry into HMC with 28 stars.
+            // OBRRT_EXIT_NOSTOP=1: no exit stops the run (the campaign's coin legs:
+            // an exit with a star ended a CCM leg at 18.6 M of 25 M, sc1 step 21;
+            // only the 100-coin star, by OBRRT_STOP_PROGRESS, should).
+            static NOSTOP: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+            let nostop = *NOSTOP.get_or_init(|| std::env::var("OBRRT_EXIT_NOSTOP").is_ok_and(|v| v == "1"));
+            if !nostop && if matches!(l, 6 | 16 | 26) { !skip.contains(&level) } else { good } {
+                self.good_exits += 1;
+            }
+            self.retire_at(id);
+            return (id, false);
+        }
+        // OBRRT_STOP_PROGRESS=1 (with OBRRT_ZONE_LOCK and OBRRT_STOP_EXIT_GRACE):
+        // a state inside the zone with more progress than the root's counts as a
+        // good exit, so the run stops on it: the castle's own stars (Toad's,
+        // MIPS's) are had without leaving it, and a castle tree only ever
+        // stopped on a course entered. Only a state in control counts: the next
+        // tree starts from it, and one that ends in the star's dance or at its
+        // save prompt never stands still at boot (t1 step 177: "Mario didn't
+        // stand still after booting").
+        // OBRRT_STOP_FLAG=<hex>: likewise for save flags the root lacks (the campaign's moat step: 0x200,
+        // SAVE_FLAG_MOAT_DRAINED, set by ground-pounding both basement pillars; it raises no star count).
+        static STOP_FLAG: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
+        let want = *STOP_FLAG.get_or_init(|| std::env::var("OBRRT_STOP_FLAG").ok().and_then(|v| u32::from_str_radix(v.trim_start_matches("0x"), 16).ok()).unwrap_or(0));
+        if want != 0
+            && self.nodes[id as usize].st.save_flags & want & !self.nodes[0].st.save_flags != 0
+            && self.nodes[id as usize].st.controllable()
+        {
+            self.good_exits += 1;
+        }
+        static STOP_PROGRESS: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        if *STOP_PROGRESS.get_or_init(|| std::env::var("OBRRT_STOP_PROGRESS").is_ok_and(|v| v == "1"))
+            && progress > self.nodes[0].st.progress()
+            && self.nodes[id as usize].st.controllable()
+        {
+            self.good_exits += 1;
+        }
         let advanced = progress > self.frontier_progress;
         if self.subset {
             if advanced {
@@ -813,7 +928,7 @@ impl Tree {
     /// Loads node `id`'s state into `game`: its save, or (sparse saves) its
     /// anchor's save and the recorded inputs from there. Returns the frames
     /// replayed. Without sparse saves exactly the old `save.apply` load.
-    pub fn load_into(&self, id: u32, game: &mut sm64_binds::SM64Game, bases: &[Vec<u8>]) -> anyhow::Result<u32> {
+    pub fn load_into(&self, id: u32, game: &mut crate::game::Game, bases: &[Vec<u8>]) -> anyhow::Result<u32> {
         let Some(sp) = self.sparse.as_ref() else {
             game.load_state(&self.nodes[id as usize].save.apply(bases)?)?;
             return Ok(0);

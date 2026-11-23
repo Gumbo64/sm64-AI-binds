@@ -32,6 +32,18 @@ The viewer's dev server reaches it through its /oss proxy (vite.config.js).
                      route's name, start, settings (seed, beam, qd), totals,
                      `live` / `updated` (legs rewrites a live run's files) and
                      per leg name, frames, delta, reference frames, failed, status
+  /api/ar            agent route sessions (objective-rrt-v2's `ar`, dirs with
+                     session.json under $AR_SESSIONS, default ../../agent/sessions),
+                     newest first: name, live (the daemon in serve.pid is alive and
+                     status.json is < 30 s old), updated, head, base / frontier
+                     frame, stars, commits, front (the front objective's label)
+  /ar/<session>/<file>
+                     the session's files (viewer.json, paths/*.json, ...), gzipped
+  /ar/<session>/route.m64?commit=ID[&live=1]
+                     raw inputs (4 bytes/frame, as the viewer's ?m64= takes) from
+                     power-on to that commit (its chain's inputs/*.pads joined);
+                     with live=1 (commit = HEAD) followed by the work-in-progress
+                     and the daemon's tentative inputs, up to the frontier
   /runs/<run>/*      the search's outputs: objectives.json, cells.jsonl, tree.bin;
                      legs' route.json, paths.json, regions.json, route.m64
 
@@ -49,7 +61,7 @@ import threading
 import time
 from collections import OrderedDict
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 ROOT = os.path.abspath(
     (sys.argv[2] if __name__ == "__main__" and len(sys.argv) > 2 else None)
@@ -57,6 +69,7 @@ ROOT = os.path.abspath(
     or os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 )
 RUNS = os.path.join(ROOT, "runs")
+AR = os.path.abspath(os.environ.get("AR_SESSIONS") or os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../agent/sessions"))
 
 
 def runs():
@@ -110,6 +123,104 @@ def routes():
             "files": {n: os.path.isfile(os.path.join(RUNS, d, n)) for n in ("route.m64", "paths.json", "regions.json")},
         })
     return sorted(out, key=lambda r: -r["mtime"])
+
+
+def _json(path):
+    try:
+        with open(path) as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return None
+
+
+def pid_alive(path):
+    try:
+        with open(path) as f:
+            os.kill(int(f.read().strip()), 0)
+        return True
+    except (OSError, ValueError):
+        return False
+
+
+def ar_sessions():
+    out = []
+    now = time.time()
+    for d in os.listdir(AR) if os.path.isdir(AR) else []:
+        dd = os.path.join(AR, d)
+        if not os.path.isfile(os.path.join(dd, "session.json")):
+            continue
+        st = _json(os.path.join(dd, "status.json")) or {}
+        v = _json(os.path.join(dd, "viewer.json")) or {}
+        try:
+            t = os.path.getmtime(os.path.join(dd, "status.json"))
+        except OSError:
+            t = 0
+        upd = max(st.get("updated") or 0, v.get("updated") or 0, t) or os.path.getmtime(os.path.join(dd, "session.json"))
+        live = pid_alive(os.path.join(dd, "serve.pid")) and now - max(st.get("updated") or 0, t) < 30
+        head = v.get("head")
+        hc = next((c for c in v.get("commits") or [] if c.get("id") == head), None)
+        front = st.get("front") or {}
+        wip = v.get("wip") or {}
+        out.append({
+            "name": d, "live": live, "updated": upd, "head": head,
+            "base_frame": st.get("base_frame"), "frontier_frame": st.get("frontier_frame"),
+            "head_frame": ((hc or {}).get("summary") or {}).get("frame") or (hc or {}).get("to"),
+            "stars": ((hc or {}).get("summary") or {}).get("stars"),
+            "commits": len(v.get("commits") or []),
+            "front": next((o.get("label") for o in v.get("objectives") or [] if o.get("id") == front.get("id")), front.get("id")),
+            "paused": st.get("paused"),
+        })
+    return sorted(out, key=lambda r: -r["updated"])
+
+
+def _pads(dd, name):
+    try:
+        with open(os.path.join(dd, "inputs", name + ".pads"), "rb") as f:
+            return f.read()
+    except OSError:
+        return None
+
+
+def ar_route(session, commit, live):
+    """The m64 bytes (or an error string) for a commit of a session."""
+    dd = os.path.join(AR, session)
+    parents = {}
+    try:
+        with open(os.path.join(dd, "commits.jsonl")) as f:
+            for line in f:
+                try:
+                    c = json.loads(line)
+                except ValueError:
+                    continue
+                parents[c["id"]] = c.get("parent")
+    except OSError:
+        return "no such session"
+    if commit not in parents:
+        return f"no commit {commit}"
+    chain = []
+    c = commit
+    while c is not None and len(chain) < 100000:
+        chain.append(c)
+        c = parents.get(c)
+    out = bytearray()
+    for c in reversed(chain):
+        p = _pads(dd, c)
+        if p is None:
+            return f"no inputs for {c}"
+        out += p
+    if live:
+        v = _json(os.path.join(dd, "viewer.json")) or {}
+        if v.get("head") != commit:
+            return "live=1 needs commit = HEAD"
+        wip = v.get("wip") or {}
+        wp = _pads(dd, wip.get("id", "")) if wip.get("id") else None
+        if wp is not None:
+            out += wp
+            tj = _json(os.path.join(dd, "tentative.json")) or {}
+            tp = _pads(dd, "tentative")
+            if tp and tj.get("wip") == wip.get("id") and tj.get("from") == wip.get("from", 0) + len(wp) // 4:
+                out += tp
+    return bytes(out[: len(out) // 4 * 4])
 
 
 # gzip of the text files (cells.jsonl is tens of MB and shrinks about 8x),
@@ -344,6 +455,10 @@ class Handler(SimpleHTTPRequestHandler):
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)
+        elif path == "/api/ar":
+            self.send(200, json.dumps(ar_sessions()).encode())
+        elif path.startswith("/ar/"):
+            self.do_ar(path, parse_qs(url.query))
         elif path.startswith("/runs/") and self.compressible(path) and "gzip" in self.headers.get("Accept-Encoding", ""):
             f = self.translate_path(path)
             if not os.path.isfile(f):
@@ -360,6 +475,26 @@ class Handler(SimpleHTTPRequestHandler):
         else:
             self.send_error(404)
 
+    def do_ar(self, path, q):
+        parts = path[len("/ar/"):].split("/", 1)
+        session = unquote(parts[0])
+        rel = unquote(parts[1]) if len(parts) > 1 else ""
+        base = os.path.realpath(os.path.join(AR, session))
+        if not session or os.path.dirname(base) != os.path.realpath(AR) or not os.path.isdir(base):
+            return self.send_error(404)
+        if rel == "route.m64":
+            commit = q.get("commit", [""])[0]
+            body = ar_route(session, commit, q.get("live", ["0"])[0] not in ("", "0"))
+            if isinstance(body, str):
+                return self.send(404, json.dumps({"error": body}).encode())
+            return self.send(200, body, "application/octet-stream")
+        f = os.path.realpath(os.path.join(base, rel))
+        if not f.startswith(base + os.sep) or not os.path.isfile(f):
+            return self.send_error(404)
+        with open(f, "rb") as fh:
+            body = fh.read()
+        self.send(200, body, "application/json" if f.endswith(".json") else "application/octet-stream" if not f.endswith((".jsonl", ".txt")) else "text/plain", gz=f.endswith((".json", ".jsonl")))
+
     def do_HEAD(self):
         if urlparse(self.path).path.startswith("/runs/"):
             super().do_HEAD()
@@ -369,5 +504,6 @@ class Handler(SimpleHTTPRequestHandler):
 
 if __name__ == "__main__":
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 8091
+    print(f"agent sessions ({AR})")
     print(f"oss2 data ({RUNS}) on http://localhost:{port} (GUI: http://localhost:5173/sm64-viewer/?oss=)")
     ThreadingHTTPServer(("", port), Handler).serve_forever()

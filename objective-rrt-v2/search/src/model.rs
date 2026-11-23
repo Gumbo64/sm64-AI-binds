@@ -227,7 +227,7 @@ fn theta_inputs(th: [f32; 6], st: &St, n: usize, rng: &mut impl Rng) -> Vec<Game
 
 /// A rollout genome from the policy toward `goal`, played on `game` from its
 /// current state (which it changes): re-sampled every 32 frames.
-pub fn policy_genome(game: &mut SM64Game, start: &St, goal: [f32; 3], horizon: usize, rng: &mut impl Rng) -> Result<Vec<GamePad>> {
+pub fn policy_genome(game: &mut crate::game::Game, start: &St, goal: [f32; 3], horizon: usize, rng: &mut impl Rng) -> Result<Vec<GamePad>> {
     let mut out: Vec<GamePad> = Vec::with_capacity(horizon);
     let mut frame = start.frame;
     while out.len() < horizon {
@@ -248,7 +248,7 @@ pub fn policy_genome(game: &mut SM64Game, start: &St, goal: [f32; 3], horizon: u
 /// A genome toward a recorded route's states (`targets`: frames after the
 /// start and their embeddings, in order), played on `game` from its current
 /// state: 16-frame inverse-dynamics chunks toward the next target ahead.
-pub fn repair_genome(game: &mut SM64Game, start: &St, targets: &[(u32, Arc<NodeModel>)], horizon: usize) -> Result<Vec<GamePad>> {
+pub fn repair_genome(game: &mut crate::game::Game, start: &St, targets: &[(u32, Arc<NodeModel>)], horizon: usize) -> Result<Vec<GamePad>> {
     let mut out: Vec<GamePad> = Vec::with_capacity(horizon);
     let mut frame = start.frame;
     for (at, m) in targets {

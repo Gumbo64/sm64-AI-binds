@@ -103,7 +103,14 @@ impl Objective for Touch {
         if self.needs_wings() && self.pos[1] > s.pos[1] + 800.0 && s.mario_flags & MARIO_WING_CAP == 0 {
             return Eta::Lost;
         }
-        Eta::Frames(frames_for(s.dist(self.pos)))
+        // THI's secrets are up the tiny island's mountain and down on its
+        // lake shore: the walk (OBRRT_GEO=1, which the campaign sets in THI),
+        // not the line through the rock.
+        if self.secret && self.zone.0 as u32 == LEVEL_THI {
+            return Eta::Frames(frames_for(s.path_dist(self.pos)));
+        }
+        // SSL (OBRRT_GEO=1): the walkable distance, the secrets sit up the pyramid's stairway.
+        Eta::Frames(frames_for(crate::walk::dist(s, self.pos).max(s.dist(self.pos))))
     }
     fn success_value(&self) -> f64 {
         if self.secret { 6.0 } else { 0.3 }
@@ -111,8 +118,8 @@ impl Objective for Touch {
     fn needs_objects(&self) -> bool {
         true
     }
-    fn steer_target(&self, _s: &St) -> Option<[f32; 3]> {
-        Some(self.pos)
+    fn steer_target(&self, s: &St) -> Option<[f32; 3]> {
+        Some(crate::walk::steer(s, self.pos))
     }
     fn exists_in(&self, s: &St) -> bool {
         self.base_criteria(s)

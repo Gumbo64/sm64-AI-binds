@@ -7,6 +7,8 @@
 //!   get onto a moving platform, and stay on it while it carries Mario some
 //!   distance (RR carpets, CCM ski lift, elevators, WDW arrow lifts and the
 //!   express elevator, WF tower platforms, Dorrie, ...).
+//! - `WdwWater::Lower` ([`water`]): drain Wet-Dry World's water with its diamonds (the
+//!   express elevator's shaft is entered on foot, the downtown is flooded unless it is low).
 //! - `Shell::Ride` ([`shell`]): jump on or walk into a Koopa shell.
 //! - `Chest::Open` ([`chest`]): the 4-chest puzzles of JRB and DDD, in order.
 //! - `WaterRing::SwimThrough` ([`ring`]): the manta ray's and DDD's jet
@@ -41,7 +43,9 @@ mod chest;
 mod common;
 mod platform;
 mod ring;
+mod rr;
 mod shell;
+pub mod water;
 
 use std::sync::Arc;
 
@@ -58,4 +62,11 @@ pub fn generate(b: &St, o: &Obj, out: &mut Vec<Arc<dyn Objective>>) {
 
 /// Objectives that come from the level rather than one object (called once
 /// per `b`).
-pub fn generate_level(_b: &St, _out: &mut Vec<Arc<dyn Objective>>) {}
+pub fn generate_level(b: &St, out: &mut Vec<Arc<dyn Objective>>) {
+    water::Lower::generate(b, out);
+    water::Raise::generate(b, out);
+    water::Slab::generate(b, out);
+    water::Quick::generate(b, out);
+    rr::generate_level(b, out);
+    rr::generate_route(b, out);
+}

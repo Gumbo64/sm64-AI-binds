@@ -1,0 +1,193 @@
+train runs/gp/follow_movies/t0.raw 2318 h=256 s=64 fast=0
+train runs/gp/follow_movies/t0.raw 2318 noise=15 raw=17:-61 h=256 s=64 fast=0
+train runs/gp/follow_movies/t0.raw 2318 noise=45 raw=20:-60 h=256 s=64 fast=0
+train runs/gp/follow_movies/t0.raw 2190 noise=15 raw=-22:-60 h=256 s=256 fast=0
+train runs/gp/follow_movies/t0.raw 2190 noise=45 raw=-32:-55 h=256 s=256 fast=0
+train runs/gp/follow_movies/t1.raw 1646 h=256 s=16 fast=1
+train runs/gp/follow_movies/t1.raw 1646 noise=15 raw=54:-32 h=256 s=16 fast=1
+train runs/gp/follow_movies/t1.raw 1646 noise=45 raw=63:5 h=256 s=16 fast=1
+train runs/gp/follow_movies/t1.raw 1710 noise=15 raw=56:30 h=256 s=64 fast=1
+train runs/gp/follow_movies/t1.raw 1710 noise=45 raw=-59:22 h=256 s=64 fast=1
+train runs/gp/follow_movies/t2.raw 2542 h=256 s=256 fast=0
+train runs/gp/follow_movies/t2.raw 2542 noise=15 raw=39:50 h=256 s=256 fast=0
+train runs/gp/follow_movies/t2.raw 2542 noise=45 raw=39:50 h=256 s=256 fast=0
+train runs/gp/follow_movies/t2.raw 2830 noise=15 raw=31:55 h=256 s=16 fast=0
+train runs/gp/follow_movies/t2.raw 2830 noise=45 raw=-53:-34 h=256 s=16 fast=0
+train runs/gp/follow_movies/t3.raw 2574 h=256 s=64 fast=0
+train runs/gp/follow_movies/t3.raw 2574 noise=15 raw=-27:58 h=256 s=64 fast=0
+train runs/gp/follow_movies/t3.raw 2574 noise=45 raw=-39:50 h=256 s=64 fast=0
+train runs/gp/follow_movies/t3.raw 3182 noise=15 raw=63:10 h=256 s=256 fast=0
+train runs/gp/follow_movies/t3.raw 3182 noise=45 raw=2:-63 h=256 s=256 fast=0
+train runs/gp/follow_movies/t4.raw 2926 h=256 s=16 fast=0
+train runs/gp/follow_movies/t4.raw 2926 noise=15 raw=20:-60 h=256 s=16 fast=0
+train runs/gp/follow_movies/t4.raw 2926 noise=45 raw=17:61 h=256 s=16 fast=0
+train runs/gp/follow_movies/t4.raw 2478 noise=15 raw=-21:60 h=256 s=64 fast=1
+train runs/gp/follow_movies/t4.raw 2478 noise=45 raw=-63:7 h=256 s=64 fast=1
+val runs/gp/follow_movies/t5.raw 2766 h=256 s=64 fast=0
+val runs/gp/follow_movies/t5.raw 2766 noise=15 raw=-14:-62 h=256 s=64 fast=0
+val runs/gp/follow_movies/t5.raw 2766 noise=45 raw=-10:-63 h=256 s=64 fast=0
+val runs/gp/follow_movies/t5.raw 3150 noise=15 raw=-14:62 h=256 s=256 fast=0
+val runs/gp/follow_movies/t5.raw 3150 noise=45 raw=-58:26 h=256 s=256 fast=0
+train runs/gp/follow_movies/t6.raw 3150 h=256 s=256 fast=0
+train runs/gp/follow_movies/t6.raw 3150 noise=15 raw=-43:46 h=256 s=256 fast=0
+train runs/gp/follow_movies/t6.raw 3150 noise=45 raw=40:-49 h=256 s=256 fast=0
+train runs/gp/follow_movies/t6.raw 2862 noise=15 raw=10:63 h=256 s=16 fast=0
+train runs/gp/follow_movies/t6.raw 2862 noise=45 raw=23:59 h=256 s=16 fast=0
+train runs/gp/follow_movies/t7.raw 3758 h=256 s=64 fast=0
+train runs/gp/follow_movies/t7.raw 3758 noise=15 raw=-63:-5 h=256 s=64 fast=0
+train runs/gp/follow_movies/t7.raw 3758 noise=45 raw=-9:-63 h=256 s=64 fast=0
+train runs/gp/follow_movies/t7.raw 2830 noise=15 raw=-56:29 h=256 s=256 fast=0
+train runs/gp/follow_movies/t7.raw 2830 noise=45 raw=-48:-41 h=256 s=256 fast=0
+train runs/gp/follow_movies/t8.raw 1646 h=256 s=16 fast=0
+train runs/gp/follow_movies/t8.raw 1646 noise=15 raw=4:63 h=256 s=16 fast=0
+train runs/gp/follow_movies/t8.raw 1646 noise=45 raw=0:-63 h=256 s=16 fast=0
+train runs/gp/follow_movies/t8.raw 1678 noise=15 raw=56:29 h=256 s=64 fast=0
+train runs/gp/follow_movies/t8.raw 1678 noise=45 raw=-58:-26 h=256 s=64 fast=0
+train runs/gp/follow_movies/t9.raw 2574 h=256 s=256 fast=0
+train runs/gp/follow_movies/t9.raw 2574 noise=15 raw=39:-50 h=256 s=256 fast=0
+train runs/gp/follow_movies/t9.raw 2574 noise=45 raw=61:-18 h=256 s=256 fast=0
+train runs/gp/follow_movies/t9.raw 2766 noise=15 raw=63:6 h=256 s=16 fast=0
+train runs/gp/follow_movies/t9.raw 2766 noise=45 raw=35:-53 h=256 s=16 fast=0
+train runs/gp/follow_movies/t10.raw 1646 h=256 s=64 fast=1
+train runs/gp/follow_movies/t10.raw 1646 noise=15 raw=63:-5 h=256 s=64 fast=1
+train runs/gp/follow_movies/t10.raw 1646 noise=45 raw=62:-15 h=256 s=64 fast=1
+train runs/gp/follow_movies/t10.raw 2414 noise=15 raw=-50:38 h=256 s=256 fast=1
+train runs/gp/follow_movies/t10.raw 2414 noise=45 raw=7:-63 h=256 s=256 fast=1
+train runs/gp/follow_movies/t11.raw 2606 h=256 s=16 fast=0
+train runs/gp/follow_movies/t11.raw 2606 noise=15 raw=15:-62 h=256 s=16 fast=0
+train runs/gp/follow_movies/t11.raw 2606 noise=45 raw=-54:-33 h=256 s=16 fast=0
+train runs/gp/follow_movies/t11.raw 2638 noise=15 raw=63:-1 h=256 s=64 fast=0
+train runs/gp/follow_movies/t11.raw 2638 noise=45 raw=62:13 h=256 s=64 fast=0
+val runs/gp/follow_movies/t12.raw 3662 h=256 s=16 fast=0
+val runs/gp/follow_movies/t12.raw 3662 noise=15 raw=-15:62 h=256 s=16 fast=0
+val runs/gp/follow_movies/t12.raw 3662 noise=45 raw=12:62 h=256 s=16 fast=0
+val runs/gp/follow_movies/t12.raw 4110 noise=15 raw=-4:63 h=256 s=64 fast=0
+val runs/gp/follow_movies/t12.raw 4110 noise=45 raw=29:-56 h=256 s=64 fast=0
+train runs/gp/follow_movies/t13.raw 4654 h=256 s=256 fast=0
+train runs/gp/follow_movies/t13.raw 4654 noise=15 raw=0:63 h=256 s=256 fast=0
+train runs/gp/follow_movies/t13.raw 4654 noise=45 raw=55:-31 h=256 s=256 fast=0
+train runs/gp/follow_movies/t13.raw 2574 noise=15 raw=-50:38 h=256 s=16 fast=0
+train runs/gp/follow_movies/t13.raw 2574 noise=45 raw=42:-47 h=256 s=16 fast=0
+train runs/gp/follow_movies/t14.raw 9774 h=256 s=64 fast=0
+train runs/gp/follow_movies/t14.raw 9774 noise=15 raw=37:-51 h=256 s=64 fast=0
+train runs/gp/follow_movies/t14.raw 9774 noise=45 raw=-15:62 h=256 s=64 fast=0
+train runs/gp/follow_movies/t14.raw 16334 noise=15 raw=26:58 h=256 s=256 fast=1
+train runs/gp/follow_movies/t14.raw 16334 noise=45 raw=30:-56 h=256 s=256 fast=1
+train runs/gp/follow_movies/t15.raw 2734 h=256 s=16 fast=0
+train runs/gp/follow_movies/t15.raw 2734 noise=15 raw=63:10 h=256 s=16 fast=0
+train runs/gp/follow_movies/t15.raw 2734 noise=45 raw=-5:63 h=256 s=16 fast=0
+train runs/gp/follow_movies/t15.raw 5422 noise=15 raw=-62:-11 h=256 s=64 fast=0
+train runs/gp/follow_movies/t15.raw 5422 noise=45 raw=-57:28 h=256 s=64 fast=0
+train runs/gp/follow_movies/t16.raw 1646 h=256 s=256 fast=0
+train runs/gp/follow_movies/t16.raw 1646 noise=15 raw=60:19 h=256 s=256 fast=0
+train runs/gp/follow_movies/t16.raw 1646 noise=45 raw=-55:-32 h=256 s=256 fast=0
+train runs/gp/follow_movies/t16.raw 2478 noise=15 raw=34:-53 h=256 s=16 fast=0
+train runs/gp/follow_movies/t16.raw 2478 noise=45 raw=-63:7 h=256 s=16 fast=0
+val runs/gp/follow_movies/t17.raw 2094 h=256 s=256 fast=0
+val runs/gp/follow_movies/t17.raw 2094 noise=15 raw=33:-54 h=256 s=256 fast=0
+val runs/gp/follow_movies/t17.raw 2094 noise=45 raw=-59:23 h=256 s=256 fast=0
+val runs/gp/follow_movies/t17.raw 2158 noise=15 raw=16:-61 h=256 s=16 fast=0
+val runs/gp/follow_movies/t17.raw 2158 noise=45 raw=61:17 h=256 s=16 fast=0
+train runs/gp/follow_movies/t18.raw 2702 h=256 s=64 fast=0
+train runs/gp/follow_movies/t18.raw 2702 noise=15 raw=1:63 h=256 s=64 fast=0
+train runs/gp/follow_movies/t18.raw 2702 noise=45 raw=7:63 h=256 s=64 fast=0
+train runs/gp/follow_movies/t18.raw 4846 noise=15 raw=52:37 h=256 s=256 fast=0
+train runs/gp/follow_movies/t18.raw 4846 noise=45 raw=33:54 h=256 s=256 fast=0
+val runs/gp/follow_movies/t19.raw 1646 h=256 s=64 fast=0
+val runs/gp/follow_movies/t19.raw 1646 noise=15 raw=-59:24 h=256 s=64 fast=0
+val runs/gp/follow_movies/t19.raw 1646 noise=45 raw=-61:-16 h=256 s=64 fast=0
+val runs/gp/follow_movies/t20.raw 4430 noise=15 raw=4:63 h=256 s=256 fast=0
+val runs/gp/follow_movies/t20.raw 4430 noise=45 raw=25:-58 h=256 s=256 fast=0
+val runs/gp/follow_movies/t20.raw 4462 h=256 s=16 fast=0
+val runs/gp/follow_movies/t20.raw 4462 noise=15 raw=44:45 h=256 s=16 fast=0
+val runs/gp/follow_movies/t20.raw 4462 noise=45 raw=-29:-56 h=256 s=16 fast=0
+train runs/gp/follow_movies/t21.raw 6510 noise=15 raw=57:-27 h=256 s=16 fast=0
+train runs/gp/follow_movies/t21.raw 6510 noise=45 raw=63:9 h=256 s=16 fast=0
+train runs/gp/follow_movies/t21.raw 17070 h=256 s=64 fast=0
+train runs/gp/follow_movies/t21.raw 17070 noise=15 raw=35:-53 h=256 s=64 fast=0
+train runs/gp/follow_movies/t21.raw 17070 noise=45 raw=-59:-23 h=256 s=64 fast=0
+train runs/gp/follow_movies/t22.raw 1966 noise=15 raw=63:2 h=256 s=256 fast=0
+train runs/gp/follow_movies/t22.raw 1966 noise=45 raw=-23:-59 h=256 s=256 fast=0
+train runs/gp/follow_movies/t22.raw 1646 h=256 s=16 fast=1
+train runs/gp/follow_movies/t22.raw 1646 noise=15 raw=52:36 h=256 s=16 fast=1
+train runs/gp/follow_movies/t22.raw 1646 noise=45 raw=-63:9 h=256 s=16 fast=1
+val runs/gp/follow_movies/t23.raw 2542 noise=15 raw=-63:-9 h=256 s=64 fast=0
+val runs/gp/follow_movies/t23.raw 2542 noise=45 raw=45:-45 h=256 s=64 fast=0
+val runs/gp/follow_movies/t23.raw 6286 h=256 s=256 fast=0
+val runs/gp/follow_movies/t23.raw 6286 noise=15 raw=-39:-50 h=256 s=256 fast=0
+val runs/gp/follow_movies/t23.raw 6286 noise=45 raw=8:63 h=256 s=256 fast=0
+train runs/gp/follow_movies/t24.raw 3630 noise=15 raw=50:-38 h=256 s=64 fast=0
+train runs/gp/follow_movies/t24.raw 3630 noise=45 raw=-63:-2 h=256 s=64 fast=0
+train runs/gp/follow_movies/t24.raw 5294 h=256 s=256 fast=0
+train runs/gp/follow_movies/t24.raw 5294 noise=15 raw=-62:-15 h=256 s=256 fast=0
+train runs/gp/follow_movies/t24.raw 5294 noise=45 raw=43:-46 h=256 s=256 fast=0
+train runs/gp/follow_movies/t25.raw 6766 noise=15 raw=-29:56 h=256 s=16 fast=0
+train runs/gp/follow_movies/t25.raw 6766 noise=45 raw=62:13 h=256 s=16 fast=0
+train runs/gp/follow_movies/t25.raw 2446 h=256 s=64 fast=0
+train runs/gp/follow_movies/t25.raw 2446 noise=15 raw=-12:-62 h=256 s=64 fast=0
+train runs/gp/follow_movies/t25.raw 2446 noise=45 raw=-48:41 h=256 s=64 fast=0
+train runs/gp/follow_movies/t26.raw 2510 noise=15 raw=-56:-30 h=256 s=256 fast=0
+train runs/gp/follow_movies/t26.raw 2510 noise=45 raw=56:29 h=256 s=256 fast=0
+train runs/gp/follow_movies/t26.raw 2542 h=256 s=16 fast=0
+train runs/gp/follow_movies/t26.raw 2542 noise=15 raw=-31:-55 h=256 s=16 fast=0
+train runs/gp/follow_movies/t26.raw 2542 noise=45 raw=18:-61 h=256 s=16 fast=0
+val runs/gp/follow_movies/t27.raw 1710 noise=15 raw=-10:-63 h=256 s=16 fast=0
+val runs/gp/follow_movies/t27.raw 1710 noise=45 raw=63:8 h=256 s=16 fast=0
+val runs/gp/follow_movies/t27.raw 1678 h=256 s=64 fast=0
+val runs/gp/follow_movies/t27.raw 1678 noise=15 raw=-8:-63 h=256 s=64 fast=0
+val runs/gp/follow_movies/t27.raw 1678 noise=45 raw=-63:2 h=256 s=64 fast=0
+val runs/gp/follow_movies/t28.raw 6574 noise=15 raw=58:-24 h=256 s=256 fast=0
+val runs/gp/follow_movies/t28.raw 6574 noise=45 raw=-53:-35 h=256 s=256 fast=0
+val runs/gp/follow_movies/t28.raw 5262 h=256 s=16 fast=0
+val runs/gp/follow_movies/t28.raw 5262 noise=15 raw=-58:-25 h=256 s=16 fast=0
+val runs/gp/follow_movies/t28.raw 5262 noise=45 raw=59:22 h=256 s=16 fast=0
+train runs/gp/follow_movies/t29.raw 2702 noise=15 raw=-42:48 h=256 s=64 fast=0
+train runs/gp/follow_movies/t29.raw 2702 noise=45 raw=-17:-61 h=256 s=64 fast=0
+train runs/gp/follow_movies/t29.raw 6094 h=256 s=256 fast=0
+train runs/gp/follow_movies/t29.raw 6094 noise=15 raw=4:-63 h=256 s=256 fast=0
+train runs/gp/follow_movies/t29.raw 6094 noise=45 raw=-52:-37 h=256 s=256 fast=0
+train runs/gp/follow_movies/t30.raw 11182 noise=15 raw=-14:-62 h=256 s=16 fast=0
+train runs/gp/follow_movies/t30.raw 11182 noise=45 raw=-53:35 h=256 s=16 fast=0
+train runs/gp/follow_movies/t30.raw 2638 h=256 s=64 fast=0
+train runs/gp/follow_movies/t30.raw 2638 noise=15 raw=42:47 h=256 s=64 fast=0
+train runs/gp/follow_movies/t30.raw 2638 noise=45 raw=63:3 h=256 s=64 fast=0
+val runs/gp/follow_movies/t31.raw 2606 noise=15 raw=-41:-48 h=256 s=64 fast=1
+val runs/gp/follow_movies/t31.raw 2606 noise=45 raw=-54:33 h=256 s=64 fast=1
+val runs/gp/follow_movies/t31.raw 1742 h=256 s=256 fast=0
+val runs/gp/follow_movies/t31.raw 1742 noise=15 raw=-12:-62 h=256 s=256 fast=0
+val runs/gp/follow_movies/t31.raw 1742 noise=45 raw=-20:60 h=256 s=256 fast=0
+val runs/gp/follow_movies/t32.raw 1646 noise=15 raw=63:-6 h=256 s=16 fast=0
+val runs/gp/follow_movies/t32.raw 1646 noise=45 raw=63:4 h=256 s=16 fast=0
+val runs/gp/follow_movies/t32.raw 1774 h=256 s=64 fast=0
+val runs/gp/follow_movies/t32.raw 1774 noise=15 raw=36:-52 h=256 s=64 fast=0
+val runs/gp/follow_movies/t32.raw 1774 noise=45 raw=63:-2 h=256 s=64 fast=0
+val runs/gp/follow_movies/t33.raw 7694 noise=15 raw=48:-41 h=256 s=256 fast=0
+val runs/gp/follow_movies/t33.raw 7694 noise=45 raw=61:17 h=256 s=256 fast=0
+val runs/gp/follow_movies/t33.raw 8238 h=256 s=16 fast=0
+val runs/gp/follow_movies/t33.raw 8238 noise=15 raw=-10:63 h=256 s=16 fast=0
+val runs/gp/follow_movies/t33.raw 8238 noise=45 raw=-63:-9 h=256 s=16 fast=0
+val runs/gp/follow_movies/t34.raw 3182 noise=15 raw=54:34 h=256 s=64 fast=0
+val runs/gp/follow_movies/t34.raw 3182 noise=45 raw=-58:25 h=256 s=64 fast=0
+val runs/gp/follow_movies/t34.raw 2766 h=256 s=256 fast=0
+val runs/gp/follow_movies/t34.raw 2766 noise=15 raw=-38:-51 h=256 s=256 fast=0
+val runs/gp/follow_movies/t34.raw 2766 noise=45 raw=-20:60 h=256 s=256 fast=0
+val runs/gp/follow_movies/t35.raw 2734 noise=15 raw=45:-45 h=256 s=16 fast=0
+val runs/gp/follow_movies/t35.raw 2734 noise=45 raw=-45:-44 h=256 s=16 fast=0
+val runs/gp/follow_movies/t35.raw 2894 h=256 s=64 fast=0
+val runs/gp/follow_movies/t35.raw 2894 noise=15 raw=32:55 h=256 s=64 fast=0
+val runs/gp/follow_movies/t35.raw 2894 noise=45 raw=-39:50 h=256 s=64 fast=0
+val runs/gp/follow_movies/t36.raw 1742 noise=15 raw=5:63 h=256 s=256 fast=0
+val runs/gp/follow_movies/t36.raw 1742 noise=45 raw=-50:-39 h=256 s=256 fast=0
+val runs/gp/follow_movies/t36.raw 1646 h=256 s=16 fast=0
+val runs/gp/follow_movies/t36.raw 1646 noise=15 raw=16:-61 h=256 s=16 fast=0
+val runs/gp/follow_movies/t36.raw 1646 noise=45 raw=-63:3 h=256 s=16 fast=0
+val runs/gp/follow_movies/t37.raw 5902 noise=15 raw=39:50 h=256 s=64 fast=0
+val runs/gp/follow_movies/t37.raw 5902 noise=45 raw=-30:56 h=256 s=64 fast=0
+val runs/gp/follow_movies/t37.raw 2926 h=256 s=256 fast=0
+val runs/gp/follow_movies/t37.raw 2926 noise=15 raw=-7:-63 h=256 s=256 fast=0
+val runs/gp/follow_movies/t37.raw 2926 noise=45 raw=22:59 h=256 s=256 fast=0
+val runs/gp/follow_movies/t38.raw 9070 noise=15 raw=-49:-40 h=256 s=16 fast=0
+val runs/gp/follow_movies/t38.raw 9070 noise=45 raw=-22:-59 h=256 s=16 fast=0
+val runs/gp/follow_movies/t38.raw 6254 h=256 s=64 fast=0
+val runs/gp/follow_movies/t38.raw 6254 noise=15 raw=-13:-62 h=256 s=64 fast=0
+val runs/gp/follow_movies/t38.raw 6254 noise=45 raw=-54:-33 h=256 s=64 fast=0

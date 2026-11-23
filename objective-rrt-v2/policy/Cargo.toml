@@ -1,0 +1,28 @@
+[package]
+name = "obrrt-policy"
+description = "Reactive movement policies: a reduced button/stick menu per state, a library of skills, derivative-free stick refinement, and a GA over policies that pick skills each frame."
+version.workspace = true
+edition.workspace = true
+
+[features]
+# pink-noise GA baseline (obrrt-search), as obrrt-gp
+ga = ["obrrt-gp/ga", "dep:obrrt-search"]
+
+[dependencies]
+anyhow.workspace = true
+rand.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sm64-binds.workspace = true
+obrrt-core.workspace = true
+obrrt-objectives.workspace = true
+obrrt-gp = { path = "../gp" }
+obrrt-search = { workspace = true, optional = true }
+
+[[bin]]
+name = "policy"
+path = "src/bin/policy.rs"
+
+[[bin]]
+name = "plga"
+path = "src/bin/plga.rs"

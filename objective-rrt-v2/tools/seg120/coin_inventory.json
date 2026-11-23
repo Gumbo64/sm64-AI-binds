@@ -1,0 +1,565 @@
+{
+ "1": {
+  "level": "bob",
+  "areas": {
+   "1": {
+    "yellow": 5,
+    "formation": 63,
+    "formations": 9,
+    "red": 16,
+    "red_n": 8,
+    "blue": 0,
+    "blue_hidden": 0,
+    "box": 0,
+    "special": 0,
+    "loot": 31,
+    "warps": [],
+    "fixed": 84,
+    "total": 115
+   }
+  },
+  "total": 115,
+  "fixed": 84
+ },
+ "2": {
+  "level": "wf",
+  "areas": {
+   "1": {
+    "yellow": 4,
+    "formation": 60,
+    "formations": 9,
+    "red": 16,
+    "red_n": 8,
+    "blue": 0,
+    "blue_hidden": 20,
+    "box": 0,
+    "special": 0,
+    "loot": 31,
+    "warps": [],
+    "fixed": 100,
+    "total": 131
+   }
+  },
+  "total": 131,
+  "fixed": 100
+ },
+ "3": {
+  "level": "jrb",
+  "areas": {
+   "1": {
+    "yellow": 0,
+    "formation": 52,
+    "formations": 8,
+    "red": 16,
+    "red_n": 8,
+    "blue": 0,
+    "blue_hidden": 30,
+    "box": 3,
+    "special": 0,
+    "loot": 0,
+    "warps": [
+     2
+    ],
+    "fixed": 101,
+    "total": 101
+   },
+   "2": {
+    "yellow": 0,
+    "formation": 0,
+    "formations": 0,
+    "red": 0,
+    "red_n": 0,
+    "blue": 0,
+    "blue_hidden": 0,
+    "box": 0,
+    "special": 0,
+    "loot": 0,
+    "warps": [],
+    "fixed": 0,
+    "total": 0
+   }
+  },
+  "total": 101,
+  "fixed": 101
+ },
+ "4": {
+  "level": "ccm",
+  "areas": {
+   "1": {
+    "yellow": 0,
+    "formation": 33,
+    "formations": 6,
+    "red": 16,
+    "red_n": 8,
+    "blue": 0,
+    "blue_hidden": 10,
+    "box": 0,
+    "special": 0,
+    "loot": 24,
+    "warps": [
+     2
+    ],
+    "fixed": 59,
+    "total": 83
+   },
+   "2": {
+    "yellow": 27,
+    "formation": 45,
+    "formations": 9,
+    "red": 0,
+    "red_n": 0,
+    "blue": 5,
+    "blue_hidden": 0,
+    "box": 0,
+    "special": 0,
+    "loot": 0,
+    "warps": [
+     1
+    ],
+    "fixed": 77,
+    "total": 77
+   }
+  },
+  "total": 160,
+  "fixed": 136
+ },
+ "5": {
+  "level": "bbh",
+  "areas": {
+   "1": {
+    "yellow": 0,
+    "formation": 0,
+    "formations": 0,
+    "red": 16,
+    "red_n": 8,
+    "blue": 0,
+    "blue_hidden": 20,
+    "box": 10,
+    "special": 0,
+    "loot": 40,
+    "warps": [],
+    "fixed": 46,
+    "total": 86
+   }
+  },
+  "total": 86,
+  "fixed": 46
+ },
+ "6": {
+  "level": "hmc",
+  "areas": {
+   "1": {
+    "yellow": 5,
+    "formation": 36,
+    "formations": 6,
+    "red": 16,
+    "red_n": 8,
+    "blue": 0,
+    "blue_hidden": 35,
+    "box": 0,
+    "special": 0,
+    "loot": 41,
+    "warps": [],
+    "fixed": 92,
+    "total": 133
+   }
+  },
+  "total": 133,
+  "fixed": 92
+ },
+ "7": {
+  "level": "lll",
+  "areas": {
+   "1": {
+    "yellow": 14,
+    "formation": 49,
+    "formations": 8,
+    "red": 16,
+    "red_n": 8,
+    "blue": 0,
+    "blue_hidden": 0,
+    "box": 0,
+    "special": 0,
+    "loot": 15,
+    "warps": [
+     2
+    ],
+    "fixed": 79,
+    "total": 94
+   },
+   "2": {
+    "yellow": 19,
+    "formation": 5,
+    "formations": 1,
+    "red": 0,
+    "red_n": 0,
+    "blue": 0,
+    "blue_hidden": 0,
+    "box": 0,
+    "special": 0,
+    "loot": 0,
+    "warps": [],
+    "fixed": 24,
+    "total": 24
+   }
+  },
+  "total": 118,
+  "fixed": 103
+ },
+ "8": {
+  "level": "ssl",
+  "areas": {
+   "1": {
+    "yellow": 4,
+    "formation": 10,
+    "formations": 2,
+    "red": 16,
+    "red_n": 8,
+    "blue": 0,
+    "blue_hidden": 0,
+    "box": 0,
+    "special": 0,
+    "loot": 42,
+    "warps": [
+     2
+    ],
+    "fixed": 30,
+    "total": 72
+   },
+   "2": {
+    "yellow": 15,
+    "formation": 23,
+    "formations": 4,
+    "red": 0,
+    "red_n": 0,
+    "blue": 0,
+    "blue_hidden": 15,
+    "box": 0,
+    "special": 0,
+    "loot": 6,
+    "warps": [
+     3
+    ],
+    "fixed": 53,
+    "total": 59
+   },
+   "3": {
+    "yellow": 0,
+    "formation": 0,
+    "formations": 0,
+    "red": 0,
+    "red_n": 0,
+    "blue": 0,
+    "blue_hidden": 0,
+    "box": 0,
+    "special": 0,
+    "loot": 0,
+    "warps": [
+     2
+    ],
+    "fixed": 0,
+    "total": 0
+   }
+  },
+  "total": 131,
+  "fixed": 83
+ },
+ "9": {
+  "level": "ddd",
+  "areas": {
+   "1": {
+    "yellow": 3,
+    "formation": 39,
+    "formations": 6,
+    "red": 0,
+    "red_n": 0,
+    "blue": 0,
+    "blue_hidden": 0,
+    "box": 0,
+    "special": 0,
+    "loot": 0,
+    "warps": [
+     2
+    ],
+    "fixed": 42,
+    "total": 42
+   },
+   "2": {
+    "yellow": 0,
+    "formation": 18,
+    "formations": 3,
+    "red": 16,
+    "red_n": 8,
+    "blue": 0,
+    "blue_hidden": 30,
+    "box": 0,
+    "special": 0,
+    "loot": 0,
+    "warps": [
+     1
+    ],
+    "fixed": 64,
+    "total": 64
+   }
+  },
+  "total": 106,
+  "fixed": 106
+ },
+ "10": {
+  "level": "sl",
+  "areas": {
+   "1": {
+    "yellow": 11,
+    "formation": 5,
+    "formations": 1,
+    "red": 16,
+    "red_n": 8,
+    "blue": 0,
+    "blue_hidden": 0,
+    "box": 0,
+    "special": 0,
+    "loot": 47,
+    "warps": [
+     2
+    ],
+    "fixed": 32,
+    "total": 79
+   },
+   "2": {
+    "yellow": 3,
+    "formation": 20,
+    "formations": 4,
+    "red": 0,
+    "red_n": 0,
+    "blue": 0,
+    "blue_hidden": 0,
+    "box": 3,
+    "special": 0,
+    "loot": 12,
+    "warps": [
+     1
+    ],
+    "fixed": 26,
+    "total": 38
+   }
+  },
+  "total": 117,
+  "fixed": 58
+ },
+ "11": {
+  "level": "wdw",
+  "areas": {
+   "1": {
+    "yellow": 0,
+    "formation": 18,
+    "formations": 3,
+    "red": 0,
+    "red_n": 0,
+    "blue": 0,
+    "blue_hidden": 30,
+    "box": 36,
+    "special": 0,
+    "loot": 26,
+    "warps": [
+     2
+    ],
+    "fixed": 84,
+    "total": 110
+   },
+   "2": {
+    "yellow": 0,
+    "formation": 23,
+    "formations": 4,
+    "red": 16,
+    "red_n": 8,
+    "blue": 0,
+    "blue_hidden": 0,
+    "box": 0,
+    "special": 0,
+    "loot": 27,
+    "warps": [
+     1
+    ],
+    "fixed": 39,
+    "total": 66
+   }
+  },
+  "total": 176,
+  "fixed": 123
+ },
+ "12": {
+  "level": "ttm",
+  "areas": {
+   "1": {
+    "yellow": 0,
+    "formation": 33,
+    "formations": 6,
+    "red": 16,
+    "red_n": 8,
+    "blue": 0,
+    "blue_hidden": 0,
+    "box": 0,
+    "special": 0,
+    "loot": 12,
+    "warps": [
+     2
+    ],
+    "fixed": 49,
+    "total": 61
+   },
+   "2": {
+    "yellow": 2,
+    "formation": 10,
+    "formations": 2,
+    "red": 0,
+    "red_n": 0,
+    "blue": 0,
+    "blue_hidden": 0,
+    "box": 0,
+    "special": 0,
+    "loot": 0,
+    "warps": [
+     3
+    ],
+    "fixed": 12,
+    "total": 12
+   },
+   "3": {
+    "yellow": 17,
+    "formation": 5,
+    "formations": 1,
+    "red": 0,
+    "red_n": 0,
+    "blue": 15,
+    "blue_hidden": 0,
+    "box": 0,
+    "special": 0,
+    "loot": 0,
+    "warps": [
+     4
+    ],
+    "fixed": 37,
+    "total": 37
+   },
+   "4": {
+    "yellow": 8,
+    "formation": 5,
+    "formations": 1,
+    "red": 0,
+    "red_n": 0,
+    "blue": 0,
+    "blue_hidden": 0,
+    "box": 0,
+    "special": 0,
+    "loot": 0,
+    "warps": [
+     1
+    ],
+    "fixed": 13,
+    "total": 13
+   }
+  },
+  "total": 123,
+  "fixed": 111
+ },
+ "13": {
+  "level": "thi",
+  "areas": {
+   "1": {
+    "yellow": 2,
+    "formation": 25,
+    "formations": 5,
+    "red": 0,
+    "red_n": 0,
+    "blue": 0,
+    "blue_hidden": 0,
+    "box": 0,
+    "special": 0,
+    "loot": 39,
+    "warps": [
+     3
+    ],
+    "fixed": 27,
+    "total": 66
+   },
+   "2": {
+    "yellow": 10,
+    "formation": 5,
+    "formations": 1,
+    "red": 0,
+    "red_n": 0,
+    "blue": 0,
+    "blue_hidden": 0,
+    "box": 3,
+    "special": 0,
+    "loot": 11,
+    "warps": [],
+    "fixed": 18,
+    "total": 29
+   },
+   "3": {
+    "yellow": 0,
+    "formation": 10,
+    "formations": 2,
+    "red": 16,
+    "red_n": 8,
+    "blue": 0,
+    "blue_hidden": 10,
+    "box": 0,
+    "special": 0,
+    "loot": 0,
+    "warps": [
+     1
+    ],
+    "fixed": 36,
+    "total": 36
+   }
+  },
+  "total": 131,
+  "fixed": 81
+ },
+ "14": {
+  "level": "ttc",
+  "areas": {
+   "1": {
+    "yellow": 2,
+    "formation": 5,
+    "formations": 1,
+    "red": 16,
+    "red_n": 8,
+    "blue": 0,
+    "blue_hidden": 35,
+    "box": 68,
+    "special": 0,
+    "loot": 0,
+    "warps": [],
+    "fixed": 126,
+    "total": 126
+   }
+  },
+  "total": 126,
+  "fixed": 126
+ },
+ "15": {
+  "level": "rr",
+  "areas": {
+   "1": {
+    "yellow": 6,
+    "formation": 72,
+    "formations": 12,
+    "red": 16,
+    "red_n": 8,
+    "blue": 0,
+    "blue_hidden": 30,
+    "box": 0,
+    "special": 0,
+    "loot": 18,
+    "warps": [],
+    "fixed": 124,
+    "total": 142
+   }
+  },
+  "total": 142,
+  "fixed": 124
+ }
+}

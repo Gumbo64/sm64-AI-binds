@@ -15,7 +15,7 @@ fn st(pos: [f32; 3], fv: f32, level: u16, area: u8, keys: u8) -> St {
         act: 0, course: 0, stars: 0, keys, coins: 0, lives: 4, health: 0x880, play_mode: 0, transition: 0, dialog: -1,
         dialog_choice: false, menu_line: 0, menu_mode: -1, act_select: false, act_init: 0, act_cursor: 0,
         dialog_state: 0, dialog_last_page: false, menu_timer: 0, floor_y: 0.0, ceil_y: 20000.0, floor_type: 0,
-        floor_normal: [0.0, 1.0, 0.0], floor_obj: None, floor_obj_vy: None, floor_obj_y: None, action_timer: 0,
+        floor_normal: [0.0, 1.0, 0.0], floor_obj: None, floor_obj_vy: None, floor_obj_y: None, action_timer: 0, cap_timer: 0,
         wall_normal: None, course_stars: [0; 25], save_flags: 0, objects: None,
     }
 }

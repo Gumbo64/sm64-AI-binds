@@ -11,9 +11,14 @@ use obrrt_core::{Obj, Objective, St};
 pub mod bosses;
 pub mod collectibles;
 pub mod enemies;
+pub mod hmc_drive;
+pub mod hmc_metal;
 pub mod missions;
 pub mod npcs;
+pub mod pyramid;
 pub mod rides;
+pub mod slhead;
+pub mod slides;
 pub mod switches;
 pub mod tech;
 pub mod warps;
@@ -34,9 +39,13 @@ pub fn generate_level(b: &St, out: &mut Vec<Arc<dyn Objective>>) {
     bosses::generate_level(b, out);
     collectibles::generate_level(b, out);
     enemies::generate_level(b, out);
+    hmc_drive::generate_level(b, out);
+    hmc_metal::generate_level(b, out);
     missions::generate_level(b, out);
     npcs::generate_level(b, out);
+    pyramid::generate_level(b, out);
     rides::generate_level(b, out);
+    slhead::generate_level(b, out);
     switches::generate_level(b, out);
     tech::generate_level(b, out);
     warps::generate_level(b, out);
@@ -119,7 +128,7 @@ pub(crate) mod testkit {
             floor_obj: None,
             floor_obj_vy: None,
             floor_obj_y: None,
-            action_timer: 0,
+            action_timer: 0, cap_timer: 0,
             wall_normal: None,
             course_stars: [0; 25],
             save_flags: 0,

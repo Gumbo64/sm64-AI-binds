@@ -159,6 +159,14 @@ pub const CANNON_TARGETS: &[(u32, u8, &str, [f32; 3], (i16, u8))] = &[
     (LEVEL_WF, 1, "wf_wall", [590.0, 2450.0, 2650.0], (2, 5)),
     // levels/rr/areas/1/macro.inc.c: macro_box_star_6 (star index 5).
     (LEVEL_RR, 1, "rr_box_6", [5000.0, 4100.0, 4440.0], (15, 5)),
+    // levels/wdw/areas/1/collision.inc.c: the way into the downtown tunnel is a walled, open-topped room in the
+    // map's north-east corner (walls x 3482..3584 and z -2815..-2713 up to y 3072, the level's edge on the other two
+    // sides) around an octagonal shaft (x 3623..4569, z -3800..-2854, a hole in the pool floor) that leads down into
+    // the tunnel (y -1496..-550) and west to the instant-warp ring (x 320..448). The cannon (macro_cannon_closed at
+    // (-2688, 3328, 3198), opened by the Bob-omb Buddy at (-2, 3200, 3583)) swings round to face north (yaw 0x7FB1),
+    // and a shot at ~133 degrees and 25-30 degrees up (gravity 1 a frame, 100 a frame forward) clears the fence at
+    // ~3050-3200 and drops into the room. Stars 5 (index 4) and 6 (index 5) are the downtown's.
+    (LEVEL_WDW, 1, "wdw_town", [4090.0, 3000.0, -3330.0], (11, 4)),
 ];
 
 /// The floor that warps to the Tower of the Wing Cap when Mario looks up at

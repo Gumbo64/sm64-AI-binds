@@ -505,9 +505,13 @@ pub fn generate(b: &St, o: &Obj, out: &mut Vec<Arc<dyn Objective>>) {
         "bhvFloorSwitchHardcodedModel" => Some((K::Purple, 2.0, None)),
         // Wing (TOTWC), metal (COTMC), vanish (VCUTM): they turn the course
         // ! boxes solid everywhere.
-        "bhvCapSwitch" => Some((K::Cap, 10.0, None)),
+        // OBRRT_GOAL_WIDE=1: a goal, as the star of its course is (the
+        // switch is what the course is for; campaign.py `CAP`).
+        "bhvCapSwitch" => Some((K::Cap, if super::warps::goal_wide() { 25.0 } else { 10.0 }, None)),
         "bhvBlueCoinSwitch" => Some((K::BlueCoin, 3.0, None)),
-        "bhvWaterLevelPillar" if level == LEVEL_CASTLE => Some((K::Pillar, 7.0, None)),
+        // A goal (over OBRRT_GOAL_MIN) while the campaign's moat step asks for the drain (OBRRT_STOP_FLAG
+        // with 0x200): no castle tree pounded them otherwise, and the vanish cap course is behind the moat.
+        "bhvWaterLevelPillar" if level == LEVEL_CASTLE => Some((K::Pillar, if moat_step() { 40.0 } else { 7.0 }, None)),
         // BoB's star 6, "Behind Chain Chomp's Gate".
         "bhvWoodenPost" if level == LEVEL_BOB && is_chomp_post(b, o) => Some((K::ChompPost, 20.0, Some((1, 5)))),
         // Coin posts: BoB's four and THI's two (macro_wooden_post).
@@ -536,6 +540,9 @@ pub fn generate(b: &St, o: &Obj, out: &mut Vec<Arc<dyn Objective>>) {
         _ => None,
     };
     let Some((k, w, star)) = made else { return };
+    // SSL's pillars also open the pyramid's top hole (`pyramid::TopHole`, the way down to "Pyramid Puzzle", star
+    // 5), so they count while that star is missing even once "Stand Tall on the Four Pillars" is had.
+    let star = if k == K::PyramidPillar && !b.has_star(8, 5) { None } else { star };
     if star.is_some_and(|(c, i)| b.has_star(c, i)) {
         return;
     }
@@ -616,7 +623,7 @@ mod tests {
             floor_obj: None,
             floor_obj_vy: None,
             floor_obj_y: None,
-            action_timer: 0,
+            action_timer: 0, cap_timer: 0,
             wall_normal: None,
             course_stars: [0; 25],
             save_flags: 0,
@@ -733,4 +740,12 @@ mod restored_tests {
         let f: Vec<f64> = etas.iter().map(|e| e.frames()).collect();
         assert!(f.windows(2).all(|w| w[1] < w[0]), "ETA not decreasing: {f:?}");
     }
+}
+
+/// The campaign's moat step is on: OBRRT_STOP_FLAG includes SAVE_FLAG_MOAT_DRAINED (0x200).
+fn moat_step() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| {
+        std::env::var("OBRRT_STOP_FLAG").ok().and_then(|v| u32::from_str_radix(v.trim_start_matches("0x"), 16).ok()).is_some_and(|f| f & 0x200 != 0)
+    })
 }

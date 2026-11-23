@@ -1195,22 +1195,177 @@ pub mod hill {
         n
     }
 
-    /// Where the double jump from `s` (on the bridge approach) lands.
-    fn dj_land_z(s: &St) -> f32 {
-        s.pos[2] - (37.4 * s.forward_vel - 500.0)
+    // --- The hops' air physics (decomp: `update_air_without_turn`,
+    // `perform_air_step`, `apply_gravity`; mario_actions_airborne.c,
+    // mario_step.c). Checked against 2033 double jumps, 2954 jump kicks and
+    // 4152 slide kicks of the hill-bottom fuzz: landing z within +-0.5 (+-18 on
+    // the odd step that lands on the other side of a floor-table kink) for the
+    // double jump, within ~24 (the kick's first frame) and ~20 for the others.
+
+    /// Floor height of the bridge approach near x = 0 by z (ascending;
+    /// measured on landings; the box's hump is only ever a failed landing).
+    const FLOOR_Z: [(f32, f32); 18] = [
+        (-2127.0, 803.0), (-1900.0, 842.0), (-500.0, 859.0),
+        (-400.0, 846.0), (-300.0, 830.0), (-200.0, 817.0), (-100.0, 811.0), (0.0, 810.0), (200.0, 809.0),
+        (300.0, 808.0), (400.0, 807.0), (600.0, 806.0), (800.0, 805.0), (1000.0, 804.0), (1400.0, 799.0),
+        (1450.0, 796.0), (1550.0, 785.0), (1700.0, 772.0),
+    ];
+
+    fn floor_at(z: f32) -> f32 {
+        let t = &FLOOR_Z;
+        if z <= t[0].0 {
+            return t[0].1;
+        }
+        for w in t.windows(2) {
+            if z <= w[1].0 {
+                return w[0].1 + (w[1].1 - w[0].1) * (z - w[0].0) / (w[1].0 - w[0].0);
+            }
+        }
+        t[t.len() - 1].1
     }
 
-    /// The double jump from here clears the box and doesn't hit the
-    /// castle (fv ≤ ~105; x −400..500; outside the box).
+    fn rad(a: i32) -> f32 {
+        (a as i16) as f32 * std::f32::consts::TAU / 65536.0
+    }
+
+    /// `intendedMag` of a raw stick (adjust_analog_stick: the +-8 dead zone
+    /// takes 6 off, magnitude capped at 64; then (mag/64)^2 * 32).
+    fn intended_mag(x: i8, y: i8) -> f32 {
+        let adj = |v: i8| {
+            let v = v as f32;
+            if v > -8.0 && v < 8.0 { 0.0 } else if v > 0.0 { v - 6.0 } else { v + 6.0 }
+        };
+        let m = adj(x).hypot(adj(y)).min(64.0);
+        m * m / 128.0
+    }
+
+    struct Landing {
+        x: f32,
+        z: f32,
+        fv: f32,
+    }
+
+    /// Flight from `p` (vertical speed `vy`, forward speed `fv`, facing
+    /// `face`; gravity `grav`) to the first ground contact: the stick is
+    /// `first_mag` (intendedMag) on the first frame, then full towards
+    /// north (or the door). `bounce`: the slide kick's first landing
+    /// (vel[1] < 0 -> -vel[1] / 2, the action stays airborne).
+    fn fly(mut p: [f32; 3], mut vy: f32, mut fv: f32, face: i16, grav: f32, bounce: bool, first_mag: f32, door: bool) -> Option<Landing> {
+        let mut bounced = false;
+        for fr in 0..90 {
+            let want = if door && fr > 0 { yaw_of(-40.0 - p[0], DOOR[2] - p[2]) } else { NORTH };
+            let dyaw = want as i32 - face as i32;
+            let mag = if fr == 0 { first_mag } else { 32.0 } / 32.0;
+            fv = if fv > 0.35 { fv - 0.35 } else if fv < -0.35 { fv + 0.35 } else { 0.0 };
+            fv += mag * rad(dyaw).cos() * 1.5;
+            let side = mag * rad(dyaw).sin() * 10.0;
+            if fv > 32.0 {
+                fv -= 1.0;
+            }
+            if fv < -16.0 {
+                fv += 2.0;
+            }
+            let (sf, cf) = (rad(face as i32).sin(), rad(face as i32).cos());
+            let (sp, cp) = (rad(face as i32 + 0x4000).sin(), rad(face as i32 + 0x4000).cos());
+            let (vx, vz) = (fv * sf + side * sp, fv * cf + side * cp);
+            let mut landed = false;
+            for _ in 0..4 {
+                let (nx, ny, nz) = (p[0] + vx / 4.0, p[1] + vy / 4.0, p[2] + vz / 4.0);
+                let fl = floor_at(nz);
+                if ny <= fl {
+                    p = [nx, fl, nz];
+                    landed = true;
+                    break;
+                }
+                p = [nx, ny, nz];
+            }
+            vy = (vy - grav).max(-75.0);
+            if landed {
+                if bounce && !bounced && vy < 0.0 {
+                    vy = -vy / 2.0;
+                    bounced = true;
+                    continue;
+                }
+                return Some(Landing { x: p[0], z: p[2], fv });
+            }
+        }
+        None
+    }
+
+    #[derive(Clone, Copy, PartialEq)]
+    enum Hop {
+        Double,
+        Kick,
+        Slide,
+        /// Speed kick (ground B with fv >= 29, stick > 48): ACT_DIVE, vy 20,
+        /// fv = min(fv + 15, 48) (set_mario_action_airborne), gravity 4.
+        Dive,
+    }
+
+    /// `OBRRT_HILL_DIVE=1`: the dive-drop option (off by default; see
+    /// policy/NOTES-divedrop.md).
+    fn dive_enabled() -> bool {
+        static F: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        *F.get_or_init(|| std::env::var("OBRRT_HILL_DIVE").is_ok_and(|v| v != "0"))
+    }
+
+    /// Where hop `h`, started now from the ground state `s`, lands.
+    fn hop_land(h: Hop, s: &St) -> Option<Landing> {
+        let fv = s.forward_vel;
+        match h {
+            // set_mario_action_airborne: vy 52 + fv/4, fv x 0.8.
+            Hop::Double => fly(s.pos, 52.0 + 0.25 * fv, 0.8 * fv, s.yaw, 4.0, false, 32.0, true),
+            // vy 20; the first frame's stick is `kick()`'s.
+            Hop::Kick => {
+                let (x, y) = arcs::stick(s.cam_yaw, NORTH, KICK_TILT);
+                fly(s.pos, 20.0, fv, s.yaw, 4.0, false, intended_mag(x, y), false)
+            }
+            // vy 12, fv >= 32, gravity 2 (apply_gravity), bounce on the first landing.
+            Hop::Slide => fly(s.pos, 12.0, fv.max(32.0), s.yaw, 2.0, true, 32.0, false),
+            Hop::Dive => fly(s.pos, 20.0, (fv + 15.0).min(48.0), s.yaw, 4.0, false, 32.0, false),
+        }
+    }
+
+    /// The stick tilt of the jump kick's first frame (stickMag ~46 < 48:
+    /// not a speed-kick dive).
+    const KICK_TILT: f32 = 0.38;
+    /// The sim's worst error on the jump kick / slide kick (units).
+    const HOP_ERR: f32 = 30.0;
+    /// ... on the double jump.
+    const DJ_ERR: f32 = 20.0;
+
+    /// After one ground frame of a landing (apply_landing_accel: 0.98 per
+    /// frame).
+    fn after_landing_frame(s: &St) -> St {
+        let fv = 0.98 * s.forward_vel;
+        St { pos: [s.pos[0] + fv * rad(s.yaw as i32).sin(), s.pos[1], s.pos[2] + fv * rad(s.yaw as i32).cos()], forward_vel: fv, ..s.clone() }
+    }
+
+    /// The crouch slide's first frame (Z on the landing's last frame; the
+    /// slide's own speed loss, ~4%).
+    fn after_crouch_frame(s: &St) -> St {
+        let fv = 0.959 * s.forward_vel;
+        St { pos: [s.pos[0] + fv * rad(s.yaw as i32).sin(), s.pos[1], s.pos[2] + fv * rad(s.yaw as i32).cos()], forward_vel: fv, ..s.clone() }
+    }
+
+    /// The hop lands outside the trigger box (before it, or past it).
+    fn clear_of_box(z: f32) -> bool {
+        z > BOX_Z.1 + HOP_ERR || z < BOX_Z.0 - HOP_ERR
+    }
+
+    /// The double jump from here clears the box (by `err`) and doesn't hit
+    /// the castle (fv ≤ ~105; x −400..500; outside the box).
+    fn dj_ok_by(s: &St, err: f32) -> bool {
+        s.pos[2] > BOX_Z.1 + 2.0
+            && s.forward_vel < 106.0
+            && s.pos[0] > -400.0
+            && s.pos[0] < 500.0
+            && hop_land(Hop::Double, s).is_some_and(|l| l.z < BOX_Z.0 - err)
+    }
+
+    /// ... by the sim's error: a quarter step (~fv/4) on the odd landing.
     fn dj_ok(s: &St) -> bool {
-        let lz = dj_land_z(s);
-        s.pos[2] > BOX_Z.1 + 2.0 && lz < BOX_Z.0 - 30.0 && s.forward_vel < 106.0 && s.pos[0] > -400.0 && s.pos[0] < 500.0
-    }
-
-    /// Jump kick range on the flat at `fv` (vy 20, gravity 4: ~10.5 air
-    /// frames).
-    fn kick_range(fv: f32) -> f32 {
-        10.5 * fv
+        dj_ok_by(s, DJ_ERR)
     }
 
     /// Single jump range (from a rollout's LAND_STOP): vy 42 + fv/4, fv x0.8.
@@ -1237,9 +1392,14 @@ pub mod hill {
     fn kick_plan(s: &St) -> bool {
         let z = land_z(s, s.floor_y.max(700.0));
         let fv = s.forward_vel;
-        let zk = z - kick_range(fv);
-        if zk > BOX_Z.1 + 5.0 && zk - (37.4 * fv - 500.0) < BOX_Z.0 - 30.0 {
-            return true;
+        // The kick from the rollout's landing, then the double jump from the
+        // kick's (pessimistically: HOP_ERR short) landing.
+        let g = St { pos: [s.pos[0], floor_at(z), z], forward_vel: fv, vel: [0.0; 3], ..s.clone() };
+        if let Some(k) = hop_land(Hop::Kick, &g) {
+            let g2 = St { pos: [k.x, floor_at(k.z), k.z + HOP_ERR], forward_vel: k.fv, ..g.clone() };
+            if k.z > BOX_Z.1 + HOP_ERR && dj_ok(&g2) {
+                return true;
+            }
         }
         !(z > BOX_Z.1 + 5.0 && z - single_range(fv) < BOX_Z.0 - 30.0)
     }
@@ -1283,6 +1443,8 @@ pub mod hill {
         // A held + B with a short stick (jump kick / landing refresh); A
         // first if it isn't held yet.
         let kick = || if last_a { pad(A_BUTTON | B_BUTTON, NORTH, 0.38) } else { north(A_BUTTON) };
+        // The same presses with the stick past 48: a speed kick (dive).
+        let dive = || if last_a { pad(A_BUTTON | B_BUTTON, NORTH, 1.0) } else { north(A_BUTTON) };
         match s.action {
             // --- Run-up: crouch slide at C, long jump onto the face.
             arcs::ACT_WALKING if s.pos[2] > RAMP_Z + 1500.0 && !fast => {
@@ -1318,6 +1480,9 @@ pub mod hill {
             // --- Slide down the face: the stick at the TAS's exit point at
             // the foot (along the slide velocity loses less speed but ends
             // too far east), A on the first flat frame.
+            // Dive-drop: the dive slide on the bridge approach: A at once (rollout).
+            // (a dive-drop's slide has fv <= 48; the ramp's is faster)
+            ACT_DIVE_SLIDE if dive_enabled() && s.forward_vel <= 52.0 && s.pos[2] < RAMP_Z && s.pos[2] > BOX_Z.1 - 50.0 => north(if last_a { 0 } else { A_BUTTON }),
             ACT_DIVE_SLIDE => {
                 if s.floor_normal[1] > 0.99 && s.forward_vel > 60.0 {
                     return pad(if last_a { 0 } else { A_BUTTON }, s.yaw, 1.0);
@@ -1337,16 +1502,8 @@ pub mod hill {
                 }
                 // Where it lands (flat ~808, gravity 4): release A when the
                 // double jump from there would clear the box.
-                let (mut y, mut vy, mut z) = (s.pos[1], s.vel[1], s.pos[2]);
-                for _ in 0..40 {
-                    y += vy;
-                    z += s.vel[2];
-                    if y <= 808.0 && vy < 0.0 {
-                        break;
-                    }
-                    vy = (vy - 4.0).max(-75.0);
-                }
-                let land = St { pos: [s.pos[0], 808.0, z], ..s.clone() };
+                let Some(l) = fly(s.pos, s.vel[1], s.forward_vel, s.yaw, 4.0, false, 32.0, false) else { return north(A_BUTTON) };
+                let land = St { pos: [l.x, floor_at(l.z), l.z], forward_vel: l.fv, ..s.clone() };
                 if dj_ok(&land) { north(0) } else { north(A_BUTTON) }
             }
             ACT_SLIDE_KICK if fast => north(0),
@@ -1358,7 +1515,19 @@ pub mod hill {
             }
             // --- Landings at speed.
             ACT_FREEFALL_LAND_STOP if fast && s.pos[2] > BOX_Z.1 && s.pos[2] < RAMP_Z && !last_a => north(A_BUTTON),
-            ACT_FREEFALL_LAND_STOP | ACT_PUNCHING | ACT_MOVE_PUNCHING if fast && s.pos[2] > BOX_Z.1 => kick(),
+            ACT_FREEFALL_LAND_STOP | ACT_PUNCHING | ACT_MOVE_PUNCHING if fast && s.pos[2] > BOX_Z.1 => {
+                // Dive-drop (opt-in): the jump kick would land in the box,
+                // the dive lands short of it.
+                if dive_enabled()
+                    && last_a
+                    && s.pos[2] < RAMP_Z
+                    && !hop_land(Hop::Kick, s).is_some_and(|l| clear_of_box(l.z))
+                    && hop_land(Hop::Dive, s).is_some_and(|l| l.z > BOX_Z.1 + HOP_ERR)
+                {
+                    return dive();
+                }
+                kick()
+            }
             ACT_FREEFALL_LAND if fast && s.pos[2] > BOX_Z.1 => {
                 let n = in_action(traj, played);
                 if s.pos[2] > RAMP_Z {
@@ -1369,13 +1538,29 @@ pub mod hill {
                     }
                     return north(A_BUTTON);
                 }
-                if dj_ok(s) {
-                    // A fresh A: released first if it is still held.
+                // A fresh A: released first if it is still held (that
+                // frame is a ground frame too, and the jump comes from
+                // the state after it).
+                if dj_ok(s) && (!last_a || dj_ok(&after_landing_frame(s))) {
                     return north(if last_a { 0 } else { A_BUTTON });
                 }
                 // Too far out: on the 4th frame Z (crouch slide → slide
-                // kick → rollout → the chain again).
+                // kick → rollout → the chain again), if the slide kick
+                // lands outside the box; else, with A held, the jump kick
+                // if that does; else (nothing lands clear) the Z.
                 if n >= 4 && s.pos[2] > 300.0 {
+                    let sk_clear = hop_land(Hop::Slide, &after_crouch_frame(s)).is_some_and(|l| clear_of_box(l.z));
+                    if !sk_clear && last_a && hop_land(Hop::Kick, s).is_some_and(|l| clear_of_box(l.z)) {
+                        return kick();
+                    }
+                    // Nothing lands clear: the double jump if the sim has it
+                    // landing past the box at all (it is the best gamble), else Z.
+                    if dj_ok_by(s, 2.0) && (!last_a || dj_ok_by(&after_landing_frame(s), 2.0)) {
+                        return north(if last_a { 0 } else { A_BUTTON });
+                    }
+                    if dive_enabled() && !sk_clear && last_a && hop_land(Hop::Dive, s).is_some_and(|l| l.z > BOX_Z.1 + HOP_ERR) {
+                        return dive();
+                    }
                     return north(Z_TRIG);
                 }
                 north(0)

@@ -103,12 +103,181 @@ pub fn generate(b: &St, o: &Obj, out: &mut Vec<Arc<dyn Objective>>) {
     // switches.rs (PillarPound here was the same objective twice).
 }
 
+/// `WarpFloor::Enter`: get above a SURFACE_WARP floor (interaction.c
+/// mario_handle_special_floors: `level_trigger_warp(m, WARP_OP_WARP_FLOOR)`
+/// whenever the floor under Mario is one, at any height; warp node 0xF3).
+/// One course uses it between its own areas: JRB's sunken ship in act 1
+/// (levels/jrb/script.c: 0xF3 -> JRB area 2), whose collision
+/// (jrb_seg7_collision_in_sunken_ship, object bhvInSunkenShip at 5385,
+/// -5520, 2428) has the warp floor at x 307..512, y 819, z -409..-255 from
+/// the object. No object marks it, so nothing led the tree into the ship
+/// (campaign t1, 2026-11-09: JRB gave no star in 150 M frames with the ship
+/// star the act's own).
+///
+/// The same goes for the instant-warp floors (SURFACE_INSTANT_WARP_1B..1E,
+/// level_update.c check_instant_warp: the floor under Mario, any height) and
+/// TTM's slide painting floors (SURFACE_PAINTING_WARP_D3..D5, any height):
+/// `WARP_FLOORS`, every one that joins two areas of a course, from the
+/// levels' collision data and scripts (audit of 2026-11-09, STAR120-AUDIT.md:
+/// DDD's and WDW's second areas, Eyerok's room and TTM's slide had no way in).
+pub struct WarpFloorEnter {
+    zone: (u16, u8),
+    dest: (u16, u8),
+    pos: [f32; 3],
+    name: &'static str,
+    /// Star indices of the course that need the far side; the objective is a
+    /// goal (weight 25) while one is missing, a plain area change (6) after.
+    stars: &'static [u8],
+}
+
+/// (level, area, destination area, a point above the floor's centre, name,
+/// the course's star indices that need it; empty = a way back).
+const WARP_FLOORS: &[(u32, u8, u8, [f32; 3], &str, &[u8])] = &[
+    (LEVEL_DDD, 1, 2, [4198.0, -451.0, 0.0], "ddd-1-2", &[0, 2, 3, 5, 6]),
+    (LEVEL_DDD, 2, 1, [-4198.0, -451.0, 0.0], "ddd-2-1", &[]),
+    (LEVEL_SSL, 2, 3, [0.0, 346.0, -1321.0], "ssl-eyerok", &[3]),
+    (LEVEL_SSL, 3, 2, [0.0, 444.0, -1122.0], "ssl-eyerok-back", &[]),
+    (LEVEL_TTM, 1, 2, [2800.0, 828.0, -1048.0], "ttm-slide", &[3, 6]),
+    (LEVEL_TTM, 2, 3, [-3744.0, -360.0, -4033.0], "ttm-slide-2", &[3, 6]),
+    (LEVEL_TTM, 3, 4, [4710.0, -7050.0, 2305.0], "ttm-slide-3", &[3, 6]),
+    // WDW's ring is a stretch (x 320..448, instant-warp surfaces 1B/1C; only 1C, x < 384, is warp index 1 -> area 2) of
+    // an octagonal tube, 950 across, along x from -2815 to 3623 (y -1496..-550, z -3800..-2854), all under the water.
+    // Its east end opens up into an octagonal shaft (x 3623..4569) in the pool floor (y 0), but that sits inside a
+    // box of walls (SURFACE_WALL_MISC, x 3482..3584 and z -2800..-2720, up to y 3072) no tree ever got through
+    // (WDW agent wdw2, 2026-11-21: a staged ETA through the strip north of the shaft led 738 attempts to the wall,
+    // 229 from the rim, 0 below y 0 in 13 k nodes). The tube's other end, the west hub (x -3800..-2815, z -3800..-2303,
+    // a spur open at z -2303), lies under the central plateau (y 2304), where the floor mesh has no floor at all:
+    // the way in is probably from that side (by falling off a plateau edge into the void?). Open.
+    (LEVEL_WDW, 1, 2, [352.0, -963.0, -3327.0], "wdw-town", &[4, 5, 6]),
+    (LEVEL_WDW, 2, 1, [416.0, -963.0, -3327.0], "wdw-town-back", &[]),
+];
+
+/// The ways from (`level`, `area`) into another area of the same level: (destination area, where), from the warp
+/// table (warp holes, pipes) and `WARP_FLOORS`. The coin plan's route to the coins of an area that isn't loaded
+/// (missions/twostar.rs `other_areas`).
+pub fn area_exits(level: u32, area: u8) -> Vec<(u8, [f32; 3])> {
+    let mut v: Vec<(u8, [f32; 3])> = table::WARPS
+        .iter()
+        .filter(|w| w.level == level && w.area == area && w.dest.0 == level && w.dest.1 != area && w.class == Class::Area)
+        .map(|w| (w.dest.1, [w.pos[0] as f32, w.pos[1] as f32, w.pos[2] as f32]))
+        .collect();
+    v.extend(WARP_FLOORS.iter().filter(|w| w.0 == level && w.1 == area).map(|w| (w.2, w.3)));
+    v
+}
+
+impl WarpFloorEnter {
+    fn jrb_ship(b: &St) -> Option<WarpFloorEnter> {
+        if b.level as u32 != LEVEL_JRB || b.area != 1 || b.has_star(3, 0) {
+            return None;
+        }
+        // Act 1 only: the ship floats from act 2 on (bhvInSunkenShip is ACT_1).
+        // The ship lies tilted (bhvSunkenShipSetRotation: pitch 0xE958, yaw
+        // 0xEE6C, roll 0x0C80), which puts the floor's centre (410, 819, -332
+        // in the model) at +448, +593, -630 from the object: world (5833,
+        // -4927, 1798), about 245 x 170 units across. The target is 60 above
+        // it. (The first version forgot the tilt: 281 attempts got within 150
+        // units of a point 300 units off and none warped. The 2026 TAS passes
+        // (5801, -4837, 1797) 23 frames before its area change.)
+        let ship = b.objects().iter().find(|o| o.bhv_name() == "bhvInSunkenShip")?;
+        Some(WarpFloorEnter { zone: b.zone(), dest: (LEVEL_JRB as u16, 2), pos: [ship.pos[0] + 448.0, ship.pos[1] + 653.0, ship.pos[2] - 630.0], name: "jrb-ship", stars: &[0] })
+    }
+
+    fn table(b: &St) -> impl Iterator<Item = WarpFloorEnter> + '_ {
+        WARP_FLOORS.iter().filter(|w| (w.0, w.1) == (b.level as u32, b.area)).map(|w| WarpFloorEnter { zone: b.zone(), dest: (w.0 as u16, w.2), pos: w.3, name: w.4, stars: w.5 })
+    }
+
+    fn needed(&self, s: &St) -> bool {
+        let c = course_of_level(self.zone.0 as u32);
+        self.stars.iter().any(|&i| !s.has_star(c, i))
+    }
+}
+
+impl Objective for WarpFloorEnter {
+    fn dense_keep(&self) -> obrrt_core::DenseKeep {
+        obrrt_core::DenseKeep::EndOnly
+    }
+    fn kind(&self) -> &'static str {
+        "WarpFloor::Enter"
+    }
+    fn key(&self) -> String {
+        format!("WarpFloor {}", self.name)
+    }
+    fn obj_weight(&self, b: &St) -> f64 {
+        // WDW's ring while the cannon is still shut (bhvCannonClosed loaded) and Mario outside the room and the tube:
+        // only the cannon shot gets there, so the buddy and the water come first. t1 step 835: 3026 attempts,
+        // 0 successes, against Npc::Talk 695 and WdwWater::Raise 60.
+        if self.name == "wdw-town" && b.pos[1] > -300.0 && !(b.pos[0] > 3500.0 && b.pos[2] < -2800.0) && b.objects.is_some() && b.objects().iter().any(|o| o.bhv_name() == "bhvCannonClosed") {
+            return 2.0;
+        }
+        if self.needed(b) { 25.0 } else { 6.0 }
+    }
+    fn base_criteria(&self, s: &St) -> bool {
+        s.zone() == self.zone && s.alive() && (self.name != "jrb-ship" || self.needed(s))
+    }
+    fn ga_budget(&self) -> Option<obrrt_core::GaBudget> {
+        Some(obrrt_core::GaBudget { population: 16, generations: 5, horizon: 200 })
+    }
+    fn eta(&self, s: &St, _start: &St, _mem: &mut Mem) -> Eta {
+        if s.zone() == self.dest {
+            return Eta::Done;
+        }
+        if s.zone() != self.zone {
+            return Eta::Lost;
+        }
+        // WDW's ring: the tunnel (y -1496..-550, z -3800..-2854) is entered from above, down the shaft (x 3623..4569,
+        // floor y -511) of the walled room (x 3584..4608, z -3839..-2815) that a cannon shot lands in; every other
+        // state of area 1 is outside it (the pool floor east of the room, x 3482, is walled off: wdw2b-b, 302
+        // attempts from there never got in), so it pays the way to the cannon (-2688, 3328, 3198), the shot (~150
+        // frames of aim and flight) and then the room's. (The straight line led the trees to the wall.)
+        if self.name == "wdw-town" {
+            let via = [3900.0, -450.0, -3327.0];
+            let inside = |p: [f32; 3]| dist(p, via) + dist(via, self.pos);
+            let in_room = s.pos[0] > 3500.0 && s.pos[0] < 4620.0 && s.pos[2] < -2800.0 && s.pos[2] > -3850.0 && s.pos[1] > -300.0;
+            let in_tube = s.pos[1] < -300.0 && s.pos[2] < -2700.0 && s.pos[2] > -3850.0;
+            return Eta::Frames(if in_room {
+                frames_for(inside(s.pos)) + 40.0
+            } else if in_tube {
+                frames_for(s.dist(self.pos))
+            } else {
+                frames_for(s.dist([-2688.0, 3328.0, 3198.0])) + 150.0 + frames_for(inside([3900.0, 3000.0, -3330.0]))
+            });
+        }
+        // SSL's Eyerok floor (OBRRT_GEO=1): the walk to it (the ramp down the pyramid's centre).
+        Eta::Frames(frames_for(crate::walk::dist(s, self.pos).max(s.dist(self.pos))))
+    }
+    fn success_value(&self) -> f64 {
+        5.0
+    }
+    fn steer_target(&self, s: &St) -> Option<[f32; 3]> {
+        // WDW's ring: down the room's shaft (see `eta`); outside the tunnel and the room nothing but the cannon.
+        if self.name == "wdw-town" && s.pos[1] > -300.0 {
+            return Some(if s.pos[0] > 3500.0 && s.pos[2] < -2800.0 { [3900.0, -450.0, -3327.0] } else { [-2688.0, 3328.0, 3198.0] });
+        }
+        Some(crate::walk::steer(s, self.pos))
+    }
+    fn kinship(&self) -> u32 {
+        10
+    }
+    fn exists_in(&self, s: &St) -> bool {
+        s.zone() == self.zone
+    }
+}
+
 pub fn generate_level(b: &St, out: &mut Vec<Arc<dyn Objective>>) {
+    if let Some(o) = WarpFloorEnter::jrb_ship(b) {
+        out.push(Arc::new(o));
+    }
+    for o in WarpFloorEnter::table(b) {
+        out.push(Arc::new(o));
+    }
     // The sun in the lobby: needs 10 stars (mario_actions_stationary.c
     // act_first_person).
     if b.level as u32 == LEVEL_CASTLE && b.area == 1 && b.stars >= 10 {
         out.push(Arc::new(SunStand));
         out.push(Arc::new(SunLookUp));
+    }
+    for o in ZoneGo::hops(b) {
+        out.push(Arc::new(o));
     }
 }
 
@@ -136,10 +305,139 @@ fn dest_worth(s: &St, dest: u32) -> f64 {
         LEVEL_BITFS => s.keys >= 2 && s.course_done(17),
         _ => {
             let c = course_of_level(dest);
+            // A cap course isn't done with its switch unpressed (St::course_done;
+            // campaign t1 step 172, 2026-11-10: the castle tree sent back to
+            // the wing cap tower for its switch weighed the way in 0.15, the
+            // star being had, and tried it 3 times in 150 M frames).
             c != 0 && s.course_done(c)
         }
     };
-    if done { 0.15 } else { 1.0 }
+    // OBRRT_EXIT_SKIP: entering a course the tree is told to skip ends the
+    // branch (tree.rs: not a good exit).
+    if crate::exit_skip().contains(&dest) {
+        0.02
+    } else if done {
+        0.15
+    } else {
+        1.0
+    }
+}
+
+// ------------------------------------------------------------- zone path
+
+/// `OBRRT_ZONE_PATH="6.3>6.1@-1095,-1074,936;16.1>6.1@72,803,-3169"`: hops
+/// between castle areas toward a course the campaign wants entered, each
+/// `level.area>level.area@x,y,z` with the place the route itself once made
+/// the change (campaign.py `zone_path`, from a replay of the route; a door
+/// walked through one way is taken to work the other way, from where Mario
+/// came out). Each gives the states of its zone a [`ZoneGo`] goal.
+///
+/// Why: nothing told a castle tree which area holds the way into a course.
+/// Campaign t1 step 172 (2026-11-10) started in the basement wanting the
+/// tower of the wing cap, whose entrance is in the lobby: 150 M frames,
+/// 26,841 nodes, 302 of them in the lobby, all at the very end.
+fn zone_path() -> &'static [((u16, u8), (u16, u8), [f32; 3])] {
+    static P: std::sync::OnceLock<Vec<((u16, u8), (u16, u8), [f32; 3])>> = std::sync::OnceLock::new();
+    P.get_or_init(|| {
+        let Ok(v) = std::env::var("OBRRT_ZONE_PATH") else { return Vec::new() };
+        let zone = |t: &str| -> Option<(u16, u8)> {
+            let (l, a) = t.split_once('.')?;
+            Some((l.trim().parse().ok()?, a.trim().parse().ok()?))
+        };
+        let hop = |t: &str| -> Option<((u16, u8), (u16, u8), [f32; 3])> {
+            let (zz, p) = t.split_once('@')?;
+            let (a, b) = zz.split_once('>')?;
+            let p: Vec<f32> = p.split(',').filter_map(|x| x.trim().parse().ok()).collect();
+            (p.len() == 3).then_some(())?;
+            Some((zone(a)?, zone(b)?, [p[0], p[1], p[2]]))
+        };
+        let out: Vec<_> = v.split(';').filter(|t| !t.trim().is_empty()).map(|t| hop(t).unwrap_or_else(|| panic!("OBRRT_ZONE_PATH: bad hop {t:?}"))).collect();
+        eprintln!("zone path: {} hops", out.len());
+        out
+    })
+}
+
+/// `Zone::Go`: change to the next area on the way to a wanted course
+/// ([`zone_path`]), through the door nearest the place the route made that
+/// change (the place itself when no door is within [`ZONE_DOOR_NEAR`]).
+/// Done only once Mario is in the other area.
+pub struct ZoneGo {
+    zone: (u16, u8),
+    to: (u16, u8),
+    pos: [f32; 3],
+}
+
+/// A door this near the recorded place of a change is the way through.
+const ZONE_DOOR_NEAR: f32 = 600.0;
+
+impl ZoneGo {
+    fn hops(b: &St) -> impl Iterator<Item = ZoneGo> + '_ {
+        zone_path().iter().filter(|h| h.0 == b.zone()).map(|&(zone, to, p)| {
+            let door = b
+                .objects()
+                .iter()
+                .filter(|o| matches!(o.interact_type, INTERACT_DOOR | INTERACT_WARP_DOOR))
+                .map(|o| (dist(o.pos, p), o.pos))
+                .filter(|d| d.0 < ZONE_DOOR_NEAR)
+                .min_by(|a, b| a.0.total_cmp(&b.0));
+            ZoneGo { zone, to, pos: door.map_or(p, |d| d.1) }
+        })
+    }
+}
+
+impl Objective for ZoneGo {
+    fn dense_keep(&self) -> obrrt_core::DenseKeep {
+        obrrt_core::DenseKeep::EndOnly
+    }
+    fn kind(&self) -> &'static str {
+        "Zone::Go"
+    }
+    fn key(&self) -> String {
+        format!("ZoneGo {:?} {:?}", self.zone, self.to)
+    }
+    fn obj_weight(&self, _b: &St) -> f64 {
+        // Above a star's 40: the goal list keeps the twelve heaviest, and this
+        // is what the tree was sent for.
+        50.0
+    }
+    fn base_criteria(&self, s: &St) -> bool {
+        s.zone() == self.zone && s.alive()
+    }
+    fn ga_budget(&self) -> Option<obrrt_core::GaBudget> {
+        Some(obrrt_core::GaBudget { population: 16, generations: 5, horizon: 240 })
+    }
+    fn eta(&self, s: &St, _start: &St, _mem: &mut Mem) -> Eta {
+        if s.zone() == self.to {
+            return Eta::Done;
+        }
+        if s.zone() != self.zone {
+            return Eta::Lost;
+        }
+        Eta::Frames(frames_for(s.dist(self.pos)))
+    }
+    fn success_value(&self) -> f64 {
+        5.0
+    }
+    fn arrival(&self, _s: &St) -> obrrt_core::Arrival {
+        obrrt_core::Arrival::Door
+    }
+    fn steer_target(&self, _s: &St) -> Option<[f32; 3]> {
+        Some(self.pos)
+    }
+    fn kinship(&self) -> u32 {
+        10
+    }
+    fn exists_in(&self, s: &St) -> bool {
+        s.zone() == self.zone
+    }
+}
+
+/// The weight of the two steps into the tower of the wing cap: with
+/// OBRRT_GOAL_WIDE=1 a goal (25, as the other secret courses' warps) while
+/// the tower has something to give, `base` × [`dest_worth`] otherwise.
+fn sun_weight(base: f64, b: &St) -> f64 {
+    let w = dest_worth(b, LEVEL_TOTWC);
+    if goal_wide() && w >= 1.0 { 25.0 } else { base * w }
 }
 
 fn req_met(req: Req, s: &St) -> bool {
@@ -148,6 +446,12 @@ fn req_met(req: Req, s: &St) -> bool {
         Req::Stars(n) => s.stars >= n,
         Req::StarsAndStar(n, c, i) => s.stars >= n && s.has_star(c, i),
     }
+}
+
+/// OBRRT_GOAL_WIDE=1 (see objectives/src/lib.rs).
+pub(crate) fn goal_wide() -> bool {
+    static W: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *W.get_or_init(|| std::env::var("OBRRT_GOAL_WIDE").is_ok_and(|v| v == "1"))
 }
 
 // ---------------------------------------------------------- warp objects
@@ -231,6 +535,12 @@ impl Objective for WarpEnter {
     }
     fn obj_weight(&self, b: &St) -> f64 {
         let base = match self.info.map(|w| w.class) {
+            // OBRRT_GOAL_WIDE=1: a Bowser stage or secret course that still has
+            // something to give is a goal (the castle tree of campaign t1 at 13
+            // stars, 2026-11-09, found no way into BitDW or the aquarium in
+            // 60 M frames while every painting nearby was exhausted).
+            Some(Class::Bowser) if goal_wide() && dest_worth(b, self.info.unwrap().dest.0) >= 1.0 => 25.0,
+            Some(Class::Secret) if goal_wide() && self.name != "vcutm" && dest_worth(b, self.info.unwrap().dest.0) >= 1.0 => 25.0,
             Some(Class::Bowser) => 15.0,
             // VCUTM may well be behind the undrained moat's grills (NEEDS).
             // OBRRT_GROUNDS_FIX=1: behind the grills (moat_grill.inc.c: solid
@@ -239,6 +549,22 @@ impl Objective for WarpEnter {
             Some(Class::Secret) if self.name == "vcutm" && grounds_fix() => 1.0,
             Some(Class::Secret) if self.name == "vcutm" => 6.0,
             Some(Class::Secret) => 12.0,
+            // OBRRT_GOAL_WIDE=1: a warp to an area of the course that holds a
+            // star spot not yet collected is a goal (LLL's volcano, SSL's
+            // pyramid, SL's igloo, CCM's and THI's other areas).
+            Some(Class::Area) if goal_wide() && self.info.is_some_and(|w| w.dest.0 == b.level as u32 && super::missions::area_has_missing_star(b, w.dest.0, w.dest.1)) => 25.0,
+            // THI: the way out of an area that still holds a missing star
+            // (area 2's Five Itty Bitty Secrets) into one that holds none:
+            // campaign t1 step 654 grew 60 k of its 95 k nodes in the huge
+            // island (area 1) with the 5 secrets all in the tiny one.
+            Some(Class::Area)
+                if b.level as u32 == LEVEL_THI
+                    && self.info.is_some_and(|w| w.dest.0 == b.level as u32 && w.dest.1 != b.area)
+                    && super::missions::area_has_missing_star(b, LEVEL_THI, b.area)
+                    && !super::missions::area_has_missing_star(b, LEVEL_THI, self.info.unwrap().dest.1) =>
+            {
+                1.0
+            }
             Some(Class::Area) if self.kind == "Pipe::Enter" => 5.0,
             Some(Class::Area) => 6.0,
             Some(Class::Teleport) => 2.0,
@@ -583,6 +909,12 @@ fn cannon_grilled(b: &St) -> bool {
     grounds_fix() && b.level as u32 == LEVEL_CASTLE_GROUNDS && b.stars < 120
 }
 
+/// WDW area 1 while one of the downtown's stars (5 and 6) is missing: the cannon and the Bob-omb Buddy that opens
+/// it are goals (lib.rs `npc_weight`).
+pub fn wdw_town_missing(b: &St) -> bool {
+    b.level as u32 == LEVEL_WDW && b.area == 1 && (!b.has_star(11, 4) || !b.has_star(11, 5))
+}
+
 /// `Cannon::Enter`: drop into an open cannon (bhvCannon only exists once a
 /// Bob-omb Buddy has opened the course's cannons: cannon_door.inc.c spawns it
 /// in place of the lid). It is tangible only within 500 units
@@ -616,6 +948,16 @@ impl Objective for CannonEnter {
     }
     fn obj_weight(&self, b: &St) -> f64 {
         let c = course_of_level(b.level as u32);
+        // RR's cannon is the way to "Somewhere Over the Rainbow" (the box star, index 5): a goal while that star
+        // is missing. t1 step 756 opened it (the Bob-omb Buddy, 72 states with the flag) but never tried the
+        // cannon, 10 k units away at weight 8.
+        if b.level as u32 == obrrt_core::layout::LEVEL_RR && !b.has_star(15, 5) {
+            return 30.0;
+        }
+        // WDW's cannon is the way into the downtown tunnel (stars 5 and 6, CANNON_TARGETS "wdw_town").
+        if wdw_town_missing(b) {
+            return 30.0;
+        }
         if c != 0 && b.course_done(c) { 1.0 } else { 8.0 }
     }
     fn base_criteria(&self, s: &St) -> bool {
@@ -970,7 +1312,7 @@ impl Objective for SunStand {
         "SunSpot stand".to_string()
     }
     fn obj_weight(&self, b: &St) -> f64 {
-        8.0 * dest_worth(b, LEVEL_TOTWC)
+        sun_weight(8.0, b)
     }
     fn base_criteria(&self, s: &St) -> bool {
         s.level as u32 == LEVEL_CASTLE && s.area == 1 && s.stars >= 10 && !(on_sun_spot(s) && s.action == ACT_IDLE && faces_sun(s))
@@ -1021,7 +1363,7 @@ impl Objective for SunLookUp {
         "SecretEntrance totwc".to_string()
     }
     fn obj_weight(&self, b: &St) -> f64 {
-        12.0 * dest_worth(b, LEVEL_TOTWC)
+        sun_weight(12.0, b)
     }
     fn base_criteria(&self, s: &St) -> bool {
         on_sun_spot(s) && s.action == ACT_IDLE && faces_sun(s) && s.stars >= 10

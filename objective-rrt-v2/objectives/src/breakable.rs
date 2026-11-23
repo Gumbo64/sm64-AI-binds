@@ -12,10 +12,13 @@ pub struct Break {
 }
 
 /// What a `!` box holds, from its second behaviour-parameter byte
-/// (exclamation_box.inc.c): 0-2 caps (wing, metal, vanish), 8-13 stars.
+/// (exclamation_box.inc.c sExclamationBoxContents): 0-2 caps (wing, metal,
+/// vanish), 8 and 10-14 stars (indices 0-5); 9 is a 1-up that runs away
+/// (it weighed 30 and the star box of index 5, Rainbow Ride's, weighed 2,
+/// until 2026-11-09).
 pub fn exclamation_weight(o: &Obj) -> f64 {
     match (o.beh_params >> 16) & 0xFF {
-        8..=13 => 30.0,
+        8 | 10..=14 => 30.0,
         0..=2 => 3.0,
         _ => 2.0,
     }

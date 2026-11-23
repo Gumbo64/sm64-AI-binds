@@ -50,7 +50,7 @@ pub(super) fn mk(zone: u16, action: u32, pos: [f32; 3], fv: f32, yaw: i16, floor
         floor_obj: None,
         floor_obj_vy: None,
         floor_obj_y: None,
-        action_timer: 0,
+        action_timer: 0, cap_timer: 0,
         wall_normal: None,
         course_stars: [0; 25],
         save_flags: 0,

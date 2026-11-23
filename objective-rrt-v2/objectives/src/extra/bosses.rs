@@ -36,6 +36,17 @@
 //!   bhvBowserBomb within 800 explodes and takes one hp (`bowser_act_thrown`,
 //!   `bowser_check_hit_mine`). hp is 1, 1, 3 (`sBowserHealth`).
 //!
+//!   Bowser 3 (BitS arena, level 34; `sBowserHealth` 3): five bombs on the rim (levels/bowser_3/script.c), three
+//!   hits, each throw one (`bowser_act_thrown`); at health 1 he dances and the 10 falling platforms drop one by one
+//!   (bowser_falling_platform.inc.c), but the floor Mario stands on (y 307) stays. His death dialog is
+//!   DIALOG_121 (DIALOG_163 at 120 stars) and `bowser_dead_final_stage_ending` spawns bhvGrandStar after it; the
+//!   star sparkles 70 frames, arcs to the arena's centre and hovers at y 507 (grand_star.inc.c), tangible from its
+//!   action 2. Touching it starts ACT_JUMBO_STAR_CUTSCENE, which flies Mario out to the grounds and the ending
+//!   (Peach's scene, credits) with no input (`star::Collect` treats it as done; `St::ending` stops the search's
+//!   press-A tail there). Nothing about this needed changing in the objectives below: b3 test from the BitS star
+//!   state (84 stars, via the pipe, `OBRRT_FINAL=1`, 30 M frames, 8.5 min): GrabTail 88 of 102, ThrowAtBomb 56 of 119,
+//!   Defeated 99 of 120, Star::Collect 306 of 306, the first ending state 404129 frames, credits replayed.
+//!
 //! Stars and keys these bosses drop are `INTERACT_STAR_OR_KEY` (the Bowser key
 //! once it lands, bowser_key.inc.c; the grand star) and so already
 //! `Star::Collect`. A boss's star index is its first behaviour byte
@@ -73,6 +84,9 @@ const WIGGLER_ACT_JUMPED_ON: i32 = 3;
 const WIGGLER_ACT_SHRINK: i32 = 4;
 const WIGGLER_ACT_FALL_THROUGH_FLOOR: i32 = 5;
 const EYEROK_BOSS_ACT_SLEEP: i32 = 0;
+/// eyerok.inc.c eyerok_boss_act_wake_up: awake, waiting for `mario_ready_to_speak` (Mario standing, not airborne)
+/// before the intro dialog (EYEROK_BOSS_ACT_SHOW_INTRO_TEXT, 2); the hands only fight after that dialog.
+const EYEROK_BOSS_ACT_WAKE_UP: i32 = 1;
 const EYEROK_HAND_ACT_SLEEP: i32 = 0;
 const EYEROK_HAND_ACT_SHOW_EYE: i32 = 3;
 const EYEROK_HAND_ACT_DIE: i32 = 15;
@@ -206,13 +220,22 @@ const BOWSER_HIT_CYCLE_FRAMES: f64 = BOWSER_RECOVER_FRAMES
 /// object within range of `b`; `b` is never a dialog or menu state).
 pub fn generate(b: &St, o: &Obj, out: &mut Vec<Arc<dyn Objective>>) {
     let star = star_of(b, o);
-    if star.is_some_and(|(c, i)| b.has_star(c, i)) {
+    // Eyerok's hands carry no star params (behParam 0x00ff0000 / 0x00010000 read as star index 0, which SSL has):
+    // they were cut here before their own check (the boss's star (8, 3), below); t1 steps 788-790 woke Eyerok
+    // 183 times and read his dialog, hands idle at 4 health, and never got a PunchEye attempt.
+    if o.bhv_name() != "bhvEyerokHand" && star.is_some_and(|(c, i)| b.has_star(c, i)) {
         return;
     }
     match o.bhv_name() {
         "bhvWhompKingBoss" if (1..=3).contains(&o.health) && o.action < WHOMP_DIE => {
             out.push(Arc::new(WhompPound { f: Fight::new(b, o, star) }))
         }
+        // BBH's star 1 Big Boo sits hidden and intangible (big_boo_act_0) until
+        // all five Boos of the ghost hunt are dead (oBigBooNumMinionBoosKilled
+        // >= 5): not a goal before that, however near it is (the Boo::
+        // HitFromBehind objectives carry the hunt; the tree used to chase it
+        // through the lobby for nothing, 0 hits in 98 tries).
+        "bhvGhostHuntBigBoo" if waiting_for_minions(b, o) => {}
         "bhvGhostHuntBigBoo" | "bhvBalconyBigBoo" | "bhvMerryGoRoundBigBoo"
             if o.action != BIG_BOO_DEAD && !(o.action == BIG_BOO_HURT && o.health <= 1) =>
         {
@@ -227,7 +250,7 @@ pub fn generate(b: &St, o: &Obj, out: &mut Vec<Arc<dyn Objective>>) {
                 out.push(Arc::new(EyerokPunchEye { f: Fight::new(b, o, star) }))
             }
         }
-        "bhvEyerokBoss" if o.action == EYEROK_BOSS_ACT_SLEEP => out.push(Arc::new(EyerokWake { f: Fight::new(b, o, star) })),
+        "bhvEyerokBoss" if matches!(o.action, EYEROK_BOSS_ACT_SLEEP | EYEROK_BOSS_ACT_WAKE_UP) => out.push(Arc::new(EyerokWake { f: Fight::new(b, o, star) })),
         "bhvBigBully" | "bhvBigBullyWithMinions" | "bhvBigChillBully" if bully_fighting(o) => {
             out.push(Arc::new(BullyPushOff { f: Fight::new(b, o, star) }))
         }
@@ -235,6 +258,7 @@ pub fn generate(b: &St, o: &Obj, out: &mut Vec<Arc<dyn Objective>>) {
             out.push(Arc::new(BowserGrabTail { f: Fight::new(b, o, None) }));
             out.push(Arc::new(BowserThrow { f: Fight::new(b, o, None) }));
         }
+        "bhvBowser" if bowser_lies_beaten(b, o) => out.push(Arc::new(BowserDefeated { f: Fight::new(b, o, None) })),
         _ => {}
     }
 }
@@ -250,6 +274,20 @@ pub fn generate_level(_b: &St, _out: &mut Vec<Arc<dyn Objective>>) {}
 fn star_of(b: &St, o: &Obj) -> Option<(i16, u8)> {
     let index = (o.beh_params >> 24) as u8;
     ((1..=15).contains(&b.course) && index <= 5).then_some((b.course, index))
+}
+
+/// Ghost hunt Boos still to kill in `b` (bhvGhostHuntBoo not yet in its
+/// dying actions 3 and 4; boo.inc.c): the Big Boo needs all five.
+fn ghost_hunt_boos_left(b: &St) -> usize {
+    b.objects().iter().filter(|o| o.bhv_name() == "bhvGhostHuntBoo" && o.action < 3).count()
+}
+
+/// BBH's hidden ghost hunt Big Boo while Boos of the hunt live: not fightable
+/// (big_boo_act_0). Objectives made from a later state must not rate such
+/// states either: t4 found the tree's best BigBoo::Hit states standing on the
+/// hidden Big Boo with all five Boos alive (ETA 267, never improving).
+fn waiting_for_minions(s: &St, o: &Obj) -> bool {
+    o.bhv_name() == "bhvGhostHuntBigBoo" && o.action == BIG_BOO_INACTIVE && ghost_hunt_boos_left(s) > 0
 }
 
 fn wiggler_fighting(o: &Obj) -> bool {
@@ -274,6 +312,24 @@ fn bowser_fighting(s: &St, o: &Obj) -> bool {
         _ => return false,
     };
     !key_done && o.health > 0 && o.action != BOWSER_ACT_DEAD
+}
+
+/// Bowser beaten and waiting for Mario, his key (or the Grand Star) not out
+/// yet: BOWSER_ACT_DEAD until `bowser_dead_wait_for_mario` holds (Mario
+/// within 700 units and facing him), then his last words, and only then
+/// `bowser_spawn_collectable` (bowser.inc.c).
+fn bowser_lies_beaten(s: &St, o: &Obj) -> bool {
+    let key_done = match s.level as u32 {
+        LEVEL_BOWSER_1 => s.keys >= 1,
+        LEVEL_BOWSER_2 => s.keys >= 2,
+        LEVEL_BOWSER_3 => false,
+        _ => return false,
+    };
+    !key_done && o.action == BOWSER_ACT_DEAD && s.dialog < 0 && !bowser_prize_out(s)
+}
+
+fn bowser_prize_out(s: &St) -> bool {
+    s.objects().iter().any(|k| matches!(k.bhv_name(), "bhvBowserKey" | "bhvGrandStar"))
 }
 
 /// One boss instance in one zone.
@@ -515,7 +571,7 @@ impl Objective for BigBooHit {
         30.0
     }
     fn base_criteria(&self, s: &St) -> bool {
-        self.f.base(s).is_some_and(|o| o.action != BIG_BOO_DEAD && !(o.action == BIG_BOO_HURT && o.health <= 1))
+        self.f.base(s).is_some_and(|o| o.action != BIG_BOO_DEAD && !(o.action == BIG_BOO_HURT && o.health <= 1) && !waiting_for_minions(s, o))
     }
     fn ga_budget(&self) -> Option<GaBudget> {
         Some(GaBudget { population: 24, generations: 6, horizon: 240 })
@@ -526,19 +582,32 @@ impl Objective for BigBooHit {
             Ok(o) => o,
             Err(e) => return e,
         };
+        if waiting_for_minions(s, o) {
+            return Eta::Lost;
+        }
         // Tangible only while visible; not yet active before its fight.
         let wait = if o.interact_type == 0 { BOO_INVISIBLE_FRAMES } else { 0.0 }
             + if o.action == BIG_BOO_INACTIVE { BOO_ACTIVATE_FRAMES } else { 0.0 };
         // It dies at 0 (boo.inc.c); before activation oHealth isn't set yet
         // (big_boo_act_0 sets 3): v1's hits_left.
         let rest = self.f.rest(start, |o0| if (1..=3).contains(&o0.health) { o0.health - 1 } else { 2 }, BOO_HIT_CYCLE_FRAMES);
-        Eta::Frames(frames_for(dist(s.pos, o.pos)) + wait + PUNCH_FRAMES + rest)
+        // BBH: the mansion's rooms, doors and the elevator (the merry-go-
+        // round's Big Boo is in the basement).
+        let to = if super::enemies::mansion::in_bbh(s) {
+            super::enemies::mansion::walk_frames(s, o.pos)
+        } else {
+            frames_for(dist(s.pos, o.pos))
+        };
+        Eta::Frames(to + wait + PUNCH_FRAMES + rest)
     }
     fn success_value(&self) -> f64 {
         10.0
     }
     fn steer_target(&self, s: &St) -> Option<[f32; 3]> {
         let o = self.f.get(s)?;
+        if super::enemies::mansion::in_bbh(s) && s.hdist(o.pos) > 700.0 {
+            return Some(super::enemies::mansion::waypoint(s, o.pos, 600.0));
+        }
         // Come in from its side (it vanishes if Mario faces it head-on), then
         // straight at it.
         if s.hdist(o.pos) > 260.0 { Some(offset(o.pos, o.yaw, 0.0, 220.0, 0.0)) } else { Some(o.pos) }
@@ -698,7 +767,7 @@ impl Objective for EyerokWake {
         5.0
     }
     fn base_criteria(&self, s: &St) -> bool {
-        self.f.base(s).is_some_and(|o| o.action == EYEROK_BOSS_ACT_SLEEP)
+        self.f.base(s).is_some_and(|o| matches!(o.action, EYEROK_BOSS_ACT_SLEEP | EYEROK_BOSS_ACT_WAKE_UP))
     }
     fn ga_budget(&self) -> Option<GaBudget> {
         Some(GaBudget { population: 16, generations: 5, horizon: 200 })
@@ -708,8 +777,15 @@ impl Objective for EyerokWake {
             return Eta::Lost;
         }
         let Some(o) = self.f.get(s) else { return Eta::Lost };
-        if o.action != EYEROK_BOSS_ACT_SLEEP {
+        // Done only at the intro dialog: awake (WAKE_UP) is not enough, the boss then waits for Mario to stand
+        // still (mario_ready_to_speak) and t1's step 712 woke him 151 times without one punch attempt after.
+        if !matches!(o.action, EYEROK_BOSS_ACT_SLEEP | EYEROK_BOSS_ACT_WAKE_UP) || s.in_dialog() {
             return Eta::Done;
+        }
+        if o.action == EYEROK_BOSS_ACT_WAKE_UP {
+            // Stand still: grounded and slow.
+            let still = !s.action_has(ACT_FLAG_AIR) && s.forward_vel.abs() < 1.0;
+            return Eta::Frames(if still { 6.0 } else { 20.0 + s.forward_vel.abs() as f64 });
         }
         Eta::Frames(frames_for((dist(s.pos, o.pos) - EYEROK_WAKE_RADIUS).max(0.0)) + WAKE_FRAMES)
     }
@@ -717,7 +793,8 @@ impl Objective for EyerokWake {
         2.0
     }
     fn steer_target(&self, s: &St) -> Option<[f32; 3]> {
-        self.f.get(s).map(|o| o.pos)
+        // Awake: stay where Mario is (stand still for the dialog).
+        self.f.get(s).map(|o| if o.action == EYEROK_BOSS_ACT_WAKE_UP { s.pos } else { o.pos })
     }
     fn exists_in(&self, s: &St) -> bool {
         self.base_criteria(s)
@@ -935,6 +1012,56 @@ impl Objective for BowserGrabTail {
     }
     fn exists_in(&self, s: &St) -> bool {
         self.f.base(s).is_some_and(|o| bowser_fighting(s, o))
+    }
+    common!();
+}
+
+/// `Bowser::Defeated(id)`: he lies beaten; run up to him, facing him. The
+/// game waits for that (`bowser_dead_wait_for_mario`: within 700 units,
+/// Mario's yaw more than 0x6000 from Bowser's angle to Mario) before his
+/// last words (`Dialog::Read`) and the key. Met when the dialog opens or the
+/// key is out.
+struct BowserDefeated {
+    f: Fight,
+}
+
+impl Objective for BowserDefeated {
+    fn dense_keep(&self) -> obrrt_core::DenseKeep {
+        obrrt_core::DenseKeep::EndOnly
+    }
+    fn kind(&self) -> &'static str {
+        "Bowser::Defeated"
+    }
+    fn key(&self) -> String {
+        self.f.key("BowserDefeated")
+    }
+    fn obj_weight(&self, _b: &St) -> f64 {
+        30.0
+    }
+    fn base_criteria(&self, s: &St) -> bool {
+        s.controllable() && self.exists_in(s)
+    }
+    fn ga_budget(&self) -> Option<GaBudget> {
+        Some(GaBudget { population: 16, generations: 5, horizon: 300 })
+    }
+    fn eta(&self, s: &St, _start: &St, _mem: &mut Mem) -> Eta {
+        if s.zone() != self.f.zone || !s.alive() {
+            return Eta::Lost;
+        }
+        if s.dialog >= 0 || bowser_prize_out(s) {
+            return Eta::Done;
+        }
+        // To 500 units of him (the game asks 700), then the dialog's start.
+        self.f.get(s).map_or(Eta::Lost, |o| Eta::Frames(frames_for((s.hdist(o.pos) - 500.0).max(0.0)) + (s.pos[1] - o.pos[1]).abs() as f64 / 30.0 + 10.0))
+    }
+    fn success_value(&self) -> f64 {
+        15.0
+    }
+    fn steer_target(&self, s: &St) -> Option<[f32; 3]> {
+        self.f.get(s).map(|o| o.pos)
+    }
+    fn exists_in(&self, s: &St) -> bool {
+        self.f.base(s).is_some_and(|o| bowser_lies_beaten(s, o))
     }
     common!();
 }
@@ -1186,6 +1313,23 @@ mod tests {
         let o = bw(3).objects()[0].clone();
         check("bowser throw", &BowserThrow { f: Fight::new(&bw(3), &o, None) }, &bw, &[3, 2, 1]);
         check("bowser grab", &BowserGrabTail { f: Fight::new(&bw(3), &o, None) }, &bw, &[3, 2, 1]);
+    }
+
+    /// BBH's hidden ghost hunt Big Boo is no goal while a small Boo lives
+    /// (the five must die first; boo.inc.c big_boo_act_0), and one once they
+    /// are all in their dying actions.
+    #[test]
+    fn ghost_hunt_big_boo_waits_for_the_boos() {
+        let gen_ = |small: i32| {
+            let b = st(4, [0.0; 3], vec![obj("bhvGhostHuntBigBoo", 5, [1000.0, 50.0, 1000.0], 0, 0), obj("bhvGhostHuntBoo", 6, [20.0, 100.0, -908.0], small, 0)]);
+            let mut out = Vec::new();
+            for o in b.objects() {
+                generate(&b, o, &mut out);
+            }
+            out.iter().filter(|x| x.kind() == "BigBoo::Hit").count()
+        };
+        assert_eq!(gen_(1), 0);
+        assert_eq!(gen_(4), 1);
     }
 
     const ACT_IDLE_TEST: u32 = obrrt_core::layout::ACT_IDLE;
