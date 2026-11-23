@@ -32,6 +32,7 @@
 
 use std::cell::RefCell;
 use std::io::{Read, Write};
+#[cfg(unix)]
 use std::os::unix::net::UnixStream;
 use std::sync::{Arc, OnceLock};
 
@@ -107,10 +108,18 @@ fn settings_servers() -> usize {
     std::env::var("OBRRT_MODEL_SERVERS").ok().and_then(|v| v.parse().ok()).unwrap_or(1usize).max(1)
 }
 
+#[cfg(unix)]
 thread_local! {
     static CONN: RefCell<Option<UnixStream>> = const { RefCell::new(None) };
 }
 
+/// The model server is reached over a Unix socket: elsewhere there is none.
+#[cfg(not(unix))]
+fn call(socket: &str, _op: u32, _payload: &[u8]) -> Result<Vec<u8>> {
+    anyhow::bail!("model server {socket}: Unix sockets only")
+}
+
+#[cfg(unix)]
 fn call(socket: &str, op: u32, payload: &[u8]) -> Result<Vec<u8>> {
     CONN.with(|c| {
         let mut c = c.borrow_mut();

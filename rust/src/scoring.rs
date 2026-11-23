@@ -4,7 +4,7 @@ use serde::{Serialize, Deserialize};
 use std::fmt::Display;
 
 pub fn load_from_path<S: ScoringStrategy>(mut scoring: S, path: Vec<GamePad>) -> Result<S, Error> {
-    let game_gen = SM64GameGenerator::new(include_bytes!("../../baserom.us.z64").to_vec())?;
+    let game_gen = SM64GameGenerator::new(crate::util::rom_bytes()?)?;
     let mut base_game = game_gen.create_game()?;
     
     for pad in path {

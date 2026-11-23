@@ -69,3 +69,10 @@ pub fn skip_menu_pads() -> Vec<GamePad> {
     }
     path
 }
+/// The ROM, read at run time: `$SM64_ROM`, else `baserom.us.z64` at the
+/// repository root (it used to be built in with `include_bytes!`, so the
+/// crate couldn't compile without a ROM, e.g. as a git dependency).
+pub fn rom_bytes() -> std::io::Result<Vec<u8>> {
+    let path = std::env::var("SM64_ROM").unwrap_or_else(|_| concat!(env!("CARGO_MANIFEST_DIR"), "/../baserom.us.z64").to_string());
+    std::fs::read(&path).map_err(|e| std::io::Error::new(e.kind(), format!("{path}: {e}")))
+}

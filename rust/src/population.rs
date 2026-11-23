@@ -75,7 +75,7 @@ pub struct Population<S: ScoringStrategy> {
 
 impl<S: ScoringStrategy> Population<S> {
     pub fn new(pop_size: usize, genome_length: usize, scoring: S, initial_base_path: Vec<GamePad>) -> Result<Self, Error> {
-        let game_gen = SM64GameGenerator::new(include_bytes!("../../baserom.us.z64").to_vec())?;
+        let game_gen = SM64GameGenerator::new(crate::util::rom_bytes()?)?;
         let white = Variant::named("white").unwrap();
         Self::with_options(pop_size, genome_length, scoring, initial_base_path, &game_gen, white, rand::rng().random())
     }
