@@ -7,6 +7,7 @@ pub mod dense;
 pub mod diag;
 pub mod game;
 pub mod engine;
+pub mod envconfig;
 pub mod etalearn;
 pub mod gammaset;
 pub mod ga;
