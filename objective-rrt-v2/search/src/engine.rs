@@ -386,6 +386,18 @@ fn geo_ahead() -> f32 {
 /// A frontier cell (see `index_frontier`), with its zone.
 type GoalCell = ((u16, u8), (i32, i32, i32, i64, i16, u64));
 
+/// What `Engine::sync_import` did with a path.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SyncImport {
+    /// Already in the tree (or imported before).
+    Known,
+    /// Replayed to a different state than the sender read, or a dead one.
+    Bad,
+    /// An earlier state at its cell.
+    Dup,
+    Added(u32),
+}
+
 /// One goal of OBRRT_GOAL_FOCUS: its objective and the best state of each of
 /// its best-ranked cells.
 struct GoalTop {
@@ -757,6 +769,12 @@ pub struct Engine {
     /// Called with the engine at the end of every round (the browser build samples the tree for
     /// its visualisation; it rate-limits itself). None: nothing.
     pub on_round: Option<Box<dyn FnMut(&Engine) + Send>>,
+    /// Called after `on_round`, with the engine mutable: the browser build's tree sync with the other
+    /// workers (`sync_candidates`, `sync_import`).
+    pub on_sync: Option<Box<dyn FnMut(&mut Engine) + Send>>,
+    /// Nodes already offered to the other workers / paths already imported (by hash).
+    sync_sent: HashSet<u32>,
+    sync_seen: HashSet<u64>,
     /// OBRRT_PICK=schema|schema_kin: start selection by schema cells (schemapick.rs).
     spick: Option<crate::schemapick::SchemaPick>,
     /// Sparse saves: rebuild frames already counted into total_frames.
@@ -990,6 +1008,9 @@ impl Engine {
             stall_near: HashMap::new(),
             eta_improved: false,
             on_round: None,
+            on_sync: None,
+            sync_sent: HashSet::new(),
+            sync_seen: HashSet::new(),
             spick: crate::schemapick::from_env()?,
             rebuild_counted: 0,
             speed: Default::default(),
@@ -4239,6 +4260,171 @@ impl Engine {
         Ok(())
     }
 
+    /// The nodes worth offering to other searches of the same step (at most `k`, each once): the best
+    /// state of the engine's top goals' best cells (`goal_top`, its own ETA priority), taken round-robin
+    /// across goals, then frontier states by progress and sooner frame, at least `sep` units apart from
+    /// each other so the offer covers several branches. Imported nodes are never offered back.
+    pub fn sync_candidates(&mut self, k: usize, sep: f32) -> Vec<u32> {
+        let mut out: Vec<u32> = Vec::new();
+        let ok = |s: &Self, i: u32| i > 0 && (i as usize) < s.tree.nodes.len() && !s.tree.nodes[i as usize].retired && s.tree.nodes[i as usize].via != "sync" && !s.sync_sent.contains(&i);
+        let far = |s: &Self, out: &[u32], i: u32| {
+            let p = s.tree.nodes[i as usize].st.pos;
+            out.iter().all(|&o| {
+                let q = s.tree.nodes[o as usize].st.pos;
+                (p[0] - q[0]).hypot(p[2] - q[2]) + (p[1] - q[1]).abs() >= sep
+            })
+        };
+        let goals = self.goal_top.iter().map(|g| g.cells.len()).max().unwrap_or(0);
+        let mut order: Vec<usize> = (0..self.goal_top.len()).collect();
+        order.sort_by(|&a, &b| self.goal_top[b].weight.total_cmp(&self.goal_top[a].weight));
+        'g: for r in 0..goals {
+            for &g in &order {
+                if out.len() >= k.div_ceil(2) {
+                    break 'g;
+                }
+                if let Some(&(i, _)) = self.goal_top[g].cells.get(r) {
+                    if ok(self, i) && !out.contains(&i) && far(self, &out, i) {
+                        out.push(i);
+                    }
+                }
+            }
+        }
+        let mut fr: Vec<u32> = self.tree.frontier.iter().copied().filter(|&i| ok(self, i)).collect();
+        fr.sort_by(|&a, &b| {
+            let (x, y) = (&self.tree.nodes[a as usize].st, &self.tree.nodes[b as usize].st);
+            y.progress().cmp(&x.progress()).then(x.frame.cmp(&y.frame)).then(a.cmp(&b))
+        });
+        for i in fr.into_iter().take(4 * k) {
+            if out.len() >= k {
+                break;
+            }
+            if !out.contains(&i) && far(self, &out, i) {
+                out.push(i);
+            }
+        }
+        self.sync_sent.extend(out.iter().copied());
+        out
+    }
+
+    /// Adds the state another search reached with `pads` from this tree's root, as this search's own
+    /// expansion would: the deepest node on the path already in the tree is the parent (its save is
+    /// loaded and the rest of the pads replayed, game frames counted), the result is checked against
+    /// `expect` (level, position, progress, as the other search read it) and dropped when it differs,
+    /// died or has an earlier state at its cell (the usual duplicate check). Added through the same
+    /// bookkeeping as `merge_share`'s chain nodes.
+    pub fn sync_import(&mut self, pads: &[GamePad], expect: Option<(u16, [f32; 3], (u8, i16))>) -> Result<SyncImport> {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        for p in pads {
+            (p.button, p.stick_x, p.stick_y).hash(&mut h);
+        }
+        if !self.sync_seen.insert(h.finish()) {
+            return Ok(SyncImport::Known);
+        }
+        // The deepest node of the tree on this path.
+        let (mut at, mut off) = (0u32, 0usize);
+        'down: loop {
+            for &c in &self.tree.children[at as usize] {
+                let e = &self.tree.nodes[c as usize].inputs;
+                if !e.is_empty() && pads.len() - off >= e.len() && pads[off..off + e.len()].iter().zip(e).all(|(a, b)| (a.button, a.stick_x, a.stick_y) == (b.button, b.stick_x, b.stick_y)) {
+                    (at, off) = (c, off + e.len());
+                    continue 'down;
+                }
+            }
+            break;
+        }
+        while at != 0 && (self.tree.nodes[at as usize].retired || !self.tree.has_save(at)) {
+            let n = &self.tree.nodes[at as usize];
+            off -= n.inputs.len();
+            at = n.parent.unwrap_or(0);
+        }
+        if off == pads.len() {
+            return Ok(SyncImport::Known);
+        }
+        let rest = &pads[off..];
+        let frame = self.tree.nodes[at as usize].st.frame + rest.len() as u32;
+        let (st, packed, base) = {
+            let mut w = loop {
+                if let Some(w) = self.workers.iter().find_map(|w| w.try_lock().ok()) {
+                    break w;
+                }
+                std::thread::yield_now();
+            };
+            let base = self.tree.base_of(at);
+            self.tree.load_into(at, &mut w.base, &self.bases)?;
+            for p in rest {
+                w.base.step_game(*p)?;
+            }
+            let st = read_state(&w.base, frame, true);
+            let packed = Delta::new(base, &self.bases[base as usize], &w.base.save_state());
+            (st, packed, base)
+        };
+        let _ = base;
+        self.total_frames += rest.len() as u64;
+        if !st.alive() {
+            return Ok(SyncImport::Bad);
+        }
+        if let Some((level, pos, progress)) = expect {
+            if st.level != level || st.pos != pos || st.progress() != progress {
+                return Ok(SyncImport::Bad);
+            }
+        }
+        let c = cell(&st);
+        if self.cells.get(&c).is_some_and(|ids| ids.iter().any(|&i| self.tree.nodes[i as usize].st.frame <= st.frame)) {
+            return Ok(SyncImport::Dup);
+        }
+        let via = "sync";
+        let zone = st.zone();
+        let base = match self.zone_base.get(&zone) {
+            Some(&b) => b,
+            None => {
+                self.bases.push(crate::game::into_plain(packed.apply(&self.bases)?).into_bytes());
+                let b = (self.bases.len() - 1) as u16;
+                self.zone_base.insert(zone, b);
+                b
+            }
+        };
+        let delta = if packed.base == base { packed } else { Delta::new(base, &self.bases[base as usize], &packed.apply(&self.bases)?) };
+        if self.zones.insert(zone) {
+            println!("new zone {zone:?} via tree sync at node {}", self.tree.nodes.len());
+        }
+        let (modal, fr, progress) = (st.modal(), st.frame, st.progress());
+        let (id, adv) = self.tree.add(at, rest.to_vec(), st, delta, via);
+        if self.cfg.new_eligible {
+            self.ne_note(id, at);
+        }
+        if self.cfg.earliest {
+            self.ea_note(id);
+        }
+        self.note_best_at(id, progress, zone, fr, via)?;
+        if modal {
+            self.modal_queue.push(id);
+        }
+        if self.cfg.soft_dedup {
+            let mut crowd = 0;
+            for &o in self.cells.get(&c).map_or(&[][..], |v| v.as_slice()) {
+                if self.tree.nodes[o as usize].st.frame <= fr {
+                    crowd += 1;
+                } else {
+                    self.tree.nodes[o as usize].stats.crowd += 1;
+                }
+            }
+            self.tree.nodes[id as usize].stats.crowd = crowd;
+        }
+        self.cells.entry(c).or_default().push(id);
+        if let Some(rr) = self.rr.as_mut() {
+            rr.note(id, &self.tree.nodes[id as usize].st, &c, &self.tree, &self.hot, self.cfg.reroute_margin, 0);
+        }
+        self.tree.gen_step[id as usize] = true;
+        self.sync_sent.insert(id);
+        if adv {
+            let (keys, stars) = self.tree.frontier_progress;
+            let f = self.write_m64(id, &format!("frontier-k{keys}-s{stars}"))?;
+            println!("FRONTIER keys {keys} stars {stars} at node {id} via tree sync: {f}");
+        }
+        Ok(SyncImport::Added(id))
+    }
+
     /// Keeps a graft's end if it is the same as the child (same key) and at
     /// least the margin sooner, as a node under the faster start; its own
     /// children then follow (`Reroute::note`).
@@ -4860,6 +5046,10 @@ impl Engine {
             if let Some(mut f) = self.on_round.take() {
                 f(self);
                 self.on_round = Some(f);
+            }
+            if let Some(mut f) = self.on_sync.take() {
+                f(self);
+                self.on_sync = Some(f);
             }
             if last_report.elapsed() > self.cfg.report_every {
                 last_report = Instant::now();
