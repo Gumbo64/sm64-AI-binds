@@ -22,3 +22,10 @@ objective-scattershot = { path = "../scattershot" }
 # Worker games are game::HookedGame: every frame goes through a downstream
 # crate's StepHook (sm64-crypto3's miner plugs in the SM64Coin perturbation).
 hooked = []
+
+# Native: sm64-binds' default backend (wasmer sys); the browser (wasm32): wasmer's JS backend.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+sm64-binds = { workspace = true, features = ["default"] }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+sm64-binds = { workspace = true, features = ["wasm_js"] }

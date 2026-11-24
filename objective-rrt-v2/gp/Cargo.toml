@@ -25,3 +25,10 @@ sm64-binds.workspace = true
 obrrt-core.workspace = true
 obrrt-objectives.workspace = true
 obrrt-search = { workspace = true, optional = true }
+
+# Native: sm64-binds' default backend (wasmer sys); the browser (wasm32): wasmer's JS backend.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+sm64-binds = { workspace = true, features = ["default"] }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+sm64-binds = { workspace = true, features = ["wasm_js"] }
