@@ -754,6 +754,9 @@ pub struct Engine {
     /// OBRRT_GOAL_EXPLORE: per goal, the cells about as near as its best (see `goal_explore`).
     stall_near: HashMap<String, usize>,
     eta_improved: bool,
+    /// Called with the engine at the end of every round (the browser build samples the tree for
+    /// its visualisation; it rate-limits itself). None: nothing.
+    pub on_round: Option<Box<dyn FnMut(&Engine) + Send>>,
     /// OBRRT_PICK=schema|schema_kin: start selection by schema cells (schemapick.rs).
     spick: Option<crate::schemapick::SchemaPick>,
     /// Sparse saves: rebuild frames already counted into total_frames.
@@ -986,6 +989,7 @@ impl Engine {
             stall_eta: HashMap::new(),
             stall_near: HashMap::new(),
             eta_improved: false,
+            on_round: None,
             spick: crate::schemapick::from_env()?,
             rebuild_counted: 0,
             speed: Default::default(),
@@ -4853,6 +4857,10 @@ impl Engine {
                 self.tune();
             }
             self.diag_secs[2] += post_t.elapsed().as_secs_f64();
+            if let Some(mut f) = self.on_round.take() {
+                f(self);
+                self.on_round = Some(f);
+            }
             if last_report.elapsed() > self.cfg.report_every {
                 last_report = Instant::now();
                 self.write_outputs(begin.elapsed().as_secs_f64())?;
