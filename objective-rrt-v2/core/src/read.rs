@@ -10,11 +10,50 @@ use sm64_binds::SM64Game;
 use crate::layout::*;
 use crate::{Obj, St};
 
-struct Mem<'a>(&'a [u8]);
+/// The game's memory as `read_state` reads it: a slice of all of it, or (the browser build,
+/// where the game is another WebAssembly instance and a slice means copying all 8.5 MB) the
+/// game itself, read a field at a time.
+#[derive(Clone, Copy)]
+enum Src<'a> {
+    Slice(&'a [u8]),
+    /// The game, read through a cache of 4 KB pages fetched on first touch (one `read_state`).
+    #[cfg(target_arch = "wasm32")]
+    Game(&'a SM64Game, &'a std::cell::RefCell<HashMap<usize, Box<[u8; PAGE]>>>),
+}
+
+#[cfg(target_arch = "wasm32")]
+const PAGE: usize = 4096;
+
+#[derive(Clone, Copy)]
+struct Mem<'a>(Src<'a>);
 
 impl Mem<'_> {
+    fn len(&self) -> usize {
+        match self.0 {
+            Src::Slice(m) => m.len(),
+            #[cfg(target_arch = "wasm32")]
+            Src::Game(g, _) => g.memory_len(),
+        }
+    }
     fn bytes<const N: usize>(&self, addr: usize) -> [u8; N] {
-        self.0[addr..addr + N].try_into().unwrap()
+        match self.0 {
+            Src::Slice(m) => m[addr..addr + N].try_into().unwrap(),
+            #[cfg(target_arch = "wasm32")]
+            Src::Game(g, pages) => {
+                let mut b = [0u8; N];
+                let mut pages = pages.borrow_mut();
+                for (i, out) in b.iter_mut().enumerate() {
+                    let a = addr + i;
+                    let page = pages.entry(a / PAGE).or_insert_with(|| {
+                        let mut p = Box::new([0u8; PAGE]);
+                        g.read_memory(((a / PAGE) * PAGE) as u32, &mut p[..]).expect("read in bounds");
+                        p
+                    });
+                    *out = page[a % PAGE];
+                }
+                b
+            }
+        }
     }
     fn u32(&self, addr: usize) -> u32 {
         u32::from_le_bytes(self.bytes(addr))
@@ -26,7 +65,7 @@ impl Mem<'_> {
         i16::from_le_bytes(self.bytes(addr))
     }
     fn i8(&self, addr: usize) -> i8 {
-        self.0[addr] as i8
+        self.bytes::<1>(addr)[0] as i8
     }
     fn f32(&self, addr: usize) -> f32 {
         f32::from_le_bytes(self.bytes(addr))
@@ -37,7 +76,7 @@ impl Mem<'_> {
     /// The `struct Surface *` stored at `addr`, if non-null and in memory.
     fn surface(&self, addr: usize) -> Option<usize> {
         let s = self.u32(addr) as usize;
-        (s != 0 && s + SURFACE_SIZE <= self.0.len()).then_some(s)
+        (s != 0 && s + SURFACE_SIZE <= self.len()).then_some(s)
     }
     /// The `struct Object *` stored at `addr`, if it points at a slot of
     /// the object pool.
@@ -68,7 +107,7 @@ const POOL: usize = ADDR_gObjectPool as usize;
 /// object pool and run `bhvMario`. Call once per game build before searching.
 pub fn check_layout(game: &SM64Game) -> Result<()> {
     game.with_memory(|m| {
-        let m = Mem(m);
+        let m = Mem(Src::Slice(m));
         let obj = m.u32(MARIO + MARIO_marioObj) as usize;
         let pool_end = POOL + OBJECT_SIZE * OBJECT_POOL_CAPACITY as usize;
         if obj < POOL || obj >= pool_end || (obj - POOL) % OBJECT_SIZE != 0 {
@@ -93,8 +132,24 @@ pub fn check_layout(game: &SM64Game) -> Result<()> {
 /// Mario and progress after `frame` frames; with `objects`, also every active
 /// object in the pool.
 pub fn read_state(game: &SM64Game, frame: u32, objects: bool) -> St {
-    game.with_memory(|m| {
-        let m = Mem(m);
+    // The browser build reads the per-frame fields one at a time (no copy of all of memory);
+    // the objects' pass (geometry from whole pools) still takes a slice.
+    #[cfg(target_arch = "wasm32")]
+    {
+        let pages = std::cell::RefCell::new(HashMap::new());
+        let st = read_state_from(Mem(Src::Game(game, &pages)), frame, objects);
+        // The geometry passes read whole pools: all of memory, only when they have work.
+        if objects && (crate::geo::observe_floors_wanted(&st) || crate::geo::observe_wanted(&st) || crate::dyngeo::on()) {
+            return game.with_memory(|m| read_state_from(Mem(Src::Slice(m)), frame, objects));
+        }
+        return st;
+    }
+    #[allow(unreachable_code)]
+    game.with_memory(|m| read_state_from(Mem(Src::Slice(m)), frame, objects))
+}
+
+fn read_state_from(m: Mem, frame: u32, objects: bool) -> St {
+    {
         let save_file = (m.i16(ADDR_gCurrSaveFileNum as usize).max(1) - 1) as usize;
         let flags = m.u32(ADDR_gSaveBuffer as usize + save_file * SAVE_FILE_STRIDE + SAVE_FILE_FLAGS);
         let keys = (flags & (SAVE_FLAG_HAVE_KEY_1 | SAVE_FLAG_UNLOCKED_BASEMENT_DOOR) != 0) as u8
@@ -162,16 +217,19 @@ pub fn read_state(game: &SM64Game, frame: u32, objects: bool) -> St {
         };
         if objects {
             // Objectives' static-floor probes (off unless one asked).
-            crate::geo::observe_floors(m.0, &st);
-            // OBRRT_GEO: the walkable mesh of this area, built once.
-            crate::geo::observe(m.0, &st);
-            // OBRRT_BLJ_SCAN_OBJECTS: the object collision near Mario.
-            if crate::dyngeo::on() {
-                crate::dyngeo::attach(&st, crate::dyngeo::read(m.0, st.pos));
+            #[allow(irrefutable_let_patterns)]
+            if let Src::Slice(all) = m.0 {
+                crate::geo::observe_floors(all, &st);
+                // OBRRT_GEO: the walkable mesh of this area, built once.
+                crate::geo::observe(all, &st);
+                // OBRRT_BLJ_SCAN_OBJECTS: the object collision near Mario.
+                if crate::dyngeo::on() {
+                    crate::dyngeo::attach(&st, crate::dyngeo::read(all, st.pos));
+                }
             }
         }
         st
-    })
+    }
 }
 
 fn static_id() -> bool {

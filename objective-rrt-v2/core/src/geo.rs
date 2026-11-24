@@ -775,6 +775,17 @@ fn building() -> &'static Mutex<HashSet<Zone>> {
 /// Builds the mesh of `st`'s zone from memory `m` if it isn't built yet and
 /// the partition is surely this area's: Mario is in control and standing on
 /// a static floor that is in it. Cheap when the zone is known.
+/// Whether [`observe`] would read anything for `st` (cheap: no memory needed). The browser
+/// build asks first, since handing it all of memory there means copying it.
+pub fn observe_wanted(st: &St) -> bool {
+    enabled() && st.controllable() && with_mesh(st.zone(), |_| ()).is_none() && !building().lock().unwrap().contains(&st.zone())
+}
+
+/// Whether [`observe_floors`] would read anything for `st` (see [`observe_wanted`]).
+pub fn observe_floors_wanted(st: &St) -> bool {
+    WANT_FLOORS.load(Ordering::Relaxed) && st.controllable() && !floor_cache().read().unwrap().contains_key(&st.zone())
+}
+
 pub fn observe(m: &[u8], st: &St) {
     if !enabled() {
         return;
