@@ -5,7 +5,7 @@ use sm64_binds::GamePad;
 /// header) or a raw file with no header. Either way 4 bytes a frame: u16
 /// big-endian buttons, i8 stick x, i8 stick y.
 pub fn load_m64(path: &str) -> Result<Vec<GamePad>> {
-    let bytes = std::fs::read(path)?;
+    let bytes = obrrt_core::sys::fs::read(path)?;
     Ok(parse_m64(&bytes))
 }
 

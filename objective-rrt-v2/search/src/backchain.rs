@@ -375,7 +375,7 @@ impl Backchain {
             "stats": self.stats, "queue": self.queue.len(), "continued": continued,
             "by_kind": by_kind, "improved": improved,
         });
-        std::fs::write(format!("{dir}/backchain.json"), serde_json::to_string_pretty(&j)?)?;
+        obrrt_core::sys::fs::write(format!("{dir}/backchain.json"), serde_json::to_string_pretty(&j)?)?;
         let s = &self.stats;
         println!(
             "backchain: planned {} seed met {}/{} successes {} earlier {} (kept {}, continued {}) saved {} frames",

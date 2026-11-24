@@ -34,7 +34,7 @@ const MOVES: &[(&str, u32)] = &[
 ];
 
 fn main() -> Result<()> {
-    let a: Vec<String> = std::env::args().collect();
+    let a: Vec<String> = obrrt_core::sys::env::args().collect();
     if a.len() < 2 {
         bail!("usage: route-stats <route.m64> [regions.json] [--json OUT] [--rom FILE]");
     }
@@ -57,12 +57,12 @@ fn main() -> Result<()> {
             }
         }
     }
-    let b = std::fs::read(&a[1]).with_context(|| a[1].clone())?;
+    let b = obrrt_core::sys::fs::read(&a[1]).with_context(|| a[1].clone())?;
     let body = if b.len() >= 0x400 && &b[..4] == b"M64\x1a" { &b[0x400..] } else { &b[..] };
     let pads: Vec<GamePad> = body.chunks_exact(4).map(|c| GamePad::new(u16::from_be_bytes([c[0], c[1]]), c[2] as i8, c[3] as i8)).collect();
     let regions: Vec<(u32, u32, String)> = match &regions_path {
         Some(p) => {
-            let v: Value = serde_json::from_str(&std::fs::read_to_string(p)?)?;
+            let v: Value = serde_json::from_str(&obrrt_core::sys::fs::read_to_string(p)?)?;
             v.as_array()
                 .map(|r| r.iter().map(|x| (x["from"].as_u64().unwrap_or(0) as u32, x["to"].as_u64().unwrap_or(0) as u32, x["label"].as_str().unwrap_or("").to_string())).collect())
                 .unwrap_or_default()
@@ -120,7 +120,7 @@ fn main() -> Result<()> {
         println!("  {:<12} {:>5}-{:<5} {} {}", r["label"].as_str().unwrap_or(""), r["from"], r["to"], r["moves"], if r["king_returns"].as_u64().unwrap_or(0) > 0 { format!("King returns {}", r["king_returns"]) } else { String::new() });
     }
     if let Some(o) = out {
-        std::fs::write(o, serde_json::to_string_pretty(&rep)?)?;
+        obrrt_core::sys::fs::write(o, serde_json::to_string_pretty(&rep)?)?;
     }
     Ok(())
 }

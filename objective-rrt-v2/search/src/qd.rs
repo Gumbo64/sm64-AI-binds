@@ -46,20 +46,20 @@ pub struct Qd {
 pub fn settings() -> Option<&'static Qd> {
     static S: OnceLock<Option<Qd>> = OnceLock::new();
     S.get_or_init(|| {
-        if !std::env::var("OBRRT_GA_QD").is_ok_and(|v| v == "1") {
+        if !obrrt_core::sys::env::var("OBRRT_GA_QD").is_ok_and(|v| v == "1") {
             return None;
         }
-        let f = |k: &str, d: f64| std::env::var(k).ok().and_then(|v| v.parse().ok()).unwrap_or(d);
+        let f = |k: &str, d: f64| obrrt_core::sys::env::var(k).ok().and_then(|v| v.parse().ok()).unwrap_or(d);
         let primary = f("OBRRT_GA_GAMMA", 0.99);
         let mut gammas = vec![primary];
-        if let Ok(v) = std::env::var("OBRRT_GA_GAMMAS") {
+        if let Ok(v) = obrrt_core::sys::env::var("OBRRT_GA_GAMMAS") {
             for g in v.split(',').filter_map(|x| x.trim().parse::<f64>().ok()) {
                 if !gammas.iter().any(|x| (x - g).abs() < 1e-12) {
                     gammas.push(g);
                 }
             }
         }
-        let fields = std::env::var("OBRRT_GA_QD_FIELDS")
+        let fields = obrrt_core::sys::env::var("OBRRT_GA_QD_FIELDS")
             .unwrap_or_else(|_| "pos,yaw,speed,action,done".into())
             .split(',')
             .map(|s| s.trim().to_string())
@@ -69,7 +69,7 @@ pub fn settings() -> Option<&'static Qd> {
             grid: f("OBRRT_GA_QD_GRID", 128.0) as f32,
             uniform: f("OBRRT_GA_QD_UNIFORM", 0.5),
             k: f("OBRRT_GA_QD_K", 4.0) as usize,
-            add: std::env::var("OBRRT_GA_QD_ADD").is_ok_and(|v| v == "1"),
+            add: obrrt_core::sys::env::var("OBRRT_GA_QD_ADD").is_ok_and(|v| v == "1"),
             fields,
             gammas,
         })

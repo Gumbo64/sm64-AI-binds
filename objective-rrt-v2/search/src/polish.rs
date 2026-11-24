@@ -111,7 +111,7 @@ fn milestone(tree: &Tree, i: u32, end: u32) -> bool {
 
 impl Polish {
     pub fn new(share: f64) -> Polish {
-        let env = |k: &str, d: u64| std::env::var(k).ok().and_then(|v| v.parse().ok()).unwrap_or(d);
+        let env = |k: &str, d: u64| obrrt_core::sys::env::var(k).ok().and_then(|v| v.parse().ok()).unwrap_or(d);
         Polish {
             share,
             keep_rounds: env("OBRRT_POLISH_KEEP", 60),

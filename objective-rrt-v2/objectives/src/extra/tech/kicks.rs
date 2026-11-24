@@ -68,7 +68,7 @@ use super::travel::{ACT_CROUCH_SLIDE, ACT_DIVE, ACT_DIVE_SLIDE, ACT_FORWARD_ROLL
 pub(super) fn fix(name: &str) -> bool {
     static OFF: OnceLock<Vec<String>> = OnceLock::new();
     let off = OFF.get_or_init(|| {
-        let v: Vec<String> = std::env::var("OBRRT_KICKS_OFF")
+        let v: Vec<String> = obrrt_core::sys::env::var("OBRRT_KICKS_OFF")
             .unwrap_or_default()
             .split(',')
             .map(|w| w.trim().to_string())
@@ -90,7 +90,7 @@ pub(super) fn fix(name: &str) -> bool {
 pub(super) fn move_weight(w: f64) -> f64 {
     static SCALE: OnceLock<f64> = OnceLock::new();
     w * SCALE.get_or_init(|| {
-        std::env::var("OBRRT_MOVE_WEIGHT").map_or(1.0, |v| v.parse::<f64>().expect("OBRRT_MOVE_WEIGHT: a number") / 0.5)
+        obrrt_core::sys::env::var("OBRRT_MOVE_WEIGHT").map_or(1.0, |v| v.parse::<f64>().expect("OBRRT_MOVE_WEIGHT: a number") / 0.5)
     })
 }
 

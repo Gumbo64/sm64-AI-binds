@@ -10,58 +10,58 @@ use crate::Config;
 /// Sets `cfg` and the search's global switches from `OBRRT_*`.
 pub fn from_env(cfg: &mut Config) -> Result<()> {
     // Experiment knobs, from the environment.
-    if let Ok(v) = std::env::var("OBRRT_GA_SCALE") {
+    if let Ok(v) = obrrt_core::sys::env::var("OBRRT_GA_SCALE") {
         cfg.ga_scale = v.parse()?;
     }
     // Defaults: steps fitness, 3x generations, new input operators (see
     // the y-* experiments). These switch back to the old GA for comparison.
-    match std::env::var("OBRRT_FITNESS").as_deref() {
+    match obrrt_core::sys::env::var("OBRRT_FITNESS").as_deref() {
         Ok("met") => cfg.fitness = crate::ga::Fitness::Met,
         Ok("steps") => cfg.fitness = crate::ga::Fitness::Steps,
         _ => {}
     }
-    if let Ok(v) = std::env::var("OBRRT_GA_NEW") {
+    if let Ok(v) = obrrt_core::sys::env::var("OBRRT_GA_NEW") {
         cfg.ga_new_ops = v == "1";
     }
     // OBRRT_GA_BUDGET=1: per-objective GA budgets (Explore-only attempts
     // get 1x generations and the early stop).
-    if std::env::var("OBRRT_GA_BUDGET").is_ok_and(|v| v == "1") {
+    if obrrt_core::sys::env::var("OBRRT_GA_BUDGET").is_ok_and(|v| v == "1") {
         cfg.ga_per_objective_budget = true;
     }
-    if std::env::var("OBRRT_SETTLE_RANK").is_ok_and(|v| v == "1") {
+    if obrrt_core::sys::env::var("OBRRT_SETTLE_RANK").is_ok_and(|v| v == "1") {
         crate::engine::SETTLE_RANK.store(true, std::sync::atomic::Ordering::Relaxed);
     }
-    if std::env::var("OBRRT_FINGERPRINT").is_ok_and(|v| v == "0") {
+    if obrrt_core::sys::env::var("OBRRT_FINGERPRINT").is_ok_and(|v| v == "0") {
         crate::engine::FINGERPRINT.store(false, std::sync::atomic::Ordering::Relaxed);
     }
     // OBRRT_STARSET_KEY=1: dedupe and b cells by the collected set
     // (St::progress_set), not only the star/key counts.
-    if std::env::var("OBRRT_STARSET_KEY").is_ok_and(|v| v == "1") {
+    if obrrt_core::sys::env::var("OBRRT_STARSET_KEY").is_ok_and(|v| v == "1") {
         crate::engine::STARSET.store(true, std::sync::atomic::Ordering::Relaxed);
     }
     // OBRRT_STAR_WINDOW=W: the frontier spans the top W star counts.
-    if let Some(w) = std::env::var("OBRRT_STAR_WINDOW").ok().and_then(|v| v.parse::<i16>().ok()) {
+    if let Some(w) = obrrt_core::sys::env::var("OBRRT_STAR_WINDOW").ok().and_then(|v| v.parse::<i16>().ok()) {
         crate::tree::STAR_WINDOW.store(w.max(1), std::sync::atomic::Ordering::Relaxed);
     }
     // OBRRT_RETIRE_SUBSET=1: retire a state only when a frontier set has
     // everything it collected (OBRRT_RETIRE_SUBSET_CAP sets per count, 6).
-    if std::env::var("OBRRT_RETIRE_SUBSET").is_ok_and(|v| v == "1") {
+    if obrrt_core::sys::env::var("OBRRT_RETIRE_SUBSET").is_ok_and(|v| v == "1") {
         crate::tree::RETIRE_SUBSET.store(true, std::sync::atomic::Ordering::Relaxed);
     }
-    if let Ok(v) = std::env::var("OBRRT_RETIRE_SUBSET_CAP") {
+    if let Ok(v) = obrrt_core::sys::env::var("OBRRT_RETIRE_SUBSET_CAP") {
         crate::tree::RETIRE_SUBSET_CAP.store(v.parse()?, std::sync::atomic::Ordering::Relaxed);
     }
     // OBRRT_KEEP_WIP=1: don't retire a state whose work under way in its
     // level (St::wip: boss damage, red coins, posts) every frontier state
     // there lacks; OBRRT_KEEP_WIP_N per level (64), OBRRT_KEEP_WIP_FRAMES
     // before the frontier's earliest arrival at most (3000).
-    if std::env::var("OBRRT_KEEP_WIP").is_ok_and(|v| v == "1") {
+    if obrrt_core::sys::env::var("OBRRT_KEEP_WIP").is_ok_and(|v| v == "1") {
         crate::tree::KEEP_WIP.store(true, std::sync::atomic::Ordering::Relaxed);
     }
-    if let Ok(v) = std::env::var("OBRRT_KEEP_WIP_N") {
+    if let Ok(v) = obrrt_core::sys::env::var("OBRRT_KEEP_WIP_N") {
         crate::tree::KEEP_WIP_N.store(v.parse()?, std::sync::atomic::Ordering::Relaxed);
     }
-    if let Ok(v) = std::env::var("OBRRT_KEEP_WIP_FRAMES") {
+    if let Ok(v) = obrrt_core::sys::env::var("OBRRT_KEEP_WIP_FRAMES") {
         crate::tree::KEEP_WIP_FRAMES.store(v.parse()?, std::sync::atomic::Ordering::Relaxed);
     }
     // Dense adds and sparse saves (search/src/dense.rs, tree.rs; all off by
@@ -81,7 +81,7 @@ pub fn from_env(cfg: &mut Config) -> Result<()> {
     // GA from a nearby start's attempt of the objective (OBRRT_NEAR_R 300
     // units, OBRRT_NEAR_P 0.5, OBRRT_NEAR_KEEP 32 records per objective).
     {
-        let get = |k: &str| std::env::var(k).ok();
+        let get = |k: &str| obrrt_core::sys::env::var(k).ok();
         let modes = match get("OBRRT_ADD") {
             Some(v) => crate::dense::Modes::parse(&v).map_err(anyhow::Error::msg)?,
             None => Default::default(),
@@ -158,9 +158,9 @@ pub fn from_env(cfg: &mut Config) -> Result<()> {
     // their branch, the GA seeded with the recorded inputs (backchain.rs);
     // OBRRT_BACKCHAIN_SHARE (0.1), _KMIN (2), _KMAX (6), _CAP (900 frames),
     // _PER_TARGET (3), _MINW (1).
-    if std::env::var("OBRRT_BACKCHAIN").is_ok_and(|v| v == "1") {
+    if obrrt_core::sys::env::var("OBRRT_BACKCHAIN").is_ok_and(|v| v == "1") {
         let mut s = crate::backchain::Settings::default();
-        let get = |k: &str| std::env::var(format!("OBRRT_BACKCHAIN_{k}")).ok();
+        let get = |k: &str| obrrt_core::sys::env::var(format!("OBRRT_BACKCHAIN_{k}")).ok();
         if let Some(v) = get("SHARE") {
             s.share = v.parse()?;
         }
@@ -181,49 +181,49 @@ pub fn from_env(cfg: &mut Config) -> Result<()> {
         }
         crate::backchain::configure(Some(s));
     }
-    if let Ok(v) = std::env::var("OBRRT_PICK_BY_B") {
+    if let Ok(v) = obrrt_core::sys::env::var("OBRRT_PICK_BY_B") {
         cfg.pick_by_b = v == "1";
     }
-    if let Ok(v) = std::env::var("OBRRT_MAX_FRAMES") {
+    if let Ok(v) = obrrt_core::sys::env::var("OBRRT_MAX_FRAMES") {
         cfg.max_frames = Some(v.parse()?);
     }
-    if let Ok(v) = std::env::var("OBRRT_ROUND") {
+    if let Ok(v) = obrrt_core::sys::env::var("OBRRT_ROUND") {
         cfg.round_plans = v.parse()?;
     }
-    if let Ok(v) = std::env::var("OBRRT_KIND_CAP") {
+    if let Ok(v) = obrrt_core::sys::env::var("OBRRT_KIND_CAP") {
         cfg.kind_cap = v.parse()?;
     }
-    if std::env::var("OBRRT_ZONE_BANDIT").is_ok_and(|v| v == "1") {
+    if obrrt_core::sys::env::var("OBRRT_ZONE_BANDIT").is_ok_and(|v| v == "1") {
         cfg.zone_bandit = true;
     }
-    if std::env::var("OBRRT_SOFT_DEDUP").is_ok_and(|v| v == "1") {
+    if obrrt_core::sys::env::var("OBRRT_SOFT_DEDUP").is_ok_and(|v| v == "1") {
         cfg.soft_dedup = true;
     }
-    if let Ok(v) = std::env::var("OBRRT_START_WEAR") {
+    if let Ok(v) = obrrt_core::sys::env::var("OBRRT_START_WEAR") {
         cfg.start_wear = v == "1";
     }
-    if let Ok(v) = std::env::var("OBRRT_DECAY_ROUTE") {
+    if let Ok(v) = obrrt_core::sys::env::var("OBRRT_DECAY_ROUTE") {
         cfg.decay_route = v == "1";
     }
-    if let Ok(v) = std::env::var("OBRRT_ENTRY_BANDIT") {
+    if let Ok(v) = obrrt_core::sys::env::var("OBRRT_ENTRY_BANDIT") {
         cfg.entry_bandit = v == "1";
     }
-    if let Ok(v) = std::env::var("OBRRT_KIND_BANDIT") {
+    if let Ok(v) = obrrt_core::sys::env::var("OBRRT_KIND_BANDIT") {
         cfg.kind_bandit = v == "1";
     }
-    if let Ok(v) = std::env::var("OBRRT_KIND_GAMMA") {
+    if let Ok(v) = obrrt_core::sys::env::var("OBRRT_KIND_GAMMA") {
         cfg.kind_gamma = v.parse()?;
     }
-    if let Ok(v) = std::env::var("OBRRT_TUNE_FRAMES") {
+    if let Ok(v) = obrrt_core::sys::env::var("OBRRT_TUNE_FRAMES") {
         cfg.tune_frames = v.parse()?;
     }
-    if let Ok(v) = std::env::var("OBRRT_MEM_MB") {
+    if let Ok(v) = obrrt_core::sys::env::var("OBRRT_MEM_MB") {
         cfg.mem_budget = v.parse::<usize>()? * 1_000_000;
     }
-    if let Ok(v) = std::env::var("OBRRT_ROUTE") {
+    if let Ok(v) = obrrt_core::sys::env::var("OBRRT_ROUTE") {
         cfg.route_share = v.parse()?;
     }
-    if let Ok(v) = std::env::var("OBRRT_VALUE_ZONES") {
+    if let Ok(v) = obrrt_core::sys::env::var("OBRRT_VALUE_ZONES") {
         cfg.value_zones = v == "1";
     }
     // OBRRT_REROUTE=1: graft slower duplicates' subtrees onto faster ones by
@@ -231,21 +231,21 @@ pub fn from_env(cfg: &mut Config) -> Result<()> {
     // schema> keys "the same state" by its objectives (default: the duplicate
     // cell); OBRRT_REROUTE_SHARE (0.25) of a round's slots at most;
     // OBRRT_REROUTE_MARGIN (10) frames saved at least.
-    if std::env::var("OBRRT_REROUTE").is_ok_and(|v| v == "1") {
+    if obrrt_core::sys::env::var("OBRRT_REROUTE").is_ok_and(|v| v == "1") {
         cfg.reroute = true;
     }
-    if let Ok(v) = std::env::var("OBRRT_REROUTE_SCHEMA") {
+    if let Ok(v) = obrrt_core::sys::env::var("OBRRT_REROUTE_SCHEMA") {
         cfg.reroute_schema = Some(v);
     }
     // OBRRT_POLISH=<share>: re-attempt the best route's earlier milestones
     // and graft the rest of the route onto sooner results (search/src/polish.rs).
-    if let Ok(v) = std::env::var("OBRRT_POLISH") {
+    if let Ok(v) = obrrt_core::sys::env::var("OBRRT_POLISH") {
         cfg.polish = v.parse()?;
     }
-    if let Ok(v) = std::env::var("OBRRT_REROUTE_SHARE") {
+    if let Ok(v) = obrrt_core::sys::env::var("OBRRT_REROUTE_SHARE") {
         cfg.reroute_share = v.parse()?;
     }
-    if let Ok(v) = std::env::var("OBRRT_REROUTE_MARGIN") {
+    if let Ok(v) = obrrt_core::sys::env::var("OBRRT_REROUTE_MARGIN") {
         cfg.reroute_margin = v.parse()?;
     }
     // OBRRT_ZONE_SHARE=1: replay the inputs states took since entering
@@ -253,52 +253,52 @@ pub fn from_env(cfg: &mut Config) -> Result<()> {
     // OBRRT_ZONE_SHARE_K (4) top donors per entry, OBRRT_ZONE_SHARE_CAP
     // (3000) frames per path, OBRRT_ZONE_SHARE_SHARE (0.2) of a round's
     // slots at most, OBRRT_ZONE_SHARE_BG (2) background jobs per round.
-    if std::env::var("OBRRT_ZONE_SHARE").is_ok_and(|v| v == "1") {
+    if obrrt_core::sys::env::var("OBRRT_ZONE_SHARE").is_ok_and(|v| v == "1") {
         cfg.zone_share = true;
     }
-    if let Ok(v) = std::env::var("OBRRT_ZONE_SHARE_K") {
+    if let Ok(v) = obrrt_core::sys::env::var("OBRRT_ZONE_SHARE_K") {
         cfg.zone_share_k = v.parse()?;
     }
-    if let Ok(v) = std::env::var("OBRRT_ZONE_SHARE_CAP") {
+    if let Ok(v) = obrrt_core::sys::env::var("OBRRT_ZONE_SHARE_CAP") {
         cfg.zone_share_cap = v.parse()?;
     }
-    if let Ok(v) = std::env::var("OBRRT_ZONE_SHARE_SHARE") {
+    if let Ok(v) = obrrt_core::sys::env::var("OBRRT_ZONE_SHARE_SHARE") {
         cfg.zone_share_share = v.parse()?;
     }
-    if let Ok(v) = std::env::var("OBRRT_ZONE_SHARE_BG") {
+    if let Ok(v) = obrrt_core::sys::env::var("OBRRT_ZONE_SHARE_BG") {
         cfg.zone_share_bg = v.parse()?;
     }
     // OBRRT_REPLAY_BUDGET=<fraction> (e.g. 0.1): replay jobs (reroute,
     // zone share) take no plan slots; after each round's plans they run
     // until their frames reach this fraction of the plans' (search/src/replay.rs).
     // Unset or 0: off.
-    if let Ok(v) = std::env::var("OBRRT_REPLAY_BUDGET") {
+    if let Ok(v) = obrrt_core::sys::env::var("OBRRT_REPLAY_BUDGET") {
         let f: f64 = v.parse()?;
         if f > 0.0 {
             cfg.replay_budget = Some(f);
         }
     }
-    if std::env::var("OBRRT_STAR").is_ok_and(|v| v == "1") {
+    if obrrt_core::sys::env::var("OBRRT_STAR").is_ok_and(|v| v == "1") {
         cfg.rrt_star = true;
     }
     // OBRRT_MOVES=1 (the movement library) and OBRRT_MOVE_GA=1 (the GA's
     // first generation also simulates the library's moves as forced policies,
     // search/src/movegenome.rs): objectives::setup::from_env (above).
-    let on = |k: &str| std::env::var(k).is_ok_and(|v| v == "1");
+    let on = |k: &str| obrrt_core::sys::env::var(k).is_ok_and(|v| v == "1");
     // OBRRT_CHAIN=route: one objective per attempt, a follow-on only along
     // the best route (OBRRT_CHAIN_FOLLOW, 0.5). OBRRT_SAMPLER=rate: entry and
     // start weights from improvement per frame (OBRRT_RATE_FLOOR 0.15, _CAP
     // 4, _TAU 5e7 frames, _PRIOR 2e5 frames, _NOSTART 5000 frames, _NODE_PRIOR
     // 3e5 frames, _NODE_CAP 2) instead of the failure decay.
-    match std::env::var("OBRRT_CHAIN").as_deref() {
+    match obrrt_core::sys::env::var("OBRRT_CHAIN").as_deref() {
         Ok("route") => cfg.chain_route = true,
         Ok("stack") | Err(_) => {}
         Ok(v) => bail!("OBRRT_CHAIN: route or stack, not {v}"),
     }
-    if let Ok(v) = std::env::var("OBRRT_CHAIN_FOLLOW") {
+    if let Ok(v) = obrrt_core::sys::env::var("OBRRT_CHAIN_FOLLOW") {
         cfg.chain_follow = v.parse()?;
     }
-    match std::env::var("OBRRT_SAMPLER").as_deref() {
+    match obrrt_core::sys::env::var("OBRRT_SAMPLER").as_deref() {
         Ok("rate") => cfg.sampler_rate = true,
         Ok("decay") | Err(_) => {}
         Ok(v) => bail!("OBRRT_SAMPLER: rate or decay, not {v}"),
@@ -315,7 +315,7 @@ pub fn from_env(cfg: &mut Config) -> Result<()> {
         ("ROUTE", &mut cfg.rate.route),
         ("NOVEL", &mut cfg.rate.novel),
     ] {
-        if let Ok(v) = std::env::var(format!("OBRRT_RATE_{k}")) {
+        if let Ok(v) = obrrt_core::sys::env::var(format!("OBRRT_RATE_{k}")) {
             *f = v.parse()?;
         }
     }
@@ -324,33 +324,33 @@ pub fn from_env(cfg: &mut Config) -> Result<()> {
     // prior OBRRT_RATE_KIND_SCALE (10) × that). OBRRT_RATE_NOSTART_SKIP=1:
     // entries no live state could start are skipped, not charged
     // (re-checked against new states, OBRRT_RATE_SKIP_BUDGET 2e6 a round).
-    match std::env::var("OBRRT_RATE_MODE").as_deref() {
+    match obrrt_core::sys::env::var("OBRRT_RATE_MODE").as_deref() {
         Ok("hier") => cfg.rate.hier = true,
         Ok("flat") | Err(_) => {}
         Ok(v) => bail!("OBRRT_RATE_MODE: hier or flat, not {v}"),
     }
     cfg.rate.nostart_skip = on("OBRRT_RATE_NOSTART_SKIP");
-    if let Ok(v) = std::env::var("OBRRT_RATE_SKIP_BUDGET") {
+    if let Ok(v) = obrrt_core::sys::env::var("OBRRT_RATE_SKIP_BUDGET") {
         cfg.rate.skip_budget = v.parse()?;
     }
     // OBRRT_ARRIVAL=1: rank starts (and judge improvement) by estimated
     // arrival, for distance objectives; pace (u/frame, default 20), temperature (s), band (h units).
-    if std::env::var("OBRRT_ARRIVAL").is_ok_and(|v| v == "1") {
+    if obrrt_core::sys::env::var("OBRRT_ARRIVAL").is_ok_and(|v| v == "1") {
         cfg.arrival = true;
     }
-    if let Ok(v) = std::env::var("OBRRT_ARRIVAL_PACE") {
+    if let Ok(v) = obrrt_core::sys::env::var("OBRRT_ARRIVAL_PACE") {
         cfg.arrival_pace = v.parse()?;
     }
-    if let Ok(v) = std::env::var("OBRRT_ARRIVAL_T") {
+    if let Ok(v) = obrrt_core::sys::env::var("OBRRT_ARRIVAL_T") {
         cfg.arrival_t = v.parse()?;
     }
-    if let Ok(v) = std::env::var("OBRRT_ARRIVAL_BAND") {
+    if let Ok(v) = obrrt_core::sys::env::var("OBRRT_ARRIVAL_BAND") {
         cfg.arrival_band = Some(v.parse()?);
     }
     // OBRRT_ARRIVAL_DECAY=either (default) | arrival: what counts as an
     // improvement under arrival ranking; OBRRT_ARRIVAL_MIX: share of start
     // picks ranked by arrival.
-    match std::env::var("OBRRT_ARRIVAL_DECAY").as_deref() {
+    match obrrt_core::sys::env::var("OBRRT_ARRIVAL_DECAY").as_deref() {
         Ok("arrival") => cfg.arrival_decay_either = false,
         Ok("either") | Err(_) => cfg.arrival_decay_either = true,
         Ok(v) => bail!("OBRRT_ARRIVAL_DECAY: either or arrival, not {v}"),
@@ -359,25 +359,25 @@ pub fn from_env(cfg: &mut Config) -> Result<()> {
     // (or b cell, by 30 frames) for up to OBRRT_EARLIEST_CAP (12) attempts
     // from itself, at most OBRRT_EARLIEST_SHARE (0.15) of a round's plans;
     // OBRRT_EARLIEST_CELL=0 queues zone-tier records only.
-    if std::env::var("OBRRT_EARLIEST").is_ok_and(|v| v == "1") {
+    if obrrt_core::sys::env::var("OBRRT_EARLIEST").is_ok_and(|v| v == "1") {
         cfg.earliest = true;
     }
-    if let Ok(v) = std::env::var("OBRRT_EARLIEST_CAP") {
+    if let Ok(v) = obrrt_core::sys::env::var("OBRRT_EARLIEST_CAP") {
         cfg.earliest_cap = v.parse()?;
     }
-    if let Ok(v) = std::env::var("OBRRT_EARLIEST_SHARE") {
+    if let Ok(v) = obrrt_core::sys::env::var("OBRRT_EARLIEST_SHARE") {
         cfg.earliest_share = v.parse()?;
     }
-    if let Ok(v) = std::env::var("OBRRT_EARLIEST_CELL") {
+    if let Ok(v) = obrrt_core::sys::env::var("OBRRT_EARLIEST_CELL") {
         cfg.earliest_cell = v != "0";
     }
-    if let Ok(v) = std::env::var("OBRRT_ARRIVAL_MIX") {
+    if let Ok(v) = obrrt_core::sys::env::var("OBRRT_ARRIVAL_MIX") {
         cfg.arrival_mix = v.parse()?;
     }
-    if let Ok(v) = std::env::var("OBRRT_PINK") {
+    if let Ok(v) = obrrt_core::sys::env::var("OBRRT_PINK") {
         cfg.ga_pink = v.parse()?;
     }
-    if let Ok(v) = std::env::var("OBRRT_CHAIN_PROB") {
+    if let Ok(v) = obrrt_core::sys::env::var("OBRRT_CHAIN_PROB") {
         cfg.chain_fixed = Some(v.parse()?);
     }
     Ok(())
@@ -388,15 +388,15 @@ pub fn from_env(cfg: &mut Config) -> Result<()> {
 pub fn after_root(root: &St) {
     // OBRRT_GEO=1: walkable distances over the level's floors (core/src/geo.rs),
     // for the goal focus's ranking and its approach moves (search/src/engine.rs).
-    if std::env::var("OBRRT_GEO").is_ok_and(|v| v == "1") {
+    if obrrt_core::sys::env::var("OBRRT_GEO").is_ok_and(|v| v == "1") {
         obrrt_core::geo::set_enabled(true);
     }
     // OBRRT_ZONE_LOCK=1: the tree stays in the root's level (search/src/tree.rs).
     // Every star count stays open unless OBRRT_STAR_WINDOW says otherwise: a
     // star that doesn't end the visit (100 coins) mustn't close the others.
-    if std::env::var("OBRRT_ZONE_LOCK").is_ok_and(|v| v == "1") {
+    if obrrt_core::sys::env::var("OBRRT_ZONE_LOCK").is_ok_and(|v| v == "1") {
         crate::tree::ZONE_LOCK.store(root.level as i32, std::sync::atomic::Ordering::Relaxed);
-        if std::env::var_os("OBRRT_STAR_WINDOW").is_none() {
+        if obrrt_core::sys::env::var_os("OBRRT_STAR_WINDOW").is_none() {
             crate::tree::STAR_WINDOW.store(99, std::sync::atomic::Ordering::Relaxed);
         }
         println!("zone lock: level {}", root.level);

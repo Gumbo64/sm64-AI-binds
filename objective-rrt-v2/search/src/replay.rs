@@ -121,7 +121,7 @@ pub struct Bias {
 pub fn graft_bias() -> Option<&'static Bias> {
     static B: std::sync::OnceLock<Option<Bias>> = std::sync::OnceLock::new();
     B.get_or_init(|| {
-        let v = std::env::var("OBRRT_GRAFT_BIAS").ok().filter(|v| !v.is_empty())?;
+        let v = obrrt_core::sys::env::var("OBRRT_GRAFT_BIAS").ok().filter(|v| !v.is_empty())?;
         let mut b = Bias::default();
         for w in v.split(',') {
             match w.trim() {

@@ -52,7 +52,7 @@ fn stars_needed(name: &str) -> i16 {
 /// the next corridor (x ~ -766 by the WF room) first.
 pub fn paint_front() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var("OBRRT_PAINT_FRONT").is_ok_and(|v| v == "1"))
+    *ON.get_or_init(|| obrrt_core::sys::env::var("OBRRT_PAINT_FRONT").is_ok_and(|v| v == "1"))
 }
 
 /// The room in front of a painting behind a star door, from its centre
@@ -97,7 +97,7 @@ fn facing(painting: &Painting, centre: [f32; 3], p: [f32; 3]) -> (f32, f32) {
 /// - Mario::GoToCastle loses its post-star boost (mario/exit.rs).
 pub fn painting_fast() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var("OBRRT_PAINTING_FAST").is_ok_and(|v| v == "1"))
+    *ON.get_or_init(|| obrrt_core::sys::env::var("OBRRT_PAINTING_FAST").is_ok_and(|v| v == "1"))
 }
 
 /// A door between the lobby and a painting's room (levels/castle_inside/

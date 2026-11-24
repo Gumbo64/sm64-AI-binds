@@ -5,7 +5,7 @@
 //! run).
 
 use std::collections::HashSet;
-use std::time::Instant;
+use obrrt_core::sys::Instant;
 
 use anyhow::Result;
 use obrrt_core::{St, check_layout, read_state};
@@ -216,7 +216,7 @@ impl Search {
     /// (RSS: the whole process), groups and operators; then the archive.
     pub fn write(&self, dir: &str) -> Result<()> {
         let a = &self.archive;
-        let rss = std::fs::read_to_string("/proc/self/statm").ok().and_then(|t| t.split_whitespace().nth(1)?.parse::<u64>().ok()).map_or(0, |p| p * 4096);
+        let rss = obrrt_core::sys::fs::read_to_string("/proc/self/statm").ok().and_then(|t| t.split_whitespace().nth(1)?.parse::<u64>().ok()).map_or(0, |p| p * 4096);
         let ops: serde_json::Map<String, Value> = (Operator::ALL.iter())
             .map(|&op| {
                 let s = self.operators[op.index()];
@@ -226,8 +226,8 @@ impl Search {
         let stats = json!({"elapsed_s": self.elapsed_s(), "frames": self.frames, "rollouts": self.rollouts,
             "cells": a.cells.len(), "nodes": a.nodes.len(), "stale_rollouts": a.stale, "checkpoints": a.checkpoints(), "save_bytes": a.save_bytes(), "references": a.references().0, "rss_bytes": rss,
             "groups": self.group_stats(), "operators": ops});
-        std::fs::write(format!("{dir}/stats.json.tmp"), stats.to_string())?;
-        std::fs::rename(format!("{dir}/stats.json.tmp"), format!("{dir}/stats.json"))?;
+        obrrt_core::sys::fs::write(format!("{dir}/stats.json.tmp"), stats.to_string())?;
+        obrrt_core::sys::fs::rename(format!("{dir}/stats.json.tmp"), format!("{dir}/stats.json"))?;
         a.write(dir)
     }
 }

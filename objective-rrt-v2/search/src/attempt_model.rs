@@ -86,7 +86,7 @@ fn vector(v: &serde_json::Value) -> Vec<f32> {
 
 impl Model {
     pub fn load(path: &str) -> Model {
-        let text = std::fs::read_to_string(path).unwrap_or_else(|e| panic!("OBRRT_ATTEMPT_MODEL {path}: {e}"));
+        let text = obrrt_core::sys::fs::read_to_string(path).unwrap_or_else(|e| panic!("OBRRT_ATTEMPT_MODEL {path}: {e}"));
         let j: serde_json::Value = serde_json::from_str(&text).unwrap_or_else(|e| panic!("OBRRT_ATTEMPT_MODEL {path}: {e}"));
         let cats: Vec<String> = j["cats"].as_array().unwrap().iter().map(|c| c.as_str().unwrap().to_string()).collect();
         let vocab = cats.iter().map(|c| j["vocab"][c].as_object().unwrap().iter().map(|(k, v)| (k.clone(), v.as_u64().unwrap() as usize)).collect()).collect();
@@ -149,14 +149,14 @@ impl Model {
 /// The model of OBRRT_ATTEMPT_MODEL, if set.
 pub fn model() -> Option<&'static Model> {
     static M: OnceLock<Option<Model>> = OnceLock::new();
-    M.get_or_init(|| std::env::var("OBRRT_ATTEMPT_MODEL").ok().map(|p| Model::load(&p))).as_ref()
+    M.get_or_init(|| obrrt_core::sys::env::var("OBRRT_ATTEMPT_MODEL").ok().map(|p| Model::load(&p))).as_ref()
 }
 
 /// OBRRT_ATTEMPT_SCORE: what a proposal is drawn by, per frame of the run's
 /// mean cost of its kind: `pays` (default), `star`, or `value`.
 pub fn score(o: &Out) -> f64 {
     static S: OnceLock<u8> = OnceLock::new();
-    match *S.get_or_init(|| match std::env::var("OBRRT_ATTEMPT_SCORE").as_deref() {
+    match *S.get_or_init(|| match obrrt_core::sys::env::var("OBRRT_ATTEMPT_SCORE").as_deref() {
         Ok("star") => 1,
         Ok("value") => 2,
         _ => 0,
@@ -171,7 +171,7 @@ pub fn score(o: &Out) -> f64 {
 pub fn settings() -> (usize, f64) {
     static S: OnceLock<(usize, f64)> = OnceLock::new();
     *S.get_or_init(|| {
-        let f = |k: &str, d: f64| std::env::var(k).ok().and_then(|v| v.parse().ok()).unwrap_or(d);
+        let f = |k: &str, d: f64| obrrt_core::sys::env::var(k).ok().and_then(|v| v.parse().ok()).unwrap_or(d);
         ((f("OBRRT_ATTEMPT_PROPOSE", 4.0) as usize).max(1), f("OBRRT_ATTEMPT_BETA", 1.0))
     })
 }

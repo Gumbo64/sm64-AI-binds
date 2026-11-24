@@ -70,12 +70,12 @@ pub struct Settings {
 pub fn settings() -> Option<&'static Settings> {
     static S: OnceLock<Option<Settings>> = OnceLock::new();
     S.get_or_init(|| {
-        let socket = std::env::var("OBRRT_MODEL").ok().filter(|s| !s.is_empty())?;
-        let num = |k: &str, d: f64| std::env::var(k).ok().and_then(|v| v.parse::<f64>().ok()).unwrap_or(d);
+        let socket = obrrt_core::sys::env::var("OBRRT_MODEL").ok().filter(|s| !s.is_empty())?;
+        let num = |k: &str, d: f64| obrrt_core::sys::env::var(k).ok().and_then(|v| v.parse::<f64>().ok()).unwrap_or(d);
         let mut s = Settings {
             socket,
             start_t: num("OBRRT_MODEL_START_T", 300.0),
-            dense: std::env::var("OBRRT_MODEL_DENSE").is_ok_and(|v| v == "1"),
+            dense: obrrt_core::sys::env::var("OBRRT_MODEL_DENSE").is_ok_and(|v| v == "1"),
             policy: num("OBRRT_MODEL_POLICY", 0.0) as usize,
             repair: num("OBRRT_MODEL_REPAIR", 0.0) as usize,
             learned: num("OBRRT_MODEL_LEARNED", 0.0) as u32,
@@ -84,7 +84,7 @@ pub fn settings() -> Option<&'static Settings> {
             servers: (num("OBRRT_MODEL_SERVERS", 1.0) as usize).max(1),
         };
         // Zone tables the model was trained with (backbone/data/*/zones).
-        if let Ok(dirs) = std::env::var("OBRRT_MODEL_ZONES") {
+        if let Ok(dirs) = obrrt_core::sys::env::var("OBRRT_MODEL_ZONES") {
             let dirs: Vec<&str> = dirs.split(':').collect();
             let n = features::preload_zones(&dirs);
             eprintln!("model: {n} zone tables preloaded");
@@ -105,7 +105,7 @@ pub fn settings() -> Option<&'static Settings> {
 /// Server count, read straight from the environment (`call` runs while
 /// `settings` is still being built, for the INFO request).
 fn settings_servers() -> usize {
-    std::env::var("OBRRT_MODEL_SERVERS").ok().and_then(|v| v.parse().ok()).unwrap_or(1usize).max(1)
+    obrrt_core::sys::env::var("OBRRT_MODEL_SERVERS").ok().and_then(|v| v.parse().ok()).unwrap_or(1usize).max(1)
 }
 
 #[cfg(unix)]

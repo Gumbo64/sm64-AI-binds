@@ -133,7 +133,7 @@ pub fn clip_setup(s: &St) -> bool {
 /// OBRRT_DEATHFADE=1: GateClip succeeds on star 6 only (see `done`).
 fn death_fade() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var("OBRRT_DEATHFADE").is_ok_and(|v| v == "1"))
+    *ON.get_or_init(|| obrrt_core::sys::env::var("OBRRT_DEATHFADE").is_ok_and(|v| v == "1"))
 }
 
 pub struct GateClip {

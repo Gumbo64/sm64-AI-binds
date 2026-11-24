@@ -51,7 +51,7 @@ use super::blj::{self, ACT_CROUCH_SLIDE, long_jumping};
 /// OBRRT_BLJ_FAST=1.
 pub fn on() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var("OBRRT_BLJ_FAST").is_ok_and(|v| v == "1"))
+    *ON.get_or_init(|| obrrt_core::sys::env::var("OBRRT_BLJ_FAST").is_ok_and(|v| v == "1"))
 }
 
 const ACT_FLAG_AIR: u32 = 0x800;

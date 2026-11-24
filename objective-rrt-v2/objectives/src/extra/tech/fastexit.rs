@@ -82,7 +82,7 @@ const DOOMED: u32 = 1;
 /// On with `OBRRT_FASTEXIT=1` (and `fastexit` in `OBRRT_TECH`).
 pub fn on() -> bool {
     static ON: OnceLock<bool> = OnceLock::new();
-    *ON.get_or_init(|| std::env::var("OBRRT_FASTEXIT").is_ok_and(|v| v == "1"))
+    *ON.get_or_init(|| obrrt_core::sys::env::var("OBRRT_FASTEXIT").is_ok_and(|v| v == "1"))
 }
 
 /// A rough drop region for one star: from about `drop`, fall past the death

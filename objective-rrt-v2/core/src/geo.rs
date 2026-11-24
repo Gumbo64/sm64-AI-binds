@@ -371,7 +371,7 @@ impl Mesh {
                 }
             }
         }
-        if std::env::var("GEO_GAP").is_ok() {
+        if crate::sys::env::var("GEO_GAP").is_ok() {
             // The closest pairs (forward-reachable, reaching t).
             let mut pairs = Vec::new();
             for (a, _) in seen.iter().enumerate().filter(|x| *x.1) {
@@ -793,9 +793,9 @@ pub fn observe(m: &[u8], st: &St) {
     }
     let (tris, seen) = read_floors(m);
     if seen.contains(&floor) {
-        let t0 = std::time::Instant::now();
+        let t0 = crate::sys::Instant::now();
         let mesh = Mesh::build_rooms(&tris, zone.0 as u32 == crate::layout::LEVEL_BBH);
-        if std::env::var("OBRRT_GEO_LOG").is_ok() {
+        if crate::sys::env::var("OBRRT_GEO_LOG").is_ok() {
             eprintln!(
                 "geo: zone {:?}: {} floors, {} nodes, {} edges, built in {:.1} ms",
                 zone,

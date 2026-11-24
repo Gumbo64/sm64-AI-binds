@@ -278,7 +278,7 @@ pub fn alignment(s: &St, goal: [f32; 3]) -> f32 {
 /// ETA counts the chain's misalignment, [`misalign_frames`].
 fn align_eta() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var("OBRRT_BLJ_ALIGN").is_ok_and(|v| v == "1"))
+    *ON.get_or_init(|| obrrt_core::sys::env::var("OBRRT_BLJ_ALIGN").is_ok_and(|v| v == "1"))
 }
 
 /// Share of the chain lost at right angles to the goal (cos 0): v1's
@@ -305,7 +305,7 @@ pub fn misalign_frames(s: &St, mem: &Mem, goal: [f32; 3]) -> f64 {
 /// travel within 30 degrees of the goal's bearing.
 fn align_success() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var("OBRRT_BLJ_ALIGN_SUCCESS").is_ok_and(|v| v == "1"))
+    *ON.get_or_init(|| obrrt_core::sys::env::var("OBRRT_BLJ_ALIGN_SUCCESS").is_ok_and(|v| v == "1"))
 }
 pub(super) fn aligned_ok(s: &St, goal: [f32; 3]) -> bool {
     !align_success() || alignment(s, goal) >= 0.866
@@ -790,7 +790,7 @@ pub struct Blj {
 /// doesn't build speed yet: lab 0 / 48, RUNS.md bljtree).
 fn pose_mode() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| !std::env::var("OBRRT_BLJ_GENERIC").is_ok_and(|v| v == "1"))
+    *ON.get_or_init(|| !obrrt_core::sys::env::var("OBRRT_BLJ_GENERIC").is_ok_and(|v| v == "1"))
 }
 
 impl Blj {

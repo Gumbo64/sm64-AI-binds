@@ -165,7 +165,7 @@ fn shore_ahead(st: &St, target: [f32; 3], fv: f32) -> bool {
 
 fn swim_hold_env() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var("OBRRT_SWIM_HOLD").is_ok_and(|v| v == "1"))
+    *ON.get_or_init(|| obrrt_core::sys::env::var("OBRRT_SWIM_HOLD").is_ok_and(|v| v == "1"))
 }
 
 pub fn swim_plausible(k: Swim, st: &St, target: [f32; 3]) -> bool {

@@ -100,7 +100,7 @@ pub fn generate_level(b: &St, out: &mut Vec<Arc<dyn Objective>>) {
     if enabled("lakituskip") { lakituskip::generate_level(b, out); }
     if enabled("wfopener") { openers::generate_level(b, openers::Which::Wf, out); }
     if enabled("bobopener") { openers::generate_level(b, openers::Which::Bob, out); }
-    if enabled("wfclimb") && std::env::var("OBRRT_WFCLIMB").is_ok_and(|v| v == "1") { wfclimb::generate_level(b, out); }
+    if enabled("wfclimb") && obrrt_core::sys::env::var("OBRRT_WFCLIMB").is_ok_and(|v| v == "1") { wfclimb::generate_level(b, out); }
     if enabled("slidekick") && kicks::KickRun::applies(b) { out.push(Arc::new(kicks::KickRun::new(b, kicks::Kick::Slide))); }
     if enabled("jumpkick") && kicks::KickRun::applies(b) { out.push(Arc::new(kicks::KickRun::new(b, kicks::Kick::Jump))); }
     if travel::aim_on() { travel::generate_aim(b, out); }

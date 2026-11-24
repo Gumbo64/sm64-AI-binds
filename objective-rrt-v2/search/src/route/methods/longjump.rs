@@ -383,7 +383,7 @@ impl Method for LongJump {
         if self.built_for != ctx.best.goal_frame {
             self.spans = build_spans(ctx);
             self.built_for = ctx.best.goal_frame;
-            if std::env::var("LONGJUMP_DEBUG").is_ok() {
+            if obrrt_core::sys::env::var("LONGJUMP_DEBUG").is_ok() {
                 let mut s = self.spans.clone();
                 s.sort_by(|a, b| b.weight.total_cmp(&a.weight));
                 for &j in &ctx.reached() {

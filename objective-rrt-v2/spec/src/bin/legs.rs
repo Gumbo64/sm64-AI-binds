@@ -65,7 +65,7 @@ const TAS_BOOT_FRAMES: usize = 1646;
 const TAS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../ref/tas/full-120star-2026-U.m64");
 
 fn read_m64(path: &str) -> Result<Vec<GamePad>> {
-    let b = std::fs::read(path).with_context(|| path.to_string())?;
+    let b = obrrt_core::sys::fs::read(path).with_context(|| path.to_string())?;
     let body = if b.len() >= 0x400 && &b[..4] == b"M64\x1a" { &b[0x400..] } else { &b[..] };
     Ok(body.chunks_exact(4).map(|c| GamePad::new(u16::from_be_bytes([c[0], c[1]]), c[2] as i8, c[3] as i8)).collect())
 }
@@ -77,7 +77,7 @@ fn write_m64(path: &str, pads: &[GamePad]) -> Result<()> {
         out.push(p.stick_x as u8);
         out.push(p.stick_y as u8);
     }
-    Ok(std::fs::write(path, out)?)
+    Ok(obrrt_core::sys::fs::write(path, out)?)
 }
 
 /// Inputs from power-on to an obrrt2 node (nodepath's walk).
@@ -199,7 +199,7 @@ fn native_obj(kind: &str, key_contains: &str, st: &St) -> Option<Arc<dyn Objecti
     use obrrt_core::Generator;
     let mut rng = SmallRng::seed_from_u64(0x5eed);
     let mut best: Option<(f64, Arc<dyn Objective>)> = None;
-    let debug = std::env::var("LEGS_DEBUG_NATIVE").is_ok();
+    let debug = obrrt_core::sys::env::var("LEGS_DEBUG_NATIVE").is_ok();
     for o in obrrt_objectives::Registry.generate(st, &mut rng) {
         if debug && o.kind() == kind {
             eprintln!("    native {kind} at frame {}: {} base {} exists {} eta {:.0}", st.frame, o.key(), o.base_criteria(st), o.exists_in(st), obrrt_core::start_eta(o.as_ref(), st));
@@ -462,7 +462,7 @@ fn replay(
         }
     }
     let Some(done) = done else {
-        if std::env::var("LEGS_DEBUG_REPLAY").is_ok() {
+        if obrrt_core::sys::env::var("LEGS_DEBUG_REPLAY").is_ok() {
             let s = read_state(game, frame, true);
             eprintln!("    replay: not Done after {} inputs: frame {} pos {:.0},{:.0},{:.0} action {:#x} eta {:?}", genome.len(), s.frame, s.pos[0], s.pos[1], s.pos[2], s.action, spec.eta(&s, start, &mut mem.clone()));
         }
@@ -558,8 +558,8 @@ fn unix_now() -> u64 {
 
 fn write_atomic(path: &str, bytes: &[u8]) -> Result<()> {
     let tmp = format!("{path}.tmp");
-    std::fs::write(&tmp, bytes)?;
-    std::fs::rename(&tmp, path)?;
+    obrrt_core::sys::fs::write(&tmp, bytes)?;
+    obrrt_core::sys::fs::rename(&tmp, path)?;
     Ok(())
 }
 
@@ -579,13 +579,13 @@ fn live_note(frames: u64, left: f64, cand: Option<(u32, &[GamePad], &[[f64; 6]],
 /// the running leg), paths.json (plus its best path so far) and route.m64
 /// (that path, else the last full one's), written atomically.
 fn live_writer(dir: &str) {
-    let mut last = std::time::Instant::now();
+    let mut last = obrrt_core::sys::Instant::now();
     while !LIVE_STOP.load(std::sync::atomic::Ordering::Relaxed) {
         std::thread::sleep(std::time::Duration::from_millis(500));
         if last.elapsed().as_secs() < LIVE_EVERY {
             continue;
         }
-        last = std::time::Instant::now();
+        last = obrrt_core::sys::Instant::now();
         let (Some(mut route), Some(r)) = (LIVE_BASE.lock().unwrap().clone(), LIVE_RUN.lock().unwrap().as_ref().map(|r| (r.leg, r.name.clone(), r.ga_frames, r.best_left, r.best.clone()))) else { continue };
         let (leg, name, ga, left, best) = r;
         route["live"] = json!(true);
@@ -827,7 +827,7 @@ fn check_route(doc: &Value, legs: &[Leg], refs: &[Ref], own: &[Option<usize>], s
             *d = json!(format!("{} [Landmarks snapped by legs --check to stable flat ground on the references (LANDMARK_TIPS.md 1-2).]", d.as_str().unwrap_or("")));
         }
     }
-    std::fs::write(out, serde_json::to_string_pretty(&new)?)?;
+    obrrt_core::sys::fs::write(out, serde_json::to_string_pretty(&new)?)?;
     let errors = issues.iter().flatten().filter(|i| i["level"] == "error").count();
     let report = json!({
         "route": doc.get("name"), "snapped_route": out, "errors": errors,
@@ -835,7 +835,7 @@ fn check_route(doc: &Value, legs: &[Leg], refs: &[Ref], own: &[Option<usize>], s
         "moves": moves,
     });
     let rp = format!("{}.check.json", out.trim_end_matches(".json"));
-    std::fs::write(&rp, serde_json::to_string_pretty(&report)?)?;
+    obrrt_core::sys::fs::write(&rp, serde_json::to_string_pretty(&report)?)?;
     println!("check: {} issues ({errors} errors); snapped route {out}; report {rp}", issues.iter().flatten().count());
     if errors > 0 {
         bail!("{errors} landmark(s) not stable in their reference (tip 15)");
@@ -866,14 +866,14 @@ fn main() -> Result<()> {
     // The P config's movement switches unless set (a plain `legs` run has
     // the full move set), then obrrt2's own set-up (objectives::setup).
     for (k, v) in LEGS_DEFAULT_ENV {
-        if std::env::var_os(k).is_none() {
+        if obrrt_core::sys::env::var_os(k).is_none() {
             // SAFETY: single-threaded here, before any thread is started.
-            unsafe { std::env::set_var(k, v) };
+            unsafe { obrrt_core::sys::env::set_var(k, v) };
         }
     }
     let (tech, _) = obrrt_objectives::setup::from_env().map_err(anyhow::Error::msg)?;
-    println!("env: {}; OBRRT_TECH={tech}", LEGS_DEFAULT_ENV.iter().map(|(k, _)| format!("{k}={}", std::env::var(k).unwrap_or_default())).collect::<Vec<_>>().join(" "));
-    let a: Vec<String> = std::env::args().collect();
+    println!("env: {}; OBRRT_TECH={tech}", LEGS_DEFAULT_ENV.iter().map(|(k, _)| format!("{k}={}", obrrt_core::sys::env::var(k).unwrap_or_default())).collect::<Vec<_>>().join(" "));
+    let a: Vec<String> = obrrt_core::sys::env::args().collect();
     if a.len() < 2 {
         bail!("usage: legs <route.json> [--out DIR] [--seed S] [--beam K] [--pop N] [--gens N] [--horizon-mult X] [--retry-mult X] [--rom FILE]");
     }
@@ -913,7 +913,7 @@ fn main() -> Result<()> {
         }
         i += 2;
     }
-    let text = std::fs::read_to_string(&a[1]).with_context(|| a[1].clone())?;
+    let text = obrrt_core::sys::fs::read_to_string(&a[1]).with_context(|| a[1].clone())?;
     let doc: Value = serde_json::from_str(&text).map_err(|e| anyhow!("{}: not JSON: {e}", a[1]))?;
     obrrt_spec::json::check_keys(doc.as_object().ok_or_else(|| anyhow!("$: expected an object"))?, "$", &["name", "start", "reference", "budget", "legs", "seed_ref", "window", "doc"])?;
     let name = doc.get("name").and_then(|x| x.as_str()).unwrap_or("route").to_string();
@@ -1029,7 +1029,7 @@ fn main() -> Result<()> {
     }
     let (start_inputs, start_desc) = source_inputs(doc.get("start").ok_or_else(|| anyhow!("$.start: missing"))?, &root, "$.start")?;
     let out_dir = out_dir.unwrap_or_else(|| format!("{root}/oss2/runs/legs-{name}-s{seed}"));
-    std::fs::create_dir_all(&out_dir)?;
+    obrrt_core::sys::fs::create_dir_all(&out_dir)?;
 
     let game_gen = SM64GameGenerator::from_file(&rom)?;
     let threads = rayon::current_num_threads();
@@ -1302,8 +1302,8 @@ fn main() -> Result<()> {
     // Before the first leg too: without this a run shows nothing until its
     // first leg ends (the live writer has no base to add the running leg to).
     let _ = write_outputs!(true);
-    let moves_env = std::env::var("OBRRT_MOVES").is_ok_and(|v| v == "1");
-    obrrt_search::movegenome::set_with_seed(std::env::var("OBRRT_MOVES_SEEDED").is_ok_and(|v| v == "1"));
+    let moves_env = obrrt_core::sys::env::var("OBRRT_MOVES").is_ok_and(|v| v == "1");
+    obrrt_search::movegenome::set_with_seed(obrrt_core::sys::env::var("OBRRT_MOVES_SEEDED").is_ok_and(|v| v == "1"));
     for (li, leg) in legs.iter().enumerate() {
         // `"moves": "off"` legs: the library's steering and policy genomes off.
         obrrt_objectives::moves::set_steering(moves_env && !leg.moves_off && !leg.moves_kicks && !leg.moves_policies);
@@ -1311,13 +1311,13 @@ fn main() -> Result<()> {
         obrrt_search::movegenome::set_only(leg.moves_kicks.then(|| vec!["uphill-kick", "speed-kick", "jump-kick", "steep-climb"]));
         // The first generation plays every plausible policy alone, then
         // combinations (movegenome::gen0_plans), unless OBRRT_MOVE_GA_N says.
-        if std::env::var_os("OBRRT_MOVE_GA_N").is_none() && std::env::var("OBRRT_MOVES_SEEDED").is_ok_and(|v| v == "1") {
+        if obrrt_core::sys::env::var_os("OBRRT_MOVE_GA_N").is_none() && obrrt_core::sys::env::var("OBRRT_MOVES_SEEDED").is_ok_and(|v| v == "1") {
             obrrt_search::movegenome::set_budget(leg.budget.population / 2);
         }
         UNSTABLE.store(0, std::sync::atomic::Ordering::Relaxed);
         *LIVE_RUN.lock().unwrap() = Some(Running { leg: li, name: leg.spec.name.clone(), ga_frames: 0, best_left: f64::INFINITY, best: None });
         let prev = beams.last().unwrap();
-        let t0 = std::time::Instant::now();
+        let t0 = obrrt_core::sys::Instant::now();
         let mut finished: Vec<Cand> = Vec::new();
         let (mut ga_frames, mut attempts, mut retries) = (0, 0, 0);
         let mut met_bins: Vec<usize> = Vec::new();
@@ -1400,7 +1400,7 @@ fn main() -> Result<()> {
                 // breaks a frame-exact trick in the next leg (tas-first-star:
                 // 8 units at the slope, then 171 M GA frames without the warp).
                 let mut ref_floor = None;
-                if seed_ref && std::env::var("OBRRT_LEGS_REF_FLOOR").map_or(true, |v| v != "0") {
+                if seed_ref && obrrt_core::sys::env::var("OBRRT_LEGS_REF_FLOOR").map_or(true, |v| v != "0") {
                     if let Some((ri, b)) = leg_ref(li).and_then(|ri| refs[ri].legs[li].map(|(_, b)| (ri, b as usize))) {
                         let at = parent.inputs.len();
                         if at < b && b <= refs[ri].inputs.len() && refs[ri].inputs[..at] == parent.inputs[..] {

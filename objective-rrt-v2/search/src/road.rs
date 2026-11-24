@@ -62,7 +62,7 @@ pub struct Settings {
 /// `OBRRT_ROAD`: None when off; Some(directory) to load and save.
 pub fn setting() -> Option<Option<String>> {
     static S: OnceLock<Option<Option<String>>> = OnceLock::new();
-    S.get_or_init(|| match std::env::var("OBRRT_ROAD") {
+    S.get_or_init(|| match obrrt_core::sys::env::var("OBRRT_ROAD") {
         Ok(v) if v.is_empty() || v == "0" => None,
         Ok(v) if v == "1" => Some(None),
         Ok(v) => Some(Some(v)),
@@ -74,7 +74,7 @@ pub fn setting() -> Option<Option<String>> {
 fn settings() -> Settings {
     static S: OnceLock<Settings> = OnceLock::new();
     *S.get_or_init(|| {
-        let f = |k: &str, d: f64| std::env::var(k).ok().and_then(|v| v.parse().ok()).unwrap_or(d);
+        let f = |k: &str, d: f64| obrrt_core::sys::env::var(k).ok().and_then(|v| v.parse().ok()).unwrap_or(d);
         Settings {
             cell: f("OBRRT_ROAD_CELL", 256.0) as f32,
             climb: f("OBRRT_ROAD_CLIMB", 2.0),
@@ -185,7 +185,7 @@ impl Road {
         if !zr.loaded {
             zr.loaded = true;
             if let Some(d) = &self.dir {
-                if let Ok(text) = std::fs::read_to_string(format!("{d}/L{}A{}.road", z.0, z.1)) {
+                if let Ok(text) = obrrt_core::sys::fs::read_to_string(format!("{d}/L{}A{}.road", z.0, z.1)) {
                     for line in text.lines() {
                         let mut it = line.split_whitespace();
                         let tag = it.next();
@@ -377,14 +377,14 @@ impl Road {
     /// Writes every zone's graph to the directory (`OBRRT_ROAD=<dir>`).
     pub fn save(&self) {
         let Some(d) = &self.dir else { return };
-        let _ = std::fs::create_dir_all(d);
+        let _ = obrrt_core::sys::fs::create_dir_all(d);
         for (z, zr) in &self.zones {
             if zr.n_edges == 0 {
                 continue;
             }
             let path = format!("{d}/L{}A{}.road", z.0, z.1);
             let tmp = format!("{path}.tmp{}", std::process::id());
-            let Ok(file) = std::fs::File::create(&tmp) else { continue };
+            let Ok(file) = obrrt_core::sys::fs::File::create(&tmp) else { continue };
             let mut w = std::io::BufWriter::new(file);
             for (c, r) in &zr.rep {
                 if r.old {
@@ -399,7 +399,7 @@ impl Road {
                 }
             }
             drop(w);
-            let _ = std::fs::rename(&tmp, &path);
+            let _ = obrrt_core::sys::fs::rename(&tmp, &path);
         }
     }
 }

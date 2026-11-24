@@ -7,7 +7,7 @@
 //! `--iterations N` stops after N batches instead of after `minutes` (for
 //! reproducible comparisons: a seed, a thread count and N give one run).
 
-use std::time::Instant;
+use obrrt_core::sys::Instant;
 
 use anyhow::{Context, Result, bail};
 use sm64_ai::noise::Variant;
@@ -55,14 +55,14 @@ impl Args {
 pub fn run(args: Args, share: bool) -> Result<()> {
     let stem = std::path::Path::new(&args.schema).file_stem().unwrap().to_string_lossy().to_string();
     let dir = args.out.clone().unwrap_or_else(|| format!("runs/{stem}{}", if share { "-share" } else { "" }));
-    std::fs::create_dir_all(&dir)?;
-    let schema = std::fs::read_to_string(&args.schema)?;
-    std::fs::write(format!("{dir}/schema.json"), &schema)?;
+    obrrt_core::sys::fs::create_dir_all(&dir)?;
+    let schema = obrrt_core::sys::fs::read_to_string(&args.schema)?;
+    obrrt_core::sys::fs::write(format!("{dir}/schema.json"), &schema)?;
     let tree = Tree::load(&schema)?;
-    std::fs::write(format!("{dir}/objectives.json"), serde_json::to_string_pretty(&tree.insts)?)?;
+    obrrt_core::sys::fs::write(format!("{dir}/objectives.json"), serde_json::to_string_pretty(&tree.insts)?)?;
 
     let variant = Variant::named(&args.noise).with_context(|| format!("unknown noise {}", args.noise))?;
-    let game_gen = SM64GameGenerator::new(std::fs::read("../baserom.us.z64")?)?;
+    let game_gen = SM64GameGenerator::new(obrrt_core::sys::fs::read("../baserom.us.z64")?)?;
     let mut search = Search::new(&game_gen, tree, Config::from_env(variant), args.seed)?;
     search.seed(skip_menu_pads())?;
     for path in &args.seeds {

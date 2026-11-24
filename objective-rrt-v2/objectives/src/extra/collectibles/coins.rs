@@ -175,7 +175,7 @@ impl RedNext {
 /// HMC's and ended with 7 of 8 coins.
 fn red_v2() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var("OBRRT_RED_V2").is_ok_and(|v| v == "1"))
+    *ON.get_or_init(|| obrrt_core::sys::env::var("OBRRT_RED_V2").is_ok_and(|v| v == "1"))
 }
 
 /// RedCoin::Next start bias per red coin already had: v1's 2 heuristic
@@ -200,7 +200,7 @@ impl Objective for RedNext {
         // been found by any tree before 2026-11-09: states with 2 of 8 were a
         // few hundred among tens of thousands and almost never a start.
         static W: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-        if *W.get_or_init(|| std::env::var("OBRRT_GOAL_WIDE").is_ok_and(|v| v == "1")) { 25.0 } else { 5.0 }
+        if *W.get_or_init(|| obrrt_core::sys::env::var("OBRRT_GOAL_WIDE").is_ok_and(|v| v == "1")) { 25.0 } else { 5.0 }
     }
     fn base_criteria(&self, s: &St) -> bool {
         self.nearest(s).is_some() && self.star.is_none_or(|(c, i)| !s.has_star(c, i))

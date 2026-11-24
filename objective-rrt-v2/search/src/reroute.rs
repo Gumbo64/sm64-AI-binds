@@ -119,7 +119,7 @@ enum Forward {
 /// `1`/`all` every faster copy.
 fn forward_mode() -> Forward {
     static M: std::sync::OnceLock<Forward> = std::sync::OnceLock::new();
-    *M.get_or_init(|| match std::env::var("OBRRT_REROUTE_FORWARD").as_deref() {
+    *M.get_or_init(|| match obrrt_core::sys::env::var("OBRRT_REROUTE_FORWARD").as_deref() {
         Ok("best") => Forward::Best,
         Ok("1") | Ok("all") => Forward::All,
         Ok("") | Ok("0") | Err(_) => Forward::Off,
@@ -143,7 +143,7 @@ enum Relax {
 /// `OBRRT_REROUTE_RELAX`: unset/0 off, `1`/`move` or `spawn` (see [`Relax`]).
 fn relax_mode() -> Relax {
     static M: std::sync::OnceLock<Relax> = std::sync::OnceLock::new();
-    *M.get_or_init(|| match std::env::var("OBRRT_REROUTE_RELAX").as_deref() {
+    *M.get_or_init(|| match obrrt_core::sys::env::var("OBRRT_REROUTE_RELAX").as_deref() {
         Ok("1") | Ok("move") => Relax::Move,
         Ok("spawn") => Relax::Spawn,
         Ok("") | Ok("0") | Err(_) => Relax::Off,
@@ -235,7 +235,7 @@ fn hash<T: Hash>(t: &T) -> u64 {
 /// Loads an objective-scattershot schema (also used by `schemapick`).
 pub fn load_schema(path: &str) -> anyhow::Result<Box<objective_scattershot::objective::Tree>> {
     use anyhow::Context;
-    let json = std::fs::read_to_string(path).with_context(|| format!("schema {path}"))?;
+    let json = obrrt_core::sys::fs::read_to_string(path).with_context(|| format!("schema {path}"))?;
     Ok(Box::new(objective_scattershot::objective::Tree::load(&json)?))
 }
 

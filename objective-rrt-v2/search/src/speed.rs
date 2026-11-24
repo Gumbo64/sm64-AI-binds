@@ -49,8 +49,8 @@ pub struct Settings {
 pub fn settings() -> &'static Settings {
     static S: OnceLock<Settings> = OnceLock::new();
     S.get_or_init(|| {
-        let on = |k: &str| std::env::var(k).is_ok_and(|v| v == "1");
-        let num = |k: &str, d: f64| std::env::var(k).ok().and_then(|v| v.parse().ok()).unwrap_or(d);
+        let on = |k: &str| obrrt_core::sys::env::var(k).is_ok_and(|v| v == "1");
+        let num = |k: &str, d: f64| obrrt_core::sys::env::var(k).ok().and_then(|v| v.parse().ok()).unwrap_or(d);
         Settings {
             faster_only: on("OBRRT_FASTER_ONLY"),
             beat: on("OBRRT_BEAT"),

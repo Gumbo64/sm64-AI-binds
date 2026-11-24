@@ -97,7 +97,7 @@ pub enum Extra {
 /// told otherwise).
 pub fn extra_on() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var("OBRRT_MOVES_EXTRA").is_ok_and(|v| v == "1"))
+    *ON.get_or_init(|| obrrt_core::sys::env::var("OBRRT_MOVES_EXTRA").is_ok_and(|v| v == "1"))
 }
 
 /// Landing lag, in frames (`LandingAction.numFrames`).

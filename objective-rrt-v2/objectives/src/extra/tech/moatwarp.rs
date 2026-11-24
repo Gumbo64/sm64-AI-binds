@@ -65,7 +65,7 @@ const WALK_FRAMES: f64 = 12.0;
 
 pub fn on() -> bool {
     static ON: OnceLock<bool> = OnceLock::new();
-    *ON.get_or_init(|| std::env::var("OBRRT_MOATWARP").is_ok_and(|v| v == "1")) && enabled("moatwarp")
+    *ON.get_or_init(|| obrrt_core::sys::env::var("OBRRT_MOATWARP").is_ok_and(|v| v == "1")) && enabled("moatwarp")
 }
 
 fn hd(a: [f32; 3], b: [f32; 3]) -> f32 {

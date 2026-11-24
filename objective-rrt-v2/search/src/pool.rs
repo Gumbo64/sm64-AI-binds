@@ -522,8 +522,8 @@ impl Pool {
 pub(crate) fn kind_weight(kind: &str) -> f64 {
     static T: std::sync::OnceLock<Option<HashMap<String, f64>>> = std::sync::OnceLock::new();
     T.get_or_init(|| {
-        let path = std::env::var("OBRRT_KIND_WEIGHTS").ok()?;
-        let txt = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("OBRRT_KIND_WEIGHTS {path}: {e}"));
+        let path = obrrt_core::sys::env::var("OBRRT_KIND_WEIGHTS").ok()?;
+        let txt = obrrt_core::sys::fs::read_to_string(&path).unwrap_or_else(|e| panic!("OBRRT_KIND_WEIGHTS {path}: {e}"));
         let t: HashMap<String, f64> = serde_json::from_str(&txt).unwrap_or_else(|e| panic!("OBRRT_KIND_WEIGHTS {path}: {e}"));
         eprintln!("kind weights: {} kinds from {path}", t.len());
         Some(t)

@@ -68,7 +68,7 @@ fn walk(a: [f32; 3], b: [f32; 3]) -> f32 {
 /// off, for comparisons with the plain floor graph).
 pub fn is_slab_trigger(t: [f32; 3]) -> bool {
     static OFF: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    !*OFF.get_or_init(|| std::env::var_os("OBRRT_NO_PYRAMID").is_some()) && t[1] > 1900.0 && t[1] < 4000.0
+    !*OFF.get_or_init(|| obrrt_core::sys::env::var_os("OBRRT_NO_PYRAMID").is_some()) && t[1] > 1900.0 && t[1] < 4000.0
 }
 
 /// The slab (0 lowest) a point stands on or is just over.

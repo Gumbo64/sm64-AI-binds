@@ -2,10 +2,10 @@
 //! run on one thread; the attempts (step 5) run one per worker in parallel.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
-use std::fs::{self, File};
+use obrrt_core::sys::fs::{self, File};
 use std::io::{BufWriter, Write};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::{Duration}; use obrrt_core::sys::Instant;
 
 use anyhow::Result;
 use obrrt_core::{GamePad, Generator, Objective, St, read_state};
@@ -282,7 +282,7 @@ impl Default for Config {
             // a test) and the search stops spreading out.
             time_cost: 0.4,
             rewire_margin: 10,
-            new_eligible: std::env::var("OBRRT_NEW_ELIGIBLE").is_ok_and(|v| v == "1"),
+            new_eligible: obrrt_core::sys::env::var("OBRRT_NEW_ELIGIBLE").is_ok_and(|v| v == "1"),
             earliest: false,
             earliest_cap: 12,
             earliest_share: 0.15,
@@ -342,8 +342,8 @@ const MACROS: usize = 5;
 fn wip_focus() -> (f64, i64) {
     static S: std::sync::OnceLock<(f64, i64)> = std::sync::OnceLock::new();
     *S.get_or_init(|| {
-        let p: f64 = std::env::var("OBRRT_WIP_FOCUS").ok().and_then(|v| v.parse().ok()).unwrap_or(0.0);
-        let w: i64 = std::env::var("OBRRT_WIP_FOCUS_W").ok().and_then(|v| v.parse().ok()).unwrap_or(2);
+        let p: f64 = obrrt_core::sys::env::var("OBRRT_WIP_FOCUS").ok().and_then(|v| v.parse().ok()).unwrap_or(0.0);
+        let w: i64 = obrrt_core::sys::env::var("OBRRT_WIP_FOCUS_W").ok().and_then(|v| v.parse().ok()).unwrap_or(2);
         (p.clamp(0.0, 1.0), w.max(1))
     })
 }
@@ -366,13 +366,13 @@ fn wip_focus() -> (f64, i64) {
 /// a new cell about as near as the best.
 fn goal_explore() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var("OBRRT_GOAL_EXPLORE").is_ok_and(|v| v == "1"))
+    *ON.get_or_init(|| obrrt_core::sys::env::var("OBRRT_GOAL_EXPLORE").is_ok_and(|v| v == "1"))
 }
 
 fn goal_focus() -> (f64, f64, f64, f64) {
     static S: std::sync::OnceLock<(f64, f64, f64, f64)> = std::sync::OnceLock::new();
     *S.get_or_init(|| {
-        let f = |k: &str, d: f64| std::env::var(k).ok().and_then(|v| v.parse().ok()).unwrap_or(d);
+        let f = |k: &str, d: f64| obrrt_core::sys::env::var(k).ok().and_then(|v| v.parse().ok()).unwrap_or(d);
         (f("OBRRT_GOAL_FOCUS", 0.0).clamp(0.0, 1.0), f("OBRRT_GOAL_FOCUS_C", 10.0).max(0.0), f("OBRRT_GOAL_FOCUS_FORCE", 0.5).clamp(0.0, 1.0), f("OBRRT_GOAL_MIN", 20.0))
     })
 }
@@ -380,7 +380,7 @@ fn goal_focus() -> (f64, f64, f64, f64) {
 /// OBRRT_GEO_AHEAD: how far along the walkable path an approach move aims.
 fn geo_ahead() -> f32 {
     static S: std::sync::OnceLock<f32> = std::sync::OnceLock::new();
-    *S.get_or_init(|| std::env::var("OBRRT_GEO_AHEAD").ok().and_then(|v| v.parse().ok()).unwrap_or(700.0))
+    *S.get_or_init(|| obrrt_core::sys::env::var("OBRRT_GEO_AHEAD").ok().and_then(|v| v.parse().ok()).unwrap_or(700.0))
 }
 
 /// A frontier cell (see `index_frontier`), with its zone.
@@ -411,33 +411,33 @@ struct GoalTop {
 /// the states furthest along a goal with several steps come first.
 fn goal_wip_w() -> f64 {
     static WW: std::sync::OnceLock<f64> = std::sync::OnceLock::new();
-    *WW.get_or_init(|| std::env::var("OBRRT_GOAL_WIP_W").ok().and_then(|v| v.parse().ok()).unwrap_or(1500.0))
+    *WW.get_or_init(|| obrrt_core::sys::env::var("OBRRT_GOAL_WIP_W").ok().and_then(|v| v.parse().ok()).unwrap_or(1500.0))
 }
 
 /// OBRRT_PARENT_WINDOW_FRAMES: the copied prefix's minimum length (0: one parent).
 fn parent_window_frames() -> usize {
     static S: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
-    *S.get_or_init(|| std::env::var("OBRRT_PARENT_WINDOW_FRAMES").ok().and_then(|v| v.parse().ok()).unwrap_or(0))
+    *S.get_or_init(|| obrrt_core::sys::env::var("OBRRT_PARENT_WINDOW_FRAMES").ok().and_then(|v| v.parse().ok()).unwrap_or(0))
 }
 
 /// OBRRT_PARENT_WINDOW_POP: the population from which the minimum applies in full.
 fn parent_window_pop() -> f64 {
     static S: std::sync::OnceLock<f64> = std::sync::OnceLock::new();
-    *S.get_or_init(|| std::env::var("OBRRT_PARENT_WINDOW_POP").ok().and_then(|v| v.parse().ok()).unwrap_or(48.0))
+    *S.get_or_init(|| obrrt_core::sys::env::var("OBRRT_PARENT_WINDOW_POP").ok().and_then(|v| v.parse().ok()).unwrap_or(48.0))
 }
 
 /// OBRRT_PARENT_WINDOW_HORIZONS: the copied prefix's minimum in GA horizons.
 fn parent_window_horizons() -> f64 {
     static S: std::sync::OnceLock<f64> = std::sync::OnceLock::new();
-    *S.get_or_init(|| std::env::var("OBRRT_PARENT_WINDOW_HORIZONS").ok().and_then(|v| v.parse().ok()).unwrap_or(0.0))
+    *S.get_or_init(|| obrrt_core::sys::env::var("OBRRT_PARENT_WINDOW_HORIZONS").ok().and_then(|v| v.parse().ok()).unwrap_or(0.0))
 }
 
 /// OBRRT_PARENT_WINDOW (share of attempts), OBRRT_PARENT_WINDOW_MAX (frames).
 fn parent_window() -> Option<(f64, usize)> {
     static S: std::sync::OnceLock<Option<(f64, usize)>> = std::sync::OnceLock::new();
     *S.get_or_init(|| {
-        let share: f64 = std::env::var("OBRRT_PARENT_WINDOW").ok()?.parse().ok()?;
-        let max = std::env::var("OBRRT_PARENT_WINDOW_MAX").ok().and_then(|v| v.parse().ok()).unwrap_or(300);
+        let share: f64 = obrrt_core::sys::env::var("OBRRT_PARENT_WINDOW").ok()?.parse().ok()?;
+        let max = obrrt_core::sys::env::var("OBRRT_PARENT_WINDOW_MAX").ok().and_then(|v| v.parse().ok()).unwrap_or(300);
         (share > 0.0).then_some((share.min(1.0), max))
     })
 }
@@ -623,7 +623,7 @@ fn cell(st: &St) -> Cell {
 /// technique setups) are not merged by the hard / soft dedupe.
 pub fn motion(st: &St) -> Option<(i32, i32)> {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    if !*ON.get_or_init(|| std::env::var("OBRRT_CELL_MOTION").is_ok_and(|v| v == "1")) {
+    if !*ON.get_or_init(|| obrrt_core::sys::env::var("OBRRT_CELL_MOTION").is_ok_and(|v| v == "1")) {
         return None;
     }
     let h = st.vel[0].hypot(st.vel[2]);
@@ -634,7 +634,7 @@ pub fn motion(st: &St) -> Option<(i32, i32)> {
 /// facing octant) for a crouch slide or a backwards long jump / landing.
 fn blj_mark(st: &St) -> Option<(u8, i32, i32)> {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    if !*ON.get_or_init(|| std::env::var("OBRRT_BLJ_FAST").is_ok_and(|v| v == "1")) {
+    if !*ON.get_or_init(|| obrrt_core::sys::env::var("OBRRT_BLJ_FAST").is_ok_and(|v| v == "1")) {
         return None;
     }
     const CROUCH_SLIDE: u32 = 0x0480_8459;
@@ -1006,7 +1006,7 @@ impl Engine {
         // OBRRT_SAMPLE_CHECK=1: the scan on a copy of the RNG must agree
         // (pick and RNG state) with the per-kind tables.
         static CHECK: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-        if *CHECK.get_or_init(|| std::env::var("OBRRT_SAMPLE_CHECK").is_ok_and(|v| v == "1")) {
+        if *CHECK.get_or_init(|| obrrt_core::sys::env::var("OBRRT_SAMPLE_CHECK").is_ok_and(|v| v == "1")) {
             let rng0 = self.rng.clone();
             let want = self.sample_entry_scan(b, strict);
             let mut rng1 = std::mem::replace(&mut self.rng, rng0);
@@ -1483,7 +1483,7 @@ impl Engine {
             // t1 step 142 stopped at 94.5 M with 2 red coins while the tree
             // was two thirds up the course) has no work in progress to show.
             static SE: std::sync::OnceLock<Option<f64>> = std::sync::OnceLock::new();
-            if let Some(f) = *SE.get_or_init(|| std::env::var("OBRRT_STALL_ETA").ok().and_then(|v| v.parse().ok()).filter(|&f: &f64| f > 0.0)) {
+            if let Some(f) = *SE.get_or_init(|| obrrt_core::sys::env::var("OBRRT_STALL_ETA").ok().and_then(|v| v.parse().ok()).filter(|&f: &f64| f > 0.0)) {
                 let near = |v: f64| best.values().filter(|b| b.1 <= v + (f * v).max(10.0)).count();
                 match self.stall_eta.get_mut(&key) {
                     Some(v) => {
@@ -3381,7 +3381,7 @@ impl Engine {
     /// glibc's heap (in use and free), and the sizes of the tables the save
     /// budget doesn't count.
     fn mem_diag(&self) {
-        let rss = std::fs::read_to_string("/proc/self/status").ok().and_then(|t| t.lines().find(|l| l.starts_with("VmRSS:")).map(|l| l[6..].trim().to_string())).unwrap_or_default();
+        let rss = obrrt_core::sys::fs::read_to_string("/proc/self/status").ok().and_then(|t| t.lines().find(|l| l.starts_with("VmRSS:")).map(|l| l[6..].trim().to_string())).unwrap_or_default();
         #[cfg(all(target_os = "linux", target_env = "gnu"))]
         {
             #[repr(C)]
@@ -3678,7 +3678,7 @@ impl Engine {
             summary["replay_budget"] = rb.summary();
             println!("   {}", rb.line());
         }
-        if std::env::var("OBRRT_MEM_DIAG").is_ok_and(|v| v == "1") {
+        if obrrt_core::sys::env::var("OBRRT_MEM_DIAG").is_ok_and(|v| v == "1") {
             self.mem_diag();
         }
         if let Some(sp) = &self.tree.sparse {
@@ -4416,7 +4416,7 @@ impl Engine {
         // OBRRT_STOP_EXIT_GRACE=<frames> (with OBRRT_ZONE_LOCK): stop this many
         // emulated frames after the first good exit of the zone, or at once
         // when it is 0; the frames after it are for a faster exit.
-        let grace: Option<u64> = std::env::var("OBRRT_STOP_EXIT_GRACE").ok().and_then(|v| v.parse().ok());
+        let grace: Option<u64> = obrrt_core::sys::env::var("OBRRT_STOP_EXIT_GRACE").ok().and_then(|v| v.parse().ok());
         let mut stop_at: Option<u64> = None;
         // OBRRT_STOP_STALL=<frames>: stop when the tree's work in progress
         // (its best St::wip: red coins, chests, boss hits) and its progress
@@ -4424,7 +4424,7 @@ impl Engine {
         // budget then follows the tree: a course with nothing to build on
         // gives up early; one gaining red coins keeps going (a fixed 150 M
         // gave 4 of BoB's 8 red coins, 2026-11-09 w4-bob).
-        let stall: Option<u64> = std::env::var("OBRRT_STOP_STALL").ok().and_then(|v| v.parse().ok());
+        let stall: Option<u64> = obrrt_core::sys::env::var("OBRRT_STOP_STALL").ok().and_then(|v| v.parse().ok());
         let (mut best_wip, mut best_prog, mut improved_at) = (i64::MIN, (0u8, 0i16), 0u64);
         let mut idle_rounds = 0u32;
         // Rounds in a row that emulated no frames: attempts from a doomed start (campaign t1 step 398: a coin leg
@@ -4901,5 +4901,5 @@ fn any_exit() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     // OBRRT_FINAL=1 (the last search, BitS and the Bowser 3 arena): at 120 stars every course counts as done, which
     // planned nothing at all ("nothing to plan for 20 rounds", b3 test from a BitS state with its star had).
-    *ON.get_or_init(|| std::env::var("OBRRT_ANY_EXIT").is_ok_and(|v| v == "1") || std::env::var("OBRRT_FINAL").is_ok_and(|v| v == "1"))
+    *ON.get_or_init(|| obrrt_core::sys::env::var("OBRRT_ANY_EXIT").is_ok_and(|v| v == "1") || obrrt_core::sys::env::var("OBRRT_FINAL").is_ok_and(|v| v == "1"))
 }

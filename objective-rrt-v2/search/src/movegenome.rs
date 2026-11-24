@@ -50,7 +50,7 @@ pub fn enabled() -> bool {
         return false;
     }
     static ON: OnceLock<bool> = OnceLock::new();
-    *ON.get_or_init(|| std::env::var("OBRRT_MOVE_GA").is_ok_and(|v| v == "1"))
+    *ON.get_or_init(|| obrrt_core::sys::env::var("OBRRT_MOVE_GA").is_ok_and(|v| v == "1"))
 }
 
 /// `OBRRT_MOVE_GA_N` (default 8): most policy-seeded rollouts in a first
@@ -59,7 +59,7 @@ pub fn enabled() -> bool {
 /// plausibility filter).
 pub fn budget_n() -> usize {
     static N: OnceLock<usize> = OnceLock::new();
-    *N.get_or_init(|| std::env::var("OBRRT_MOVE_GA_N").ok().and_then(|v| v.parse().ok()).unwrap_or(8))
+    *N.get_or_init(|| obrrt_core::sys::env::var("OBRRT_MOVE_GA_N").ok().and_then(|v| v.parse().ok()).unwrap_or(8))
 }
 
 /// Most policy-seeded rollouts for a while (spec's legs: half the leg's
@@ -99,7 +99,7 @@ pub fn with_seed() -> bool {
 /// more frames per attempt). Default off: they take the odd (random) slots.
 pub fn extra() -> bool {
     static ON: OnceLock<bool> = OnceLock::new();
-    *ON.get_or_init(|| std::env::var("OBRRT_MOVE_GA_EXTRA").is_ok_and(|v| v == "1"))
+    *ON.get_or_init(|| obrrt_core::sys::env::var("OBRRT_MOVE_GA_EXTRA").is_ok_and(|v| v == "1"))
 }
 
 /// `OBRRT_MOVE_GA_SLOTS`: which first-generation slots policy rollouts
@@ -113,7 +113,7 @@ pub fn extra() -> bool {
 /// was the other way round (118 vs 150).
 fn slots_mode() -> u8 {
     static M: OnceLock<u8> = OnceLock::new();
-    *M.get_or_init(|| match std::env::var("OBRRT_MOVE_GA_SLOTS").as_deref() {
+    *M.get_or_init(|| match obrrt_core::sys::env::var("OBRRT_MOVE_GA_SLOTS").as_deref() {
         Ok("random") => 0,
         Ok("seeded") => 1,
         Ok("mixed") => 2,
@@ -145,13 +145,13 @@ pub fn slots_in(n: usize, pass: bool) -> usize {
 /// `repolicy` mutation.
 pub fn repolicy_p() -> f64 {
     static P: OnceLock<f64> = OnceLock::new();
-    *P.get_or_init(|| std::env::var("OBRRT_MOVE_GA_REPOLICY").ok().and_then(|v| v.parse().ok()).unwrap_or(0.15))
+    *P.get_or_init(|| obrrt_core::sys::env::var("OBRRT_MOVE_GA_REPOLICY").ok().and_then(|v| v.parse().ok()).unwrap_or(0.15))
 }
 
 /// `OBRRT_MOVE_GA_PRUNE` (default 1): the mover's plausibility filter.
 fn prune() -> bool {
     static P: OnceLock<bool> = OnceLock::new();
-    *P.get_or_init(|| !std::env::var("OBRRT_MOVE_GA_PRUNE").is_ok_and(|v| v == "0"))
+    *P.get_or_init(|| !obrrt_core::sys::env::var("OBRRT_MOVE_GA_PRUNE").is_ok_and(|v| v == "0"))
 }
 
 /// Policies the mover offers (0 without one).

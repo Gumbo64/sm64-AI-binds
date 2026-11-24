@@ -50,7 +50,7 @@ const OBJECT_RADIUS: f32 = 5000.0;
 /// pure loss, yet the talk sat on travel paths as a waypoint (lobby -> WF).
 pub fn talk_nil() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var("OBRRT_TALK_NIL").is_ok_and(|v| v == "1"))
+    *ON.get_or_init(|| obrrt_core::sys::env::var("OBRRT_TALK_NIL").is_ok_and(|v| v == "1"))
 }
 
 fn npc_weight(b: &St, o: &obrrt_core::Obj) -> Option<f64> {
@@ -168,7 +168,7 @@ impl Generator for Registry {
         if mario::GoToCastle::applies(b) {
             // OBRRT_ZONE_LOCK: a per-zone tree doesn't leave by the pause menu.
             static LOCK: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-            if !*LOCK.get_or_init(|| std::env::var("OBRRT_ZONE_LOCK").is_ok_and(|v| v == "1")) {
+            if !*LOCK.get_or_init(|| obrrt_core::sys::env::var("OBRRT_ZONE_LOCK").is_ok_and(|v| v == "1")) {
                 out.push(Arc::new(mario::GoToCastle::new(b)));
             }
         }
@@ -184,7 +184,7 @@ impl Generator for Registry {
             // goals far from their course's entry.
             static WIDE: std::sync::OnceLock<(bool, f64)> = std::sync::OnceLock::new();
             let (wide, goal_min) = *WIDE.get_or_init(|| {
-                (std::env::var("OBRRT_GOAL_WIDE").is_ok_and(|v| v == "1"), std::env::var("OBRRT_GOAL_MIN").ok().and_then(|v| v.parse().ok()).unwrap_or(20.0))
+                (obrrt_core::sys::env::var("OBRRT_GOAL_WIDE").is_ok_and(|v| v == "1"), obrrt_core::sys::env::var("OBRRT_GOAL_MIN").ok().and_then(|v| v.parse().ok()).unwrap_or(20.0))
             });
             let far = dist(o.pos, b.pos).min(dist(star::rest_pos(o), b.pos)) > OBJECT_RADIUS;
             if far && !wide {
@@ -256,5 +256,5 @@ impl Generator for Registry {
 /// unset.
 pub fn exit_skip() -> &'static [u32] {
     static S: std::sync::OnceLock<Vec<u32>> = std::sync::OnceLock::new();
-    S.get_or_init(|| std::env::var("OBRRT_EXIT_SKIP").map_or(Vec::new(), |v| v.split(',').filter_map(|x| x.trim().parse().ok()).collect()))
+    S.get_or_init(|| obrrt_core::sys::env::var("OBRRT_EXIT_SKIP").map_or(Vec::new(), |v| v.split(',').filter_map(|x| x.trim().parse().ok()).collect()))
 }

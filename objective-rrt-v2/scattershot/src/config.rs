@@ -28,7 +28,7 @@ pub struct Config {
 }
 
 fn env<T: std::str::FromStr>(name: &str) -> Option<T> {
-    std::env::var(name).ok().and_then(|s| s.parse().ok())
+    obrrt_core::sys::env::var(name).ok().and_then(|s| s.parse().ok())
 }
 
 impl Config {
@@ -57,7 +57,7 @@ impl Config {
         if let Some(v) = env("OSS_K") {
             c.candidates = v;
         }
-        if std::env::var("OSS_SELECT").is_ok_and(|v| v == "flat") {
+        if obrrt_core::sys::env::var("OSS_SELECT").is_ok_and(|v| v == "flat") {
             c.grouped = false;
         }
         c

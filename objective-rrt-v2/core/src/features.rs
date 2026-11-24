@@ -513,13 +513,13 @@ fn zone_cache() -> &'static std::sync::RwLock<std::collections::HashMap<(u16, u8
 pub fn preload_zones(dirs: &[&str]) -> usize {
     let mut c = zone_cache().write().unwrap();
     for d in dirs {
-        let Ok(rd) = std::fs::read_dir(format!("{d}/zones")) else { continue };
+        let Ok(rd) = crate::sys::fs::read_dir(format!("{d}/zones")) else { continue };
         for e in rd.flatten() {
             let name = e.file_name().to_string_lossy().to_string();
             let Some(stem) = name.strip_suffix(".f32") else { continue };
             let Some((lv, ar)) = stem.split_once('_') else { continue };
             let (Ok(lv), Ok(ar)) = (lv.parse::<u16>(), ar.parse::<u8>()) else { continue };
-            let Ok(bytes) = std::fs::read(e.path()) else { continue };
+            let Ok(bytes) = crate::sys::fs::read(e.path()) else { continue };
             let rows: Vec<[f32; TRI_LEN]> = bytes
                 .chunks_exact(4 * TRI_LEN)
                 .map(|r| std::array::from_fn(|k| f32::from_le_bytes(r[4 * k..4 * k + 4].try_into().unwrap())))

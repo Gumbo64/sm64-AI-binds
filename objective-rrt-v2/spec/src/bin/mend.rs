@@ -100,7 +100,7 @@ const BUCKET: u32 = 24;
 const OPT: f64 = 0.5;
 
 fn read_m64(path: &str) -> Result<Vec<GamePad>> {
-    let b = std::fs::read(path).with_context(|| path.to_string())?;
+    let b = obrrt_core::sys::fs::read(path).with_context(|| path.to_string())?;
     let body = if b.len() >= 0x400 && &b[..4] == b"M64\x1a" { &b[0x400..] } else { &b[..] };
     Ok(body.chunks_exact(4).map(|c| GamePad::new(u16::from_be_bytes([c[0], c[1]]), c[2] as i8, c[3] as i8)).collect())
 }
@@ -113,8 +113,8 @@ fn write_m64(path: &str, pads: &[GamePad]) -> Result<()> {
         out.push(p.stick_y as u8);
     }
     let tmp = format!("{path}.tmp");
-    std::fs::write(&tmp, out)?;
-    std::fs::rename(&tmp, path)?;
+    obrrt_core::sys::fs::write(&tmp, out)?;
+    obrrt_core::sys::fs::rename(&tmp, path)?;
     Ok(())
 }
 
@@ -817,7 +817,7 @@ fn repair_chain(f: &mut dyn Follower, game: &mut SM64Game, x: &Ctx, p: Prop, sav
                 (pads_good, good, at, why)
             }
         };
-        if std::env::var_os("MEND_DEBUG").is_some() {
+        if obrrt_core::sys::env::var_os("MEND_DEBUG").is_some() {
             println!("  chain: off at route frame {at} ({why}), last good {good} (frame {}), repairs {repairs}, route goal {}, GA {}", p.a + pads_good as u32, r.goal, stats.ga_frames);
         }
         if why == "end" && x.end_ok {
@@ -1060,7 +1060,7 @@ fn try_trim(game: &mut SM64Game, r: &Route, p: u32, n: u32, opts: &Opts, frames:
 // ---- the probe: how far a route survives a one-frame shift ----
 
 fn probe(game: &mut SM64Game, r: &Route, first: u32, every: u32, out: &str) -> Result<()> {
-    let mut f = std::io::BufWriter::new(std::fs::File::create(format!("{out}/probe.csv"))?);
+    let mut f = std::io::BufWriter::new(obrrt_core::sys::fs::File::create(format!("{out}/probe.csv"))?);
     use std::io::Write;
     writeln!(f, "frame,zone,action,hspeed,kind,cam,survived,why,goal,lead_at_goal")?;
     let mut p = first;
@@ -1161,7 +1161,7 @@ fn probe_repair(slots: &[Mutex<(Worker, SM64Game)>], r: &Route, first: u32, ever
             Some(format!("{p},{}:{},{:#x},{:.1},{n},{sp},{tight},{},{},{}", s.level, s.area, s.action, hspeed(s), out.frames, best.is_some() as u8, best.unwrap_or(0)))
         })
         .collect();
-    let mut f = std::fs::File::create(format!("{out}/probe_repair.csv"))?;
+    let mut f = obrrt_core::sys::fs::File::create(format!("{out}/probe_repair.csv"))?;
     writeln!(f, "frame,zone,action,hspeed,trim,spacing,tight,frames,met,lead")?;
     for l in rows {
         writeln!(f, "{l}")?;
@@ -1278,11 +1278,11 @@ fn splice_route(f: &mut dyn Follower, game: &mut SM64Game, r: &Route, other: &st
 /// The run's outputs.
 struct Out {
     dir: String,
-    curve: std::io::BufWriter<std::fs::File>,
-    accepts: std::io::BufWriter<std::fs::File>,
+    curve: std::io::BufWriter<obrrt_core::sys::fs::File>,
+    accepts: std::io::BufWriter<obrrt_core::sys::fs::File>,
     n: u32,
     goal0: u32,
-    t0: std::time::Instant,
+    t0: obrrt_core::sys::Instant,
 }
 
 impl Out {
@@ -1293,7 +1293,7 @@ impl Out {
         Ok(())
     }
     fn stats(&self, t: &Stats, goal: u32) -> Result<()> {
-        std::fs::write(format!("{}/stats.json", self.dir), serde_json::to_string_pretty(&json!({"goal0": self.goal0, "goal": goal, "accepts": self.n, "stats": t, "secs": self.t0.elapsed().as_secs_f64()}))?)?;
+        obrrt_core::sys::fs::write(format!("{}/stats.json", self.dir), serde_json::to_string_pretty(&json!({"goal0": self.goal0, "goal": goal, "accepts": self.n, "stats": t, "secs": self.t0.elapsed().as_secs_f64()}))?)?;
         Ok(())
     }
 }
@@ -1377,13 +1377,13 @@ fn trim_pass(slots: &[Mutex<(Worker, SM64Game)>], game: &mut SM64Game, route: &m
 
 fn main() -> Result<()> {
     for (k, v) in DEFAULT_ENV {
-        if std::env::var_os(k).is_none() {
+        if obrrt_core::sys::env::var_os(k).is_none() {
             // SAFETY: single-threaded here, before any thread is started.
-            unsafe { std::env::set_var(k, v) };
+            unsafe { obrrt_core::sys::env::set_var(k, v) };
         }
     }
     obrrt_objectives::setup::from_env().map_err(anyhow::Error::msg)?;
-    let a: Vec<String> = std::env::args().collect();
+    let a: Vec<String> = obrrt_core::sys::env::args().collect();
     if a.len() < 2 {
         bail!("usage: mend <route.m64> --out DIR --budget FRAMES [--goal-stars N] [--seed S] [--start-frame F] [--rom FILE] [--no-repair] [--no-cam] [--probe EVERY]");
     }
@@ -1433,7 +1433,7 @@ fn main() -> Result<()> {
     if out.is_empty() {
         bail!("--out DIR");
     }
-    std::fs::create_dir_all(format!("{out}/v"))?;
+    obrrt_core::sys::fs::create_dir_all(format!("{out}/v"))?;
     let inputs = read_m64(&a[1])?;
     let gen_ = SM64GameGenerator::from_file(&rom)?;
     let mut game = gen_.create_game()?;
@@ -1458,14 +1458,14 @@ fn main() -> Result<()> {
     let goal0 = route.goal;
     let threads = rayon::current_num_threads();
     println!("mend {}: goal {goal_stars} stars at frame {goal0}, window starts from frame {first}, {threads} threads, budget {budget}, repair {repair}, cam {cam}, seed {seed}, {} saves", a[1], route.saves.at.len());
-    println!("env: {}", DEFAULT_ENV.iter().map(|(k, _)| format!("{k}={}", std::env::var(k).unwrap_or_default())).collect::<Vec<_>>().join(" "));
+    println!("env: {}", DEFAULT_ENV.iter().map(|(k, _)| format!("{k}={}", obrrt_core::sys::env::var(k).unwrap_or_default())).collect::<Vec<_>>().join(" "));
     if let Some(every) = probe_every {
         probe(&mut game, &route, first, every, &out)?;
         return Ok(());
     }
-    obrrt_search::movegenome::set_with_seed(std::env::var("OBRRT_MOVES_SEEDED").is_ok_and(|v| v == "1"));
+    obrrt_search::movegenome::set_with_seed(obrrt_core::sys::env::var("OBRRT_MOVES_SEEDED").is_ok_and(|v| v == "1"));
     // A few policy rollouts per GA; the seed's variants are the point here.
-    if std::env::var_os("OBRRT_MOVE_GA_N").is_none() {
+    if obrrt_core::sys::env::var_os("OBRRT_MOVE_GA_N").is_none() {
         obrrt_search::movegenome::set_budget(6);
     }
     let params = GaParams { scale: 1.0, fitness: obrrt_search::ga::Fitness::Steps, new_ops: true, pink: 0.0, per_objective_budget: false };
@@ -1474,12 +1474,12 @@ fn main() -> Result<()> {
         return probe_repair(&slots, &route, first, e, params, cam, seed, &out);
     }
     use std::io::Write;
-    let mut curve = std::io::BufWriter::new(std::fs::File::create(format!("{out}/curve.csv"))?);
+    let mut curve = std::io::BufWriter::new(obrrt_core::sys::fs::File::create(format!("{out}/curve.csv"))?);
     writeln!(curve, "ga_frames,replay_frames,trim_frames,secs,goal,saved,windows")?;
-    let mut accepts = std::io::BufWriter::new(std::fs::File::create(format!("{out}/accepts.csv"))?);
+    let mut accepts = std::io::BufWriter::new(obrrt_core::sys::fs::File::create(format!("{out}/accepts.csv"))?);
     writeln!(accepts, "n,ga_frames,replay_frames,trim_frames,goal,saved,what,a,lead0,repairs,zone")?;
     write_m64(&format!("{out}/route.m64"), &route.inputs)?;
-    let t0 = std::time::Instant::now();
+    let t0 = obrrt_core::sys::Instant::now();
     let mut o = Out { dir: out.clone(), curve, accepts, n: 0, goal0, t0 };
     let mut total = Stats::default();
     let mut bandit = Bandit::new((route.goal / BUCKET) as usize + 1);

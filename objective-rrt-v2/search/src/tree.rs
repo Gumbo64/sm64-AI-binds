@@ -489,7 +489,7 @@ impl Tree {
             // good one: more progress than the root's (a course), or any
             // course entered (the castle).
             let l = ZONE_LOCK.load(std::sync::atomic::Ordering::Relaxed);
-            let skip = EXIT_SKIP.get_or_init(|| std::env::var("OBRRT_EXIT_SKIP").map_or(Vec::new(), |v| v.split(',').filter_map(|x| x.trim().parse().ok()).collect()));
+            let skip = EXIT_SKIP.get_or_init(|| obrrt_core::sys::env::var("OBRRT_EXIT_SKIP").map_or(Vec::new(), |v| v.split(',').filter_map(|x| x.trim().parse().ok()).collect()));
             let level = self.nodes[id as usize].st.level;
             // A cap-switch course (TotWC, CotMC, VCutM) whose switch the root
             // hasn't pressed: only an exit with it pressed is good. The star
@@ -520,14 +520,14 @@ impl Tree {
             // after its coin legs starts inside the course with the 100-coin star had
             // (that star doesn't end the visit); it only has to leave.
             static ANY_EXIT: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-            let any = *ANY_EXIT.get_or_init(|| std::env::var("OBRRT_ANY_EXIT").is_ok_and(|v| v == "1"));
+            let any = *ANY_EXIT.get_or_init(|| obrrt_core::sys::env::var("OBRRT_ANY_EXIT").is_ok_and(|v| v == "1"));
             let good = if need != 0 { self.nodes[id as usize].st.save_flags & need != 0 } else { progress > self.nodes[0].st.progress() || into_cap || any };
             // OBRRT_FINAL=1: the run's last search (Bowser in the Sky, Bowser 3). Only the grand star counts: it
             // starts the ending, which leaves the arena for the castle grounds (level 16; the reference movie:
             // 34 -> 16, Peach's scene, then the credits). The grand star raises no star or key count, and a fall
             // or a death leaves for BitS or the castle, so no other exit is good.
             static FINAL: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-            let good = if *FINAL.get_or_init(|| std::env::var("OBRRT_FINAL").is_ok_and(|v| v == "1")) { level == 16 } else { good };
+            let good = if *FINAL.get_or_init(|| obrrt_core::sys::env::var("OBRRT_FINAL").is_ok_and(|v| v == "1")) { level == 16 } else { good };
             // The castle: a course entered that isn't skipped, and nothing else. An exit
             // into a skipped course with a castle star had on the way (Toad's) used to
             // count by its progress: campaign t1 step 166, sent to the Tower of the
@@ -536,7 +536,7 @@ impl Tree {
             // an exit with a star ended a CCM leg at 18.6 M of 25 M, sc1 step 21;
             // only the 100-coin star, by OBRRT_STOP_PROGRESS, should).
             static NOSTOP: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-            let nostop = *NOSTOP.get_or_init(|| std::env::var("OBRRT_EXIT_NOSTOP").is_ok_and(|v| v == "1"));
+            let nostop = *NOSTOP.get_or_init(|| obrrt_core::sys::env::var("OBRRT_EXIT_NOSTOP").is_ok_and(|v| v == "1"));
             if !nostop && if matches!(l, 6 | 16 | 26) { !skip.contains(&level) } else { good } {
                 self.good_exits += 1;
             }
@@ -554,7 +554,7 @@ impl Tree {
         // OBRRT_STOP_FLAG=<hex>: likewise for save flags the root lacks (the campaign's moat step: 0x200,
         // SAVE_FLAG_MOAT_DRAINED, set by ground-pounding both basement pillars; it raises no star count).
         static STOP_FLAG: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
-        let want = *STOP_FLAG.get_or_init(|| std::env::var("OBRRT_STOP_FLAG").ok().and_then(|v| u32::from_str_radix(v.trim_start_matches("0x"), 16).ok()).unwrap_or(0));
+        let want = *STOP_FLAG.get_or_init(|| obrrt_core::sys::env::var("OBRRT_STOP_FLAG").ok().and_then(|v| u32::from_str_radix(v.trim_start_matches("0x"), 16).ok()).unwrap_or(0));
         if want != 0
             && self.nodes[id as usize].st.save_flags & want & !self.nodes[0].st.save_flags != 0
             && self.nodes[id as usize].st.controllable()
@@ -562,7 +562,7 @@ impl Tree {
             self.good_exits += 1;
         }
         static STOP_PROGRESS: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-        if *STOP_PROGRESS.get_or_init(|| std::env::var("OBRRT_STOP_PROGRESS").is_ok_and(|v| v == "1"))
+        if *STOP_PROGRESS.get_or_init(|| obrrt_core::sys::env::var("OBRRT_STOP_PROGRESS").is_ok_and(|v| v == "1"))
             && progress > self.nodes[0].st.progress()
             && self.nodes[id as usize].st.controllable()
         {
@@ -1038,7 +1038,7 @@ impl Tree {
                 return v.clone();
             }
         }
-        let t = std::time::Instant::now();
+        let t = obrrt_core::sys::Instant::now();
         let v = std::sync::Arc::new(self.kin_generic(b, k));
         ks.nanos.fetch_add(t.elapsed().as_nanos() as u64, Relaxed);
         ks.members.fetch_add(v.len() as u64, Relaxed);
@@ -1180,7 +1180,7 @@ impl Tree {
                 return v.clone();
             }
         }
-        let t = std::time::Instant::now();
+        let t = obrrt_core::sys::Instant::now();
         let v = std::sync::Arc::new(self.kin_set_attempt(b, k));
         ks.nanos.fetch_add(t.elapsed().as_nanos() as u64, Relaxed);
         ks.members.fetch_add(v.len() as u64, Relaxed);

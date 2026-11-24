@@ -44,19 +44,19 @@ use super::{Kind, RMode};
 /// OBRRT_BLJ_SCAN=1.
 pub fn on() -> bool {
     static ON: OnceLock<bool> = OnceLock::new();
-    *ON.get_or_init(|| std::env::var("OBRRT_BLJ_SCAN").is_ok_and(|v| v == "1"))
+    *ON.get_or_init(|| obrrt_core::sys::env::var("OBRRT_BLJ_SCAN").is_ok_and(|v| v == "1"))
 }
 
 /// OBRRT_BLJ_SCAN_R (2500): the scan radius around b (3D).
 pub fn scan_r() -> f32 {
     static R: OnceLock<f32> = OnceLock::new();
-    *R.get_or_init(|| std::env::var("OBRRT_BLJ_SCAN_R").ok().and_then(|v| v.parse().ok()).unwrap_or(super::params::get().scan_r))
+    *R.get_or_init(|| obrrt_core::sys::env::var("OBRRT_BLJ_SCAN_R").ok().and_then(|v| v.parse().ok()).unwrap_or(super::params::get().scan_r))
 }
 
 /// OBRRT_BLJ_SCAN_N (3): candidates per base state.
 pub fn scan_n() -> usize {
     static N: OnceLock<usize> = OnceLock::new();
-    *N.get_or_init(|| std::env::var("OBRRT_BLJ_SCAN_N").ok().and_then(|v| v.parse().ok()).unwrap_or(super::params::get().scan_n as usize))
+    *N.get_or_init(|| obrrt_core::sys::env::var("OBRRT_BLJ_SCAN_N").ok().and_then(|v| v.parse().ok()).unwrap_or(super::params::get().scan_n as usize))
 }
 
 /// Smallest slope triangle (projected area): room for the walk and the

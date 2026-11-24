@@ -19,10 +19,10 @@
 
 pub mod methods;
 
-use std::fs;
+use obrrt_core::sys::fs;
 use std::io::Write as _;
 use std::sync::Mutex;
-use std::time::Instant;
+use obrrt_core::sys::Instant;
 
 use anyhow::{Result, bail, ensure};
 use obrrt_core::buttons::A_BUTTON;
@@ -813,7 +813,7 @@ impl Bench {
         let essential: Vec<&Waypoint> = ld.waypoints.iter().filter(|w| w.essential).collect();
         let r = rollout(w, &ld.root, stream, &essential, &ld.policy, 0, horizon, true)?;
         if r.ends.len() < essential.len() {
-            if std::env::var("ROUTE_DEBUG").is_ok() {
+            if obrrt_core::sys::env::var("ROUTE_DEBUG").is_ok() {
                 let last = r.traj.last();
                 eprintln!(
                     "verify: met {}/{} essential; next {:?} at {:?} stars {} modal {:?}; end: zone {:?} pos {:?} action {:#x} modal {:?} controllable {} frames {} stream {}/{}",
@@ -945,7 +945,7 @@ impl Bench {
                 }
             }
             let r = rollout(w, start, &g, &stages, &ld.policy, episode, horizon, false)?;
-            if i == 0 && std::env::var("ROUTE_DEBUG").is_ok() {
+            if i == 0 && obrrt_core::sys::env::var("ROUTE_DEBUG").is_ok() {
                 let want: Vec<String> = t.stages.iter().map(|&k| format!("{}:{:?}", k, self.best.arrival[k].map(|a| a.0 - from_frame))).collect();
                 eprintln!("seed: met {}/{} ends {:?}\n  best arrivals {:?}", r.ends.len(), stages.len(), r.ends.iter().map(|e| e.0).collect::<Vec<_>>(), want);
             }

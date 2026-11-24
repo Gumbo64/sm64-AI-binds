@@ -34,7 +34,7 @@ use obrrt_core::{Eta, Mem, Objective, St, course_of_level, dist, frames_for};
 /// `OBRRT_TWOSTAR=1`.
 pub fn on() -> bool {
     static ON: OnceLock<bool> = OnceLock::new();
-    *ON.get_or_init(|| std::env::var("OBRRT_TWOSTAR").is_ok_and(|v| v == "1"))
+    *ON.get_or_init(|| obrrt_core::sys::env::var("OBRRT_TWOSTAR").is_ok_and(|v| v == "1"))
 }
 
 /// Installs `wip_coins` as the core's wip extra (with the switch on; once).
@@ -658,7 +658,7 @@ fn lowest_ring(s: &St) -> Option<f32> {
 /// carries E ~5700 to the ring line: from the cannon the lines are hit (see `lane_target`).
 fn fly_on() -> bool {
     static ON: OnceLock<bool> = OnceLock::new();
-    *ON.get_or_init(|| std::env::var("OBRRT_FLY").is_ok_and(|v| v == "1"))
+    *ON.get_or_init(|| obrrt_core::sys::env::var("OBRRT_FLY").is_ok_and(|v| v == "1"))
 }
 
 /// A text dump of `s`'s coin sources and the coin route to 100 (the probe tool, with `OBRRT_TWOSTAR=1`).

@@ -828,7 +828,7 @@ enum UphillStyle {
 
 fn uphill_style() -> UphillStyle {
     static S: std::sync::OnceLock<UphillStyle> = std::sync::OnceLock::new();
-    *S.get_or_init(|| match std::env::var("OBRRT_MOVES_UPHILL").as_deref() {
+    *S.get_or_init(|| match obrrt_core::sys::env::var("OBRRT_MOVES_UPHILL").as_deref() {
         Ok("jump") => UphillStyle::Jump,
         Ok("airkick") => UphillStyle::AirKick,
         _ => UphillStyle::Kick,

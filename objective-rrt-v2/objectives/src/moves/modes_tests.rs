@@ -153,7 +153,7 @@ fn swim_policies_only_in_water() {
     let mut w = mk(953, ACT_BREASTSTROKE, [0.0, -500.0, 0.0], 20.0, 0, [0.0; 3]);
     w.water_level = 0;
     // (swim-tas only without OBRRT_SWIM_HOLD=1, the test env)
-    assert!(water_air::swim_plausible(water_air::Swim::Tas, &w, [0.0, -600.0, 1000.0]) != std::env::var("OBRRT_SWIM_HOLD").is_ok_and(|v| v == "1"));
+    assert!(water_air::swim_plausible(water_air::Swim::Tas, &w, [0.0, -600.0, 1000.0]) != obrrt_core::sys::env::var("OBRRT_SWIM_HOLD").is_ok_and(|v| v == "1"));
     assert!(water_air::swim_plausible(water_air::Swim::Exit, &w, [0.0, 50.0, 1000.0]));
     assert!(!water_air::swim_plausible(water_air::Swim::Exit, &w, [0.0, -50.0, 1000.0]));
     // Metal cap: not swimming.
@@ -305,7 +305,7 @@ fn extra_policies_off_by_default() {
     assert_eq!(POLICIES[38], policies::Policy::HighDive);
     assert!(POLICIES[..policies::BASE_POLICIES].iter().all(|p| p.extra().is_none()));
     assert!(POLICIES[policies::BASE_POLICIES..].iter().all(|p| p.extra().is_some()));
-    if std::env::var_os("OBRRT_MOVES_EXTRA").is_some() {
+    if obrrt_core::sys::env::var_os("OBRRT_MOVES_EXTRA").is_some() {
         return;
     }
     assert_eq!(policies::offered(), policies::BASE_POLICIES);

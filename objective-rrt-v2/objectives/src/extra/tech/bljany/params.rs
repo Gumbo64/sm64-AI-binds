@@ -151,8 +151,8 @@ pub fn get() -> &'static Detector {
     static D: OnceLock<Detector> = OnceLock::new();
     D.get_or_init(|| {
         let mut d = Detector::default();
-        if let Ok(path) = std::env::var("OBRRT_BLJ_DETECTOR") {
-            match std::fs::read_to_string(&path) {
+        if let Ok(path) = obrrt_core::sys::env::var("OBRRT_BLJ_DETECTOR") {
+            match obrrt_core::sys::fs::read_to_string(&path) {
                 Ok(t) => {
                     let used = d.apply(&parse_numbers(&t));
                     eprintln!("blj detector: {path}: {}", used.join(", "));

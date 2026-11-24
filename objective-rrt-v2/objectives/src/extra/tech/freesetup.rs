@@ -26,7 +26,7 @@ use obrrt_core::layout::ACT_FLAG_AIR;
 /// Whether `OBRRT_FREE_SETUP=1`.
 pub fn on() -> bool {
     static ON: OnceLock<bool> = OnceLock::new();
-    *ON.get_or_init(|| std::env::var("OBRRT_FREE_SETUP").is_ok_and(|v| v == "1"))
+    *ON.get_or_init(|| obrrt_core::sys::env::var("OBRRT_FREE_SETUP").is_ok_and(|v| v == "1"))
 }
 
 /// Setup variants per objective at most (the key's variant field).

@@ -122,7 +122,7 @@ const SURFACE_DEATH_PLANE: i16 = 0x0A;
 /// `OBRRT_WATERWARP=1`.
 pub fn on() -> bool {
     static ON: OnceLock<bool> = OnceLock::new();
-    *ON.get_or_init(|| std::env::var("OBRRT_WATERWARP").is_ok_and(|v| v == "1"))
+    *ON.get_or_init(|| obrrt_core::sys::env::var("OBRRT_WATERWARP").is_ok_and(|v| v == "1"))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

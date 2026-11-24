@@ -82,7 +82,7 @@ fn hash<T: Hash>(t: &T) -> u64 {
 
 impl Legs {
     pub fn from_env() -> Option<Legs> {
-        let act = match std::env::var("OBRRT_LEG_REUSE").as_deref() {
+        let act = match obrrt_core::sys::env::var("OBRRT_LEG_REUSE").as_deref() {
             Ok("1") | Ok("act") => true,
             Ok("noact") => false,
             Ok("") | Ok("0") | Err(_) => return None,

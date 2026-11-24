@@ -487,7 +487,7 @@ impl Objective for Spec {
 
 /// Node positions from a run's nodes.csv (`{"node": id}` targets).
 pub fn node_positions(run_dir: &str) -> Result<HashMap<u32, [f32; 3]>> {
-    let csv = std::fs::read_to_string(format!("{run_dir}/nodes.csv")).with_context(|| format!("reading {run_dir}/nodes.csv"))?;
+    let csv = obrrt_core::sys::fs::read_to_string(format!("{run_dir}/nodes.csv")).with_context(|| format!("reading {run_dir}/nodes.csv"))?;
     let mut out = HashMap::new();
     for l in csv.lines().skip(1) {
         let c: Vec<&str> = l.split(',').collect();
@@ -535,9 +535,9 @@ pub fn load(path: &str, run_dir: Option<&str>) -> Result<Vec<Spec>> {
     };
     let lookup = nodes.map(|n| move |id: u32| n.get(&id).copied());
     let nodes_fn: Option<&NodePos> = lookup.as_ref().map(|f| f as &NodePos);
-    let meta = std::fs::metadata(path).with_context(|| format!("OBRRT_SPEC: {path}"))?;
+    let meta = obrrt_core::sys::fs::metadata(path).with_context(|| format!("OBRRT_SPEC: {path}"))?;
     let files: Vec<String> = if meta.is_dir() {
-        let mut v: Vec<String> = std::fs::read_dir(path)?
+        let mut v: Vec<String> = obrrt_core::sys::fs::read_dir(path)?
             .filter_map(|e| e.ok())
             .map(|e| e.path())
             .filter(|p| p.extension().is_some_and(|x| x == "json"))
@@ -550,7 +550,7 @@ pub fn load(path: &str, run_dir: Option<&str>) -> Result<Vec<Spec>> {
     };
     let mut out = Vec::new();
     for f in files {
-        let text = std::fs::read_to_string(&f).with_context(|| format!("reading {f}"))?;
+        let text = obrrt_core::sys::fs::read_to_string(&f).with_context(|| format!("reading {f}"))?;
         out.extend(parse_doc(&text, &f, nodes_fn)?);
     }
     let mut keys = std::collections::HashSet::new();
@@ -567,9 +567,9 @@ pub fn load(path: &str, run_dir: Option<&str>) -> Result<Vec<Spec>> {
 pub fn from_env() -> Result<Option<&'static [Arc<Spec>]>> {
     static SPECS: OnceLock<Option<Vec<Arc<Spec>>>> = OnceLock::new();
     if SPECS.get().is_none() {
-        let v = match std::env::var("OBRRT_SPEC") {
+        let v = match obrrt_core::sys::env::var("OBRRT_SPEC") {
             Ok(p) if !p.is_empty() => {
-                let run = std::env::var("OBRRT_SPEC_RUN").ok();
+                let run = obrrt_core::sys::env::var("OBRRT_SPEC_RUN").ok();
                 let specs = load(&p, run.as_deref())?;
                 eprintln!("OBRRT_SPEC: {} spec objectives from {p}: {}", specs.len(), specs.iter().map(|s| s.label()).collect::<Vec<_>>().join(", "));
                 Some(specs.into_iter().map(Arc::new).collect())

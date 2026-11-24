@@ -19,7 +19,7 @@ const RADIUS: f32 = 150.0;
 pub fn swim_targets() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ON.get_or_init(|| {
-        let on = std::env::var("OBRRT_SWIM_TARGETS").is_ok_and(|v| v == "1");
+        let on = obrrt_core::sys::env::var("OBRRT_SWIM_TARGETS").is_ok_and(|v| v == "1");
         if on {
             // The floor under a point bounds its depth (geo::floor_below).
             obrrt_core::geo::want_static_floors();
@@ -64,7 +64,7 @@ fn pace_limit(start: &St, p: [f32; 3]) -> u32 {
     if !super::time::pace_on() {
         return u32::MAX;
     }
-    let speed = *SPEED.get_or_init(|| std::env::var("OBRRT_PACE_DIST").ok().and_then(|v| v.parse().ok()).unwrap_or(20.0));
+    let speed = *SPEED.get_or_init(|| obrrt_core::sys::env::var("OBRRT_PACE_DIST").ok().and_then(|v| v.parse().ok()).unwrap_or(20.0));
     (start.dist(p) / speed + PACE_GRACE) as u32
 }
 

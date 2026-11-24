@@ -103,7 +103,7 @@ pub enum Mode {
 /// approach and door aim (see [`arc`]). Off by default (byte-identical).
 pub fn arc_on() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var("OBRRT_LAKITU_ARC").is_ok_and(|v| v == "1"))
+    *ON.get_or_init(|| obrrt_core::sys::env::var("OBRRT_LAKITU_ARC").is_ok_and(|v| v == "1"))
 }
 
 pub struct LakituSkip {
@@ -136,7 +136,7 @@ fn arrived(s: &St) -> bool {
 /// one objective, the arrival is judged by whether the door opens.
 fn through_door() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var("OBRRT_LAKITU_THROUGH_DOOR").is_ok_and(|v| v == "1"))
+    *ON.get_or_init(|| obrrt_core::sys::env::var("OBRRT_LAKITU_THROUGH_DOOR").is_ok_and(|v| v == "1"))
 }
 
 /// Frames of the door's opening animation, until the warp (door pull ~30).
@@ -999,7 +999,7 @@ pub mod arc {
 
     pub fn debug() -> bool {
         static D: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-        *D.get_or_init(|| std::env::var("LAKITU_DEBUG").is_ok())
+        *D.get_or_init(|| obrrt_core::sys::env::var("LAKITU_DEBUG").is_ok())
     }
 
     pub(super) fn rad_to_yaw(r: f32) -> i16 {
@@ -1306,7 +1306,7 @@ pub mod hill {
     /// policy/NOTES-divedrop.md).
     fn dive_enabled() -> bool {
         static F: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-        *F.get_or_init(|| std::env::var("OBRRT_HILL_DIVE").is_ok_and(|v| v != "0"))
+        *F.get_or_init(|| obrrt_core::sys::env::var("OBRRT_HILL_DIVE").is_ok_and(|v| v != "0"))
     }
 
     /// Where hop `h`, started now from the ground state `s`, lands.

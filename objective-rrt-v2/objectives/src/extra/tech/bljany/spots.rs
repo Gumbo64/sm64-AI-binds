@@ -44,7 +44,7 @@ use super::objscan::Frame;
 
 pub fn on() -> bool {
     static ON: OnceLock<bool> = OnceLock::new();
-    *ON.get_or_init(|| std::env::var("OBRRT_BLJ_SPOTS").is_ok_and(|v| v == "1"))
+    *ON.get_or_init(|| obrrt_core::sys::env::var("OBRRT_BLJ_SPOTS").is_ok_and(|v| v == "1"))
 }
 
 pub const MERGE_DIST: f32 = 100.0;
@@ -139,14 +139,14 @@ pub fn install() {
             let i = note(zone, "static", if riser { "Riser" } else { "Preset" }, start, yaw.unwrap_or(0), start, "preset", 0, None, false);
             reg().lock().unwrap().spots[i].runs.push(format!("preset:{name}"));
         }
-        if let Ok(path) = std::env::var("OBRRT_BLJ_SPOTS_CATALOG") {
+        if let Ok(path) = obrrt_core::sys::env::var("OBRRT_BLJ_SPOTS_CATALOG") {
             load_catalog(&path);
         }
     });
 }
 
 fn load_catalog(path: &str) {
-    let Ok(text) = std::fs::read_to_string(path) else {
+    let Ok(text) = obrrt_core::sys::fs::read_to_string(path) else {
         eprintln!("blj spots: catalog {path} unreadable");
         return;
     };
@@ -408,13 +408,13 @@ pub fn write(dir: &str) {
         out.push_str(&spot_json(s).to_string());
         out.push('\n');
     }
-    let _ = std::fs::write(format!("{dir}/blj_spots.jsonl"), out);
+    let _ = obrrt_core::sys::fs::write(format!("{dir}/blj_spots.jsonl"), out);
     let mut m = String::new();
     for x in &r.misses {
         m.push_str(&x.to_string());
         m.push('\n');
     }
-    let _ = std::fs::write(format!("{dir}/blj_misses.jsonl"), m);
+    let _ = obrrt_core::sys::fs::write(format!("{dir}/blj_misses.jsonl"), m);
     let mut zones = serde_json::Map::new();
     for z in &r.miss_zones {
         if !obrrt_core::mover::published(*z) {
@@ -426,7 +426,7 @@ pub fn write(dir: &str) {
             json!({"floors": dump(obrrt_core::geo::static_floors(*z)), "ceils": dump(obrrt_core::geo::static_ceils(*z)), "walls": dump(obrrt_core::geo::static_walls(*z))}),
         );
     }
-    let _ = std::fs::write(format!("{dir}/blj_zones.json"), Value::Object(zones).to_string());
+    let _ = obrrt_core::sys::fs::write(format!("{dir}/blj_zones.json"), Value::Object(zones).to_string());
 }
 
 /// Test / lab access: a miss record for `st` as if its chain started

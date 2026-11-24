@@ -42,35 +42,35 @@ const MARGIN: u32 = 1;
 /// The margin, overridable with OBRRT_POSTIME_MARGIN (frames) for experiments.
 fn margin() -> u32 {
     static M: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
-    *M.get_or_init(|| std::env::var("OBRRT_POSTIME_MARGIN").ok().and_then(|v| v.parse().ok()).unwrap_or(MARGIN))
+    *M.get_or_init(|| obrrt_core::sys::env::var("OBRRT_POSTIME_MARGIN").ok().and_then(|v| v.parse().ok()).unwrap_or(MARGIN))
 }
 
 fn env_f32(name: &str, default: f32) -> f32 {
-    std::env::var(name).ok().and_then(|v| v.parse().ok()).unwrap_or(default)
+    obrrt_core::sys::env::var(name).ok().and_then(|v| v.parse().ok()).unwrap_or(default)
 }
 
 /// `OBRRT_POSTIME=self`: the old PosTime (b's own position and frame).
 pub fn postime_self() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var("OBRRT_POSTIME").is_ok_and(|v| v == "self"))
+    *ON.get_or_init(|| obrrt_core::sys::env::var("OBRRT_POSTIME").is_ok_and(|v| v == "self"))
 }
 
 /// `OBRRT_POSTIME_N`: candidate points per b (default 2).
 pub fn postime_n() -> usize {
     static N: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
-    *N.get_or_init(|| std::env::var("OBRRT_POSTIME_N").ok().and_then(|v| v.parse().ok()).unwrap_or(2))
+    *N.get_or_init(|| obrrt_core::sys::env::var("OBRRT_POSTIME_N").ok().and_then(|v| v.parse().ok()).unwrap_or(2))
 }
 
 /// `OBRRT_POSTIME_BUCKET`: frames per deadline bucket in the key (default 10).
 fn bucket() -> u32 {
     static B: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
-    *B.get_or_init(|| std::env::var("OBRRT_POSTIME_BUCKET").ok().and_then(|v| v.parse().ok()).unwrap_or(10u32).max(1))
+    *B.get_or_init(|| obrrt_core::sys::env::var("OBRRT_POSTIME_BUCKET").ok().and_then(|v| v.parse().ok()).unwrap_or(10u32).max(1))
 }
 
 /// `OBRRT_PACE=1`: travel objectives push for speed (see the module doc).
 pub(super) fn pace_on() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var("OBRRT_PACE").is_ok_and(|v| v == "1"))
+    *ON.get_or_init(|| obrrt_core::sys::env::var("OBRRT_PACE").is_ok_and(|v| v == "1"))
 }
 
 /// The pace ladder (u/frame): `OBRRT_PACE_SPEED`, `OBRRT_PACE_SPEED2`.
@@ -87,7 +87,7 @@ fn ladder() -> [f32; 2] {
 /// (its own B/Z/A mutations find long jumps and jump kicks).
 pub(super) fn pace_button(s: &St, target: [f32; 3]) -> u16 {
     static HINT: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    if !pace_on() || !*HINT.get_or_init(|| std::env::var("OBRRT_PACE_HINT").map_or(true, |v| v != "0")) {
+    if !pace_on() || !*HINT.get_or_init(|| obrrt_core::sys::env::var("OBRRT_PACE_HINT").map_or(true, |v| v != "0")) {
         return 0;
     }
     const ACT_DIVE: u32 = 0x0188088A;

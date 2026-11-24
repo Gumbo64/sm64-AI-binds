@@ -10,7 +10,7 @@
 //!   are rebuilt from their nearest saved ancestor (`base`) by replaying.
 
 use std::collections::HashMap;
-use std::fs::{self, File};
+use obrrt_core::sys::fs::{self, File};
 use std::hash::{Hash, Hasher};
 use std::io::{BufWriter, Write};
 
@@ -187,7 +187,7 @@ impl Archive {
             save_bytes: 0,
             pending_free: Vec::new(),
             replaced: 0,
-            drop_stale: std::env::var("OSS_KEEP_STALE").is_err(),
+            drop_stale: obrrt_core::sys::env::var("OSS_KEEP_STALE").is_err(),
             stale: 0,
             groups: vec![Group::new()],
             rank: vec![0],

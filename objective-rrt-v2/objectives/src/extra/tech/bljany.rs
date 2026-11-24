@@ -537,7 +537,7 @@ impl BljAny {
 /// OBRRT_BLJ_RISERS=1: the `Riser` clause.
 fn risers_on() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var("OBRRT_BLJ_RISERS").is_ok_and(|v| v == "1"))
+    *ON.get_or_init(|| obrrt_core::sys::env::var("OBRRT_BLJ_RISERS").is_ok_and(|v| v == "1"))
 }
 
 /// The setup: facing away from the riser (stair: backwards into it) or
@@ -720,7 +720,7 @@ fn riser_overlay(r: riser::Riser, mode: RMode, p: [f32; 3], fast: bool) -> PadOv
 /// OBRRT_BLJ_WALLS=1: the `Wall` clause.
 fn walls_on() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var("OBRRT_BLJ_WALLS").is_ok_and(|v| v == "1"))
+    *ON.get_or_init(|| obrrt_core::sys::env::var("OBRRT_BLJ_WALLS").is_ok_and(|v| v == "1"))
 }
 
 /// The pose: this far out of the pinned point (along the wall's normal),

@@ -27,7 +27,7 @@ use crate::{Obj, St};
 /// OBRRT_BLJ_SCAN_OBJECTS=1.
 pub fn on() -> bool {
     static ON: OnceLock<bool> = OnceLock::new();
-    *ON.get_or_init(|| std::env::var("OBRRT_BLJ_SCAN_OBJECTS").is_ok_and(|v| v == "1"))
+    *ON.get_or_init(|| crate::sys::env::var("OBRRT_BLJ_SCAN_OBJECTS").is_ok_and(|v| v == "1"))
 }
 
 /// Surfaces with a vertex within this of Mario (horizontally) are kept.

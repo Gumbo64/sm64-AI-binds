@@ -418,7 +418,7 @@ fn selection_cost() {
         let a = two_groups(1_000_000, 1000, grouped);
         let mut rng = SmallRng::seed_from_u64(1);
         let n = 20_000;
-        let t = std::time::Instant::now();
+        let t = obrrt_core::sys::Instant::now();
         let mut sink = 0;
         for _ in 0..n {
             sink ^= a.select(&mut rng, 256);
@@ -433,9 +433,9 @@ fn selection_cost() {
 #[test]
 fn every_kind_builds_and_evaluates() {
     let mut kinds = std::collections::BTreeSet::new();
-    for entry in std::fs::read_dir("src/objectives").unwrap() {
+    for entry in obrrt_core::sys::fs::read_dir("src/objectives").unwrap() {
         let path = entry.unwrap().path();
-        let src = std::fs::read_to_string(&path).unwrap();
+        let src = obrrt_core::sys::fs::read_to_string(&path).unwrap();
         let Some(start) = src.find("pub fn build(") else { continue };
         let body = &src[start..];
         let body = &body[..body.find("\n}\n").unwrap_or(body.len())];
@@ -586,7 +586,7 @@ fn best_frames_per_objective_match_a_full_scan() {
 /// for every level area, unique names, and evaluates at each Stage.
 #[test]
 fn star120_schema_loads_and_evaluates() {
-    let Ok(text) = std::fs::read_to_string("schemas/star120.json") else { return };
+    let Ok(text) = obrrt_core::sys::fs::read_to_string("schemas/star120.json") else { return };
     let t = Tree::load(&text).unwrap();
     let mut names = std::collections::HashSet::new();
     for i in &t.insts {
@@ -614,12 +614,12 @@ fn write_indexes_cells_jsonl() {
     let mut a = archive();
     a.merge(roll_from(&a, 0, &[(1, 3, false), (2, 7, true)]));
     a.merge(roll_from(&a, 1, &[(3, 2, false)]));
-    let dir = std::env::temp_dir().join(format!("oss-write-test-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
+    let dir = obrrt_core::sys::env::temp_dir().join(format!("oss-write-test-{}", std::process::id()));
+    obrrt_core::sys::fs::create_dir_all(&dir).unwrap();
     let d = dir.to_str().unwrap();
     a.write(d).unwrap();
-    let jsonl = std::fs::read(dir.join("cells.jsonl")).unwrap();
-    let meta = std::fs::read(dir.join("cells.meta")).unwrap();
+    let jsonl = obrrt_core::sys::fs::read(dir.join("cells.jsonl")).unwrap();
+    let meta = obrrt_core::sys::fs::read(dir.join("cells.meta")).unwrap();
     assert_eq!(&meta[..4], b"OSSM");
     let n = u64::from_le_bytes(meta[8..16].try_into().unwrap()) as usize;
     assert_eq!(n, a.cells.len());
@@ -636,10 +636,10 @@ fn write_indexes_cells_jsonl() {
         assert_eq!(line["frames"].as_u64().unwrap(), u32::from_le_bytes(arr(o_fr, i, 4).try_into().unwrap()) as u64);
         assert_eq!(u32::from_le_bytes(arr(o_zone, i, 4).try_into().unwrap()), 0);
     }
-    let s: serde_json::Value = serde_json::from_slice(&std::fs::read(dir.join("summary.json")).unwrap()).unwrap();
+    let s: serde_json::Value = serde_json::from_slice(&obrrt_core::sys::fs::read(dir.join("summary.json")).unwrap()).unwrap();
     assert_eq!(s["cells_jsonl_bytes"].as_u64().unwrap() as usize, jsonl.len());
     assert_eq!(s["areas"][0]["n"].as_u64().unwrap() as usize, n);
-    std::fs::remove_dir_all(&dir).unwrap();
+    obrrt_core::sys::fs::remove_dir_all(&dir).unwrap();
 }
 
 #[test]
@@ -650,10 +650,10 @@ fn write_grids_cells_by_area_and_position() {
     for (c, p) in a.cells.iter_mut().zip(poses) {
         c.pos = p;
     }
-    let dir = std::env::temp_dir().join(format!("oss-grid-test-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
+    let dir = obrrt_core::sys::env::temp_dir().join(format!("oss-grid-test-{}", std::process::id()));
+    obrrt_core::sys::fs::create_dir_all(&dir).unwrap();
     a.write(dir.to_str().unwrap()).unwrap();
-    let g = std::fs::read(dir.join("cells.grid")).unwrap();
+    let g = obrrt_core::sys::fs::read(dir.join("cells.grid")).unwrap();
     let u32_at = |o: usize| u32::from_le_bytes(g[o..o + 4].try_into().unwrap());
     let i16_at = |o: usize| i16::from_le_bytes(g[o..o + 2].try_into().unwrap());
     assert_eq!(&g[..4], b"OSSG");
@@ -676,5 +676,5 @@ fn write_grids_cells_by_area_and_position() {
     }
     assert!(seen.iter().all(|&s| s == 1), "every cell once: {seen:?}");
     assert_eq!(nb, 4, "(0,0,0) and (10,20,30) share a bucket; -1 is its own");
-    std::fs::remove_dir_all(&dir).unwrap();
+    obrrt_core::sys::fs::remove_dir_all(&dir).unwrap();
 }

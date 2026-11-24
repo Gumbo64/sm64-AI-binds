@@ -11,10 +11,10 @@ pub fn from_env() -> Result<(String, Vec<&'static str>), String> {
     crate::moves::install_controller();
     // OBRRT_FAST_MODAL=0: the old dialog/menu macros (A every 4th frame)
     // instead of the frame-optimal policies (menu.rs).
-    if let Ok(v) = std::env::var("OBRRT_FAST_MODAL") {
+    if let Ok(v) = obrrt_core::sys::env::var("OBRRT_FAST_MODAL") {
         crate::set_fast_modal(v != "0");
     }
-    let on = |k: &str| std::env::var(k).is_ok_and(|v| v == "1");
+    let on = |k: &str| obrrt_core::sys::env::var(k).is_ok_and(|v| v == "1");
     // OBRRT_MOVES=1: steering's ground/air mode through the movement library.
     if on("OBRRT_MOVES") {
         crate::moves::install();
@@ -25,7 +25,7 @@ pub fn from_env() -> Result<(String, Vec<&'static str>), String> {
         crate::moves::install_policies();
     }
     // OBRRT_TECH: which speedrun-technique objectives are on (extra/tech/mod.rs).
-    let tech = std::env::var("OBRRT_TECH").unwrap_or_else(|_| "all".into());
+    let tech = obrrt_core::sys::env::var("OBRRT_TECH").unwrap_or_else(|_| "all".into());
     crate::extra::tech::configure(&tech)?;
     Ok((tech, crate::extra::tech::enabled_names()))
 }

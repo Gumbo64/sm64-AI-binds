@@ -35,7 +35,7 @@ struct Args {
 }
 
 fn parse_args() -> Result<Args> {
-    let a: Vec<String> = std::env::args().collect();
+    let a: Vec<String> = obrrt_core::sys::env::args().collect();
     if a.len() < 3 {
         bail!("usage: spec-validate <spec.json|dir> <run_dir> [--node ID] [--schema FILE] [--from F] [--to F] [--jump X] [--json OUT] [--rom FILE] [--trace N]");
     }
@@ -78,7 +78,7 @@ struct Row {
 }
 
 fn read_nodes(run: &str) -> Result<HashMap<u32, Row>> {
-    let csv = std::fs::read_to_string(format!("{run}/nodes.csv")).with_context(|| format!("{run}/nodes.csv"))?;
+    let csv = obrrt_core::sys::fs::read_to_string(format!("{run}/nodes.csv")).with_context(|| format!("{run}/nodes.csv"))?;
     let mut out = HashMap::new();
     for l in csv.lines().skip(1) {
         let c: Vec<&str> = l.split(',').collect();
@@ -153,7 +153,7 @@ fn main() -> Result<()> {
     }
     chain.reverse();
     let schema = match &args.schema {
-        Some(f) => Some(objective_scattershot::objective::Tree::load(&std::fs::read_to_string(f)?)?),
+        Some(f) => Some(objective_scattershot::objective::Tree::load(&obrrt_core::sys::fs::read_to_string(f)?)?),
         None => None,
     };
 
@@ -466,7 +466,7 @@ fn main() -> Result<()> {
         let stem = std::path::Path::new(&args.run).file_name().map_or("run".into(), |s| s.to_string_lossy().into_owned());
         format!("{stem}-validate.json")
     });
-    std::fs::write(&path, serde_json::to_string_pretty(&report)?)?;
+    obrrt_core::sys::fs::write(&path, serde_json::to_string_pretty(&report)?)?;
     println!("\njson: {path}");
     Ok(())
 }

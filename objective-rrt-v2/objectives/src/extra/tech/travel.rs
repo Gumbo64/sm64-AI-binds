@@ -155,13 +155,13 @@ pub(super) fn can_start(s: &St) -> bool {
 /// targets that are route goals (see [`generate_aim`]).
 pub(super) fn aim_on() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var("OBRRT_TRAVEL_AIM").is_ok_and(|v| v == "1"))
+    *ON.get_or_init(|| obrrt_core::sys::env::var("OBRRT_TRAVEL_AIM").is_ok_and(|v| v == "1"))
 }
 
 /// Goals an aimed attempt may target per b (`OBRRT_TRAVEL_AIM_N`, 3).
 fn aim_n() -> usize {
     static N: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
-    *N.get_or_init(|| std::env::var("OBRRT_TRAVEL_AIM_N").ok().and_then(|v| v.parse().ok()).unwrap_or(3))
+    *N.get_or_init(|| obrrt_core::sys::env::var("OBRRT_TRAVEL_AIM_N").ok().and_then(|v| v.parse().ok()).unwrap_or(3))
 }
 
 /// The weight of an aimed objective, × [`move_weight`]`(0.5)`
@@ -170,7 +170,7 @@ fn aim_n() -> usize {
 /// b); at 1 they got about 1 attempt a kind in 60 M frames.
 pub(super) fn aim_weight() -> f64 {
     static W: std::sync::OnceLock<f64> = std::sync::OnceLock::new();
-    move_weight(0.5) * *W.get_or_init(|| std::env::var("OBRRT_TRAVEL_AIM_W").ok().and_then(|v| v.parse().ok()).unwrap_or(10.0))
+    move_weight(0.5) * *W.get_or_init(|| obrrt_core::sys::env::var("OBRRT_TRAVEL_AIM_W").ok().and_then(|v| v.parse().ok()).unwrap_or(10.0))
 }
 
 /// Aimed arrival: horizontal radius and height band around the goal (a

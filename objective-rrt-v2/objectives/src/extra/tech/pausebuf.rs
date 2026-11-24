@@ -36,7 +36,7 @@ pub const TAIL: [u16; 3] = [Z_TRIG, Z_TRIG | START_BUTTON, Z_TRIG];
 
 pub fn on() -> bool {
     static ON: OnceLock<bool> = OnceLock::new();
-    *ON.get_or_init(|| std::env::var("OBRRT_PAUSE_BUF").is_ok_and(|v| v == "1"))
+    *ON.get_or_init(|| obrrt_core::sys::env::var("OBRRT_PAUSE_BUF").is_ok_and(|v| v == "1"))
 }
 
 /// Position in an open pause sequence: `Some(k)` if the next pad is TAIL[k].
@@ -52,7 +52,7 @@ fn open_seq(played: &[GamePad]) -> Option<usize> {
 /// from -246, the moat bank's from -539).
 fn min_speed() -> f32 {
     static V: OnceLock<f32> = OnceLock::new();
-    *V.get_or_init(|| std::env::var("OBRRT_PAUSE_BUF_MIN").ok().and_then(|v| v.parse().ok()).unwrap_or(200.0))
+    *V.get_or_init(|| obrrt_core::sys::env::var("OBRRT_PAUSE_BUF_MIN").ok().and_then(|v| v.parse().ok()).unwrap_or(200.0))
 }
 
 /// Whether Mario is wall-stalled: his last frame (a landing, or a jump that

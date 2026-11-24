@@ -16,7 +16,7 @@ use rand::{Rng, SeedableRng};
 pub fn set() -> Option<&'static [f64]> {
     static S: OnceLock<Option<Vec<f64>>> = OnceLock::new();
     S.get_or_init(|| {
-        let v: Vec<f64> = std::env::var("OBRRT_GAMMA_SET").ok()?.split(',').filter_map(|x| x.trim().parse().ok()).collect();
+        let v: Vec<f64> = obrrt_core::sys::env::var("OBRRT_GAMMA_SET").ok()?.split(',').filter_map(|x| x.trim().parse().ok()).collect();
         (!v.is_empty()).then_some(v)
     })
     .as_deref()
