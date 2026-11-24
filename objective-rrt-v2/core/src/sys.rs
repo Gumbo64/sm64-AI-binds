@@ -9,6 +9,15 @@
 
 #[cfg(not(target_arch = "wasm32"))]
 pub use std::time::Instant;
+
+/// This process's id (`std::process::id`); 0 in the browser, which has no processes ids (std
+/// panics there).
+pub fn process_id() -> u32 {
+    #[cfg(not(target_arch = "wasm32"))]
+    return std::process::id();
+    #[cfg(target_arch = "wasm32")]
+    0
+}
 #[cfg(target_arch = "wasm32")]
 pub use web_time::Instant;
 

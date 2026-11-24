@@ -18,7 +18,7 @@ enum Src<'a> {
     Slice(&'a [u8]),
     /// The game, read through a cache of 4 KB pages fetched on first touch (one `read_state`).
     #[cfg(target_arch = "wasm32")]
-    Game(&'a SM64Game, &'a std::cell::RefCell<HashMap<usize, Box<[u8; PAGE]>>>),
+    Game(&'a SM64Game, &'a std::cell::RefCell<Vec<Option<Box<[u8; PAGE]>>>>),
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -40,16 +40,25 @@ impl Mem<'_> {
             Src::Slice(m) => m[addr..addr + N].try_into().unwrap(),
             #[cfg(target_arch = "wasm32")]
             Src::Game(g, pages) => {
+                // Pages indexed by number (no hashing: this is the per-frame hot path); a field
+                // is looked up once, or twice if it straddles two pages.
                 let mut b = [0u8; N];
                 let mut pages = pages.borrow_mut();
-                for (i, out) in b.iter_mut().enumerate() {
+                let mut i = 0;
+                while i < N {
                     let a = addr + i;
-                    let page = pages.entry(a / PAGE).or_insert_with(|| {
+                    let (pn, off) = (a / PAGE, a % PAGE);
+                    if pn >= pages.len() {
+                        pages.resize_with(pn + 1, || None);
+                    }
+                    let page = pages[pn].get_or_insert_with(|| {
                         let mut p = Box::new([0u8; PAGE]);
-                        g.read_memory(((a / PAGE) * PAGE) as u32, &mut p[..]).expect("read in bounds");
+                        g.read_memory((pn * PAGE) as u32, &mut p[..]).expect("read in bounds");
                         p
                     });
-                    *out = page[a % PAGE];
+                    let n = (N - i).min(PAGE - off);
+                    b[i..i + n].copy_from_slice(&page[off..off + n]);
+                    i += n;
                 }
                 b
             }
@@ -136,7 +145,7 @@ pub fn read_state(game: &SM64Game, frame: u32, objects: bool) -> St {
     // the objects' pass (geometry from whole pools) still takes a slice.
     #[cfg(target_arch = "wasm32")]
     {
-        let pages = std::cell::RefCell::new(HashMap::new());
+        let pages = std::cell::RefCell::new(Vec::new());
         let st = read_state_from(Mem(Src::Game(game, &pages)), frame, objects);
         // The geometry passes read whole pools: all of memory, only when they have work.
         if objects && (crate::geo::observe_floors_wanted(&st) || crate::geo::observe_wanted(&st) || crate::dyngeo::on()) {
