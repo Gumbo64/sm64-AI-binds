@@ -118,6 +118,10 @@ pub struct PosTime {
     /// Near b (`OBRRT_POSTIME=near`): the record's context; starts only
     /// from it. None: the old PosTime at b.
     ctx: Option<obrrt_core::records::Ctx>,
+    /// The pool weight (1 for the drawn ones; a position goal's is `OBRRT_POSGOAL_WEIGHT`).
+    gw: f64,
+    /// Made for a position goal (`PosTime::goal`): its key says so, so the goal's attempts can be told from the rest.
+    goal: bool,
 }
 
 /// A stateless, deterministic pace rung per (b, p) under `OBRRT_PACE=1`:
@@ -140,13 +144,13 @@ fn rung(b: &St, p: [f32; 3]) -> f32 {
 impl PosTime {
     /// The old PosTime: b's position, before b's frame.
     pub fn new(b: &St) -> PosTime {
-        PosTime { p: b.pos, zone: b.zone(), deadline: b.frame.saturating_sub(margin()), pace: rung(b, b.pos), ctx: None }
+        PosTime { p: b.pos, zone: b.zone(), deadline: b.frame.saturating_sub(margin()), pace: rung(b, b.pos), ctx: None, gw: 1.0, goal: false }
     }
 
     /// `p` near b, before `record` (the earliest frame a node in b's zone
     /// and context `ctx` was within [`RADIUS`] of `p`).
     pub fn near(b: &St, p: [f32; 3], record: u32, ctx: obrrt_core::records::Ctx) -> PosTime {
-        PosTime { p, zone: b.zone(), deadline: record.saturating_sub(margin()), pace: rung(b, p), ctx: Some(ctx) }
+        PosTime { p, zone: b.zone(), deadline: record.saturating_sub(margin()), pace: rung(b, p), ctx: Some(ctx), gw: 1.0, goal: false }
     }
 
     /// Candidate `p` near b: a PosTime if some node of b's zone and context
@@ -154,6 +158,19 @@ impl PosTime {
     pub fn sample(b: &St, p: [f32; 3]) -> Option<PosTime> {
         let c = obrrt_core::records::ctx(b);
         obrrt_core::records::earliest_near(b.zone(), c, p, RADIUS).map(|f| PosTime::near(b, p, f, c))
+    }
+
+    /// A position goal's PosTime (`obrrt_core::posgoal`) from `b`'s zone: before the tree's record within
+    /// [`RADIUS`] of `p` (in b's zone and progress context), or, where no node of that context has been
+    /// there yet, before an ETA bound from b (twice the walking frames plus 90). Pool weight
+    /// `OBRRT_POSGOAL_WEIGHT` (default 10), so the goal gets a share of the draws.
+    pub fn goal(b: &St, p: [f32; 3]) -> PosTime {
+        let c = obrrt_core::records::ctx(b);
+        let record = obrrt_core::records::earliest_near(b.zone(), c, p, RADIUS).unwrap_or_else(|| b.frame + (2.0 * frames_for(b.dist(p))) as u32 + 90);
+        let mut o = PosTime::near(b, p, record, c);
+        o.gw = env_f32("OBRRT_POSGOAL_WEIGHT", 10.0) as f64;
+        o.goal = true;
+        o
     }
 
     /// Arrive before this frame, for an attempt from `start`: the earlier of
@@ -187,10 +204,11 @@ impl Objective for PosTime {
                 self.zone, x.0, x.1, x.2, c(self.p[0]), c(self.p[1]), c(self.p[2]), self.deadline / bucket()
             ),
         };
+        let k = if self.goal { format!("{k} goal") } else { k };
         if self.pace > 0.0 { format!("{k} pace {}", self.pace) } else { k }
     }
     fn obj_weight(&self, _b: &St) -> f64 {
-        1.0
+        self.gw
     }
     fn base_criteria(&self, s: &St) -> bool {
         let d = s.dist(self.p);

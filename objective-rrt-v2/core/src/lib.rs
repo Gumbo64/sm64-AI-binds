@@ -10,6 +10,7 @@ pub mod geo;
 pub mod king;
 pub mod layout;
 pub mod mover;
+pub mod posgoal;
 mod read;
 pub mod records;
 pub mod sys;
