@@ -227,19 +227,52 @@ pub trait AttemptPeers: Send + Sync {
 pub struct SharedExecutor {
     pub peers: Arc<dyn AttemptPeers>,
     round: std::sync::atomic::AtomicU64,
+    /// Where the per-25-rounds timing line goes (the browser build's log), if anywhere.
+    pub log: Option<Arc<dyn Fn(String) + Send + Sync>>,
+    stats: std::sync::Mutex<[f64; 6]>,
 }
 
 impl SharedExecutor {
     pub fn new(peers: Arc<dyn AttemptPeers>) -> SharedExecutor {
-        SharedExecutor { peers, round: std::sync::atomic::AtomicU64::new(0) }
+        SharedExecutor { peers, round: std::sync::atomic::AtomicU64::new(0), log: None, stats: std::sync::Mutex::new([0.0; 6]) }
+    }
+
+    /// Timing lines (every 20 rounds) go to `log`.
+    pub fn with_log(mut self, log: Arc<dyn Fn(String) + Send + Sync>) -> SharedExecutor {
+        self.log = Some(log);
+        self
     }
 
     fn run_round(&self, round: u64, n: usize, one: &OneAttempt<'_>) -> Result<Vec<AttemptResult>> {
+        use obrrt_core::sys::Instant;
+        let t0 = Instant::now();
+        let (mut run, mut mine, mut bytes) = (0.0, 0usize, 0usize);
         while let Some(i) = self.peers.claim(round, n)? {
+            let t = Instant::now();
             let r = one(i);
-            self.peers.put(round, i, &encode(&r))?;
+            let enc = encode(&r);
+            run += t.elapsed().as_secs_f64();
+            mine += 1;
+            bytes += enc.len();
+            self.peers.put(round, i, &enc)?;
         }
-        self.peers.collect(round, n)?.iter().map(|b| Ok(decode(b))).collect()
+        let t1 = Instant::now();
+        let raw = self.peers.collect(round, n)?;
+        let wait = t1.elapsed().as_secs_f64();
+        let t2 = Instant::now();
+        let out: Vec<AttemptResult> = raw.iter().map(|b| decode(b)).collect();
+        let dec = t2.elapsed().as_secs_f64();
+        if let Some(log) = &self.log {
+            let mut st = self.stats.lock().unwrap();
+            for (a, b) in st.iter_mut().zip([run, wait, dec, mine as f64, bytes as f64, t0.elapsed().as_secs_f64()]) {
+                *a += b;
+            }
+            if round % 20 == 0 {
+                log(format!("shared rounds {round}: per round run {:.2}s wait {:.2}s decode {:.2}s ({:.1} attempts, {:.0} KB made) of {:.2}s", st[0] / 20.0, st[1] / 20.0, st[2] / 20.0, st[3] / 20.0, st[4] / 20.0e3, st[5] / 20.0));
+                *st = [0.0; 6];
+            }
+        }
+        Ok(out)
     }
 }
 
