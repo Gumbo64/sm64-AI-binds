@@ -43,7 +43,7 @@ pub fn set_early_dialog_end(on: bool) {
 /// An object's identity across states and replays: its behaviour and its
 /// home (spawn) position, rounded; for objects without a home (0,0,0),
 /// `[i32::MIN, pool slot, 0]`. Cheap to compare.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct ObjId {
     pub bhv: u32,
     pub home: [i32; 3],
@@ -56,7 +56,7 @@ impl std::fmt::Display for ObjId {
 }
 
 /// One object in the game's object pool, as an objective sees it.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Obj {
     pub id: ObjId,
     /// Index in `gObjectPool`; stable while the object is loaded.
@@ -107,7 +107,7 @@ impl Obj {
 
 /// A snapshot of the game after a frame: Mario, progress, and (when asked
 /// for) the loaded objects.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct St {
     /// Frames since power-on.
     pub frame: u32,

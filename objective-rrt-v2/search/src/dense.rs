@@ -178,7 +178,7 @@ pub struct Out {
     pub stats: Stats,
 }
 
-#[derive(Debug, Clone, Copy, Default, serde::Serialize)]
+#[derive(Debug, Clone, Copy, Default, serde::Serialize, serde::Deserialize)]
 pub struct Stats {
     /// States looked at, new against the tree's index, beaten by a sooner
     /// candidate of the same attempt, dropped by the cap, returned.

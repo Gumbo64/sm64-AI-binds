@@ -12,6 +12,7 @@ serde.workspace = true
 serde_json.workspace = true
 sm64-binds.workspace = true
 lz4_flex.workspace = true
+postcard = { version = "1", default-features = false, features = ["use-std"] }
 obrrt-core.workspace = true
 obrrt-objectives.workspace = true
 # OBRRT_REROUTE_SCHEMA: an objective-scattershot schema's key as "the same state".

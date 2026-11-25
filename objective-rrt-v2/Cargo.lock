@@ -1247,7 +1247,10 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "rand",
+ "serde",
  "sm64-binds",
+ "wasm-bindgen",
+ "web-time",
 ]
 
 [[package]]
@@ -1309,6 +1312,7 @@ dependencies = [
  "objective-scattershot",
  "obrrt-core",
  "obrrt-objectives",
+ "postcard",
  "rand",
  "rayon",
  "serde",
@@ -1960,9 +1964,7 @@ checksum = "826167069c09b99d56f31e9ae5c99049e932a98c9dc2dac47645b08dbbf76ba7"
 
 [[package]]
 name = "sm64-binds"
-version = "2.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "515dc6490cce3941cd447ff95923f8859e43b71d8e3b3fcef5162bf95f78b2cc"
+version = "2.3.0"
 dependencies = [
  "anyhow",
  "flate2",
@@ -2326,6 +2328,7 @@ dependencies = [
  "wasmer-derive",
  "wasmer-types",
  "wasmer-vm",
+ "wasmparser",
  "windows-sys 0.59.0",
 ]
 
@@ -2447,6 +2450,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "04f17a5917c2ddd3819e84c661fae0d6ba29d7b9c1f0e96c708c65a9c4188e11"
 dependencies = [
  "bitflags 2.13.2",
+]
+
+[[package]]
+name = "web-time"
+version = "1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5a6580f308b1fad9207618087a65c04e7a10bc77e02c8e84e9b00dd4b12fa0bb"
+dependencies = [
+ "js-sys",
+ "wasm-bindgen",
 ]
 
 [[package]]
@@ -2710,5 +2723,17 @@ dependencies = [
 ]
 
 [[patch.unused]]
-name = "sm64-binds"
-version = "2.3.0"
+name = "obrrt-core"
+version = "0.1.0"
+
+[[patch.unused]]
+name = "obrrt-objectives"
+version = "0.1.0"
+
+[[patch.unused]]
+name = "obrrt-search"
+version = "0.1.0"
+
+[[patch.unused]]
+name = "obrrt-spec"
+version = "0.1.0"

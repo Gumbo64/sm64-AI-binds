@@ -31,5 +31,6 @@ pub mod speed;
 pub mod steer;
 pub mod store;
 pub mod tree;
+pub mod wire;
 
 pub use engine::{Config, Engine};

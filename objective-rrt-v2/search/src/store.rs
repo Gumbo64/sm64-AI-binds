@@ -8,6 +8,15 @@ use crate::game::{GameSave, Pert};
 
 const PAGE: usize = 4096;
 
+/// A [`Delta`] as it crosses between workers (see wire.rs).
+#[derive(serde::Serialize, serde::Deserialize)]
+pub struct DeltaWire {
+    pub base: u16,
+    pub pages: Vec<u32>,
+    pub xor: Vec<u8>,
+    pub pert: Option<Vec<u8>>,
+}
+
 #[derive(Default, Clone)]
 pub struct Delta {
     /// Index of the base state this is relative to.
@@ -38,6 +47,15 @@ impl Delta {
     /// rebuilt from its saved ancestor (`Tree::load_into`). `apply` fails.
     pub fn none() -> Delta {
         Delta { base: u16::MAX, pages: Vec::new(), xor: Vec::new(), pert: None }
+    }
+
+    pub fn to_wire(&self) -> DeltaWire {
+        DeltaWire { base: self.base, pages: self.pages.clone(), xor: self.xor.clone(), pert: self.pert.as_ref().map(crate::game::pert_bytes) }
+    }
+
+    pub fn from_wire(w: DeltaWire) -> Result<Delta> {
+        let pert = w.pert.map(|b| crate::game::pert_from_bytes(&b)).transpose()?;
+        Ok(Delta { base: w.base, pages: w.pages, xor: w.xor, pert })
     }
 
     pub fn is_none(&self) -> bool {

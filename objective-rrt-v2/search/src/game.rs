@@ -33,6 +33,11 @@ mod hooked {
         /// Plays one frame of `game`, wanting `wanted`; returns the pad played.
         fn step(&mut self, game: &mut SM64Game, wanted: GamePad) -> Result<GamePad>;
         fn clone_box(&self) -> Box<dyn StepHook>;
+        /// The hook's state as bytes, for a save that crosses to another worker (see
+        /// [`set_pert_decoder`]); empty when it has none.
+        fn export(&self) -> Vec<u8> {
+            Vec::new()
+        }
         /// For downstream crates to recover their concrete hook.
         fn as_any(&self) -> &dyn Any;
     }
@@ -41,6 +46,22 @@ mod hooked {
         fn clone(&self) -> Self {
             self.clone_box()
         }
+    }
+
+    type PertDecoder = fn(&[u8]) -> Result<Box<dyn StepHook>>;
+    static PERT_DECODER: std::sync::OnceLock<PertDecoder> = std::sync::OnceLock::new();
+
+    /// Registers how a hook's [`StepHook::export`] bytes become a hook again (once per process).
+    pub fn set_pert_decoder(f: PertDecoder) {
+        let _ = PERT_DECODER.set(f);
+    }
+
+    pub fn pert_bytes(p: &Box<dyn StepHook>) -> Vec<u8> {
+        p.export()
+    }
+
+    pub fn pert_from_bytes(b: &[u8]) -> Result<Box<dyn StepHook>> {
+        (PERT_DECODER.get().ok_or_else(|| anyhow::anyhow!("no perturbation decoder registered (game::set_pert_decoder)"))?)(b)
     }
 
     /// A game whose every frame goes through `hook`.
@@ -154,4 +175,13 @@ pub fn wrap(s: sm64_binds::SaveState, _: &Pert) -> GameSave {
 #[cfg(feature = "hooked")]
 pub fn wrap(s: sm64_binds::SaveState, p: &Pert) -> GameSave {
     HookedSave { game: s, hook: p.clone() }
+}
+
+#[cfg(not(feature = "hooked"))]
+pub fn pert_bytes(_: &Pert) -> Vec<u8> {
+    Vec::new()
+}
+#[cfg(not(feature = "hooked"))]
+pub fn pert_from_bytes(_: &[u8]) -> anyhow::Result<Pert> {
+    Ok(())
 }

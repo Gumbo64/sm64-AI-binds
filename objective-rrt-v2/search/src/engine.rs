@@ -772,6 +772,8 @@ pub struct Engine {
     /// Called after `on_round`, with the engine mutable: the browser build's tree sync with the other
     /// workers (`sync_candidates`, `sync_import`).
     pub on_sync: Option<Box<dyn FnMut(&mut Engine) + Send>>,
+    /// Where a round's attempts run (None: the rayon pool; see wire.rs).
+    pub executor: Option<Arc<dyn crate::wire::AttemptExecutor>>,
     /// Nodes already offered to the other workers / paths already imported (by hash).
     sync_sent: HashSet<u32>,
     sync_seen: HashSet<u64>,
@@ -1009,6 +1011,7 @@ impl Engine {
             eta_improved: false,
             on_round: None,
             on_sync: None,
+            executor: None,
             sync_sent: HashSet::new(),
             sync_seen: HashSet::new(),
             spick: crate::schemapick::from_env()?,
@@ -4869,11 +4872,8 @@ impl Engine {
             let round_t0 = self.total_frames;
             let run_t = Instant::now();
             let (load_ns, att_ns) = (std::sync::atomic::AtomicU64::new(0), std::sync::atomic::AtomicU64::new(0));
-            let results: Vec<Result<Attempt<Delta>>> = plans
-                .par_iter()
-                .zip(seeds.par_iter())
-                .enumerate()
-                .map(|(i, (plan, seed))| {
+            let one = |i: usize| -> Result<Attempt<Delta>> {
+                    let (plan, seed) = (&plans[i], &seeds[i]);
                     let mut w = loop {
                         if let Some(w) = workers.iter().find_map(|w| w.try_lock().ok()) {
                             break w;
@@ -4931,8 +4931,12 @@ impl Engine {
                             plan.stages.iter().map(|(_, o)| o.key()).collect::<Vec<_>>().join(" then ")
                         )
                     })
-                })
-                .collect();
+            };
+            // The attempts: on the rayon pool, or (OBRRT executor, see wire.rs) wherever the executor puts them.
+            let results: Vec<Result<Attempt<Delta>>> = match self.executor.as_ref() {
+                Some(ex) => ex.run(plans.len(), &one),
+                None => (0..plans.len()).into_par_iter().map(&one).collect(),
+            };
             drop(bnb_v); // the snapshot's last holders: met_best is updated in place again
             self.diag_secs[1] += run_t.elapsed().as_secs_f64();
             self.diag_secs[4] += load_ns.into_inner() as f64 * 1e-9;

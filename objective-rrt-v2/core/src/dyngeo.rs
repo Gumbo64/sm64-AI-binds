@@ -34,7 +34,7 @@ pub fn on() -> bool {
 pub const NEAR: f32 = 3500.0;
 
 /// One object surface (vertices as the game stores them, s16).
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct DynSurf {
     /// Owner's pool slot.
     pub slot: u16,
@@ -53,7 +53,7 @@ impl DynSurf {
 
 /// Owner motion: (slot, velocity, angle velocity pitch/yaw/roll, face angle
 /// pitch/yaw/roll).
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Motion {
     pub slot: u16,
     pub vel: [f32; 3],
@@ -62,7 +62,7 @@ pub struct Motion {
 }
 
 /// A state's object collision near Mario.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, serde::Serialize, serde::Deserialize)]
 pub struct DynGeo {
     pub surfs: Vec<DynSurf>,
     /// One per owner (sorted by slot).
@@ -160,7 +160,7 @@ fn table() -> &'static Mutex<(Table, usize)> {
 }
 
 /// Attaches `g` to `st`'s objects (called by read_state).
-pub(crate) fn attach(st: &St, g: DynGeo) {
+pub fn attach(st: &St, g: DynGeo) {
     let Some(objs) = &st.objects else { return };
     let mut t = table().lock().unwrap();
     let (map, limit) = &mut *t;
