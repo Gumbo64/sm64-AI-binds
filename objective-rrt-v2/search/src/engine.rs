@@ -21,6 +21,9 @@ use crate::pool::Pool;
 use crate::store::Delta;
 use crate::tree::Tree;
 
+mod manual;
+pub use manual::ManualInsert;
+
 pub struct Config {
     pub out_dir: String,
     pub seed: u64,
@@ -775,6 +778,11 @@ pub struct Engine {
     /// Nodes already offered to the other workers / paths already imported (by hash).
     sync_sent: HashSet<u32>,
     sync_seen: HashSet<u64>,
+    /// Called after `on_sync`, with the engine mutable: the browser build's hybrid mining
+    /// (human-played nodes, state requests, position goals; see manual.rs).
+    pub on_hybrid: Option<Box<dyn FnMut(&mut Engine) + Send>>,
+    /// Human-played nodes' boosts (manual.rs).
+    manual: manual::Manual,
     /// OBRRT_PICK=schema|schema_kin: start selection by schema cells (schemapick.rs).
     spick: Option<crate::schemapick::SchemaPick>,
     /// Sparse saves: rebuild frames already counted into total_frames.
@@ -1011,6 +1019,8 @@ impl Engine {
             on_sync: None,
             sync_sent: HashSet::new(),
             sync_seen: HashSet::new(),
+            on_hybrid: None,
+            manual: Default::default(),
             spick: crate::schemapick::from_env()?,
             rebuild_counted: 0,
             speed: Default::default(),
@@ -1259,7 +1269,7 @@ impl Engine {
                 _ => 1.0,
             };
             let settle = if SETTLE_RANK.load(std::sync::atomic::Ordering::Relaxed) && !obj.modal() && s.vel[0].hypot(s.vel[2]) < 2.0 && s.vel[1].abs() < 1.0 { 0.5 } else { 1.0 };
-            cands.push((i as u32, h, u * self.start_mult(&n.stats) * crowd * wear * settle * kw as f64));
+            cands.push((i as u32, h, u * self.start_mult(&n.stats) * crowd * wear * settle * kw as f64 * self.manual_start_mult(i)));
         }
         if cands.is_empty() {
             return None;
@@ -2372,6 +2382,8 @@ impl Engine {
             }
         }
         let b = if let Some(b) = goal_b {
+            b
+        } else if let Some(b) = self.manual_pick() {
             b
         } else if !self.route.is_empty() && self.rng.random_bool(self.cfg.route_share) {
             self.route[self.rng.random_range(0..self.route.len())]
@@ -5050,6 +5062,10 @@ impl Engine {
             if let Some(mut f) = self.on_sync.take() {
                 f(self);
                 self.on_sync = Some(f);
+            }
+            if let Some(mut f) = self.on_hybrid.take() {
+                f(self);
+                self.on_hybrid = Some(f);
             }
             if last_report.elapsed() > self.cfg.report_every {
                 last_report = Instant::now();
