@@ -450,6 +450,14 @@ impl Tree {
     }
 
     /// Adds a node; returns its id and whether it advanced the frontier.
+    /// OBRRT_GOOD_MAX_FRAME=<frame>: a state later than this frame (the block's absolute frame count) is not a good exit,
+    /// so the search goes on until it finds one earlier: the anytime miner looking for a run shorter than the best so far.
+    fn too_late(&self, id: u32) -> bool {
+        static MAX: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
+        let m = *MAX.get_or_init(|| obrrt_core::sys::env::var("OBRRT_GOOD_MAX_FRAME").ok().and_then(|v| v.parse().ok()).unwrap_or(u32::MAX));
+        self.nodes[id as usize].st.frame > m
+    }
+
     pub fn add(&mut self, parent: u32, inputs: Vec<GamePad>, st: St, save: Delta, via: &'static str) -> (u32, bool) {
         let id = self.nodes.len() as u32;
         if let Some(r) = &self.records {
@@ -537,7 +545,7 @@ impl Tree {
             // only the 100-coin star, by OBRRT_STOP_PROGRESS, should).
             static NOSTOP: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
             let nostop = *NOSTOP.get_or_init(|| obrrt_core::sys::env::var("OBRRT_EXIT_NOSTOP").is_ok_and(|v| v == "1"));
-            if !nostop && if matches!(l, 6 | 16 | 26) { !skip.contains(&level) } else { good } {
+            if !nostop && if matches!(l, 6 | 16 | 26) { !skip.contains(&level) } else { good } && !self.too_late(id) {
                 self.good_exits += 1;
             }
             self.retire_at(id);
@@ -558,6 +566,7 @@ impl Tree {
         if want != 0
             && self.nodes[id as usize].st.save_flags & want & !self.nodes[0].st.save_flags != 0
             && self.nodes[id as usize].st.controllable()
+            && !self.too_late(id)
         {
             self.good_exits += 1;
         }
@@ -565,6 +574,7 @@ impl Tree {
         if *STOP_PROGRESS.get_or_init(|| obrrt_core::sys::env::var("OBRRT_STOP_PROGRESS").is_ok_and(|v| v == "1"))
             && progress > self.nodes[0].st.progress()
             && self.nodes[id as usize].st.controllable()
+            && !self.too_late(id)
         {
             self.good_exits += 1;
         }
