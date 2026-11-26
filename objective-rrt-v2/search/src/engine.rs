@@ -2296,21 +2296,20 @@ impl Engine {
                 return Some(p);
             }
         }
-        if let Some(p) = self.plan_user_goal() {
-            return Some(p);
-        }
         // Step 1: b from the frontier: a zone uniformly, then an occupied
         // 512-unit cell uniformly, then a state in it (see index_frontier).
         if self.b_index.is_empty() {
             return None;
         }
+        // The bubble: its share of the plans draws b from inside it (over every other b draw below).
+        let bubble_b = self.plan_bubble();
         // OBRRT_GOAL_FOCUS: a goal by its weight, then one of its best cells'
         // states; the goal itself from there, or b as usual.
         let mut goal_b = None;
         // The share falls with the best goal's weight (to a twentieth), so
         // stalled goals give the plans back.
         let goal_share = goal_focus().0 * if goal_explore() { 1.0 } else { self.goal_top.iter().map(|g| g.weight).fold(0.0, f64::max).clamp(0.05, 1.0) };
-        if !self.goal_top.is_empty() && self.rng.random_bool(goal_share) {
+        if bubble_b.is_none() && !self.goal_top.is_empty() && self.rng.random_bool(goal_share) {
             let gw: Vec<(usize, f64)> = self.goal_top.iter().enumerate().map(|(i, g)| (i, g.weight)).collect();
             let gi = weighted(&mut self.rng, &gw).unwrap_or(0);
             let g = &self.goal_top[gi];
@@ -2384,7 +2383,9 @@ impl Engine {
                 goal_b = Some(b);
             }
         }
-        let b = if let Some(b) = goal_b {
+        let b = if let Some(b) = bubble_b {
+            b
+        } else if let Some(b) = goal_b {
             b
         } else if let Some(b) = self.manual_pick() {
             b

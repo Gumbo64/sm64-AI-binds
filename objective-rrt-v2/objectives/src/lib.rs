@@ -161,10 +161,6 @@ impl Generator for Registry {
                 }
             }
         }
-        // A position goal set from outside (obrrt_core::posgoal): a PosTime to it from every b of its zone.
-        if let Some(g) = obrrt_core::posgoal::get().filter(|g| g.zone == b.zone()) {
-            out.push(Arc::new(mario::PosTime::goal(b, g.pos)));
-        }
         out.push(Arc::new(mario::Settle::new(b)));
         if rng.random_bool(0.3) {
             out.push(Arc::new(mario::Wait::new(b, [15, 30, 60, 90][rng.random_range(0..4)])));

@@ -1,7 +1,6 @@
-//! A position goal set from outside the search (the SM64Coin web miner's visualiser: shift + right
-//! click on level geometry): the generator draws `Mario::PosTime` objectives to this point from the
-//! states of its zone (see `objectives/src/lib.rs` `Registry::generate`, `mario::PosTime::goal`).
-//! It biases which objectives get drawn; nothing forces a route.
+//! A sphere bubble set from outside the search (the SM64Coin web miner's visualiser: hold left click on level
+//! geometry and scroll): a share (`share()`) of the plans draw their base state only from live tree nodes inside it
+//! (`Engine::plan_bubble`). Without nodes inside, or without a bubble, nothing changes.
 
 use std::sync::RwLock;
 
@@ -9,8 +8,15 @@ use std::sync::RwLock;
 pub struct PosGoal {
     /// (level, area) the point is in.
     pub zone: (u16, u8),
+    /// The bubble's centre.
     pub pos: [f32; 3],
+    /// The bubble's radius (game units).
+    pub radius: f32,
 }
+
+pub const MIN_RADIUS: f32 = 50.0;
+pub const MAX_RADIUS: f32 = 20000.0;
+pub const DEFAULT_RADIUS: f32 = 300.0;
 
 static GOAL: RwLock<Option<PosGoal>> = RwLock::new(None);
 
@@ -44,8 +50,8 @@ pub fn set_weight(w: f64) {
     WEIGHT.store(w.max(0.0).to_bits(), Ordering::Relaxed);
 }
 
-/// The share of plans (0..1) that start from the tree's state nearest the goal (in the goal's zone) and run the goal's
-/// objective; `OBRRT_POSGOAL_SHARE`, default 0 (the web miner sets it from its goal-strength setting).
+/// The share of plans (0..1) whose base state is drawn from inside the bubble (when it holds nodes);
+/// `OBRRT_POSGOAL_SHARE`, default 0 (the web miner sets it from its bubble-strength setting).
 pub fn share() -> f64 {
     let w = f64::from_bits(SHARE.load(Ordering::Relaxed));
     if w > 0.0 {
@@ -68,7 +74,7 @@ mod tests {
         assert_eq!(get(), None);
         assert_eq!(share(), 0.0, "native default: no forced goal plans");
         assert_eq!(weight(), 10.0);
-        set(Some(PosGoal { zone: (6, 1), pos: [1.0, 2.0, 3.0] }));
+        set(Some(PosGoal { zone: (6, 1), pos: [1.0, 2.0, 3.0], radius: 300.0 }));
         assert_eq!(get().unwrap().zone, (6, 1));
         set_weight(24.0);
         set_share(0.4);

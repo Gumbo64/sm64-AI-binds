@@ -11,7 +11,7 @@
 //!   from the root is exactly what the page played (the proof check is the same function).
 //! * the boost: [`Engine::manual_pick`] (the share of `b` draws that start from a boosted node) and
 //!   [`Engine::manual_start_mult`] (its weight as a start); both fade as the node is used.
-//! * [`Engine::set_pos_goal`]: a position goal for the objective generator (core/src/posgoal.rs).
+//! * [`Engine::set_pos_goal`]: the sphere bubble base states are drawn from (core/src/posgoal.rs).
 
 use super::*;
 
@@ -20,8 +20,6 @@ use super::*;
 pub(super) struct Manual {
     boost: HashMap<u32, f64>,
     seen: HashSet<u64>,
-    /// Times a state was the goal plans' start (the next-nearest take over a state that led nowhere).
-    goal_wear: HashMap<u32, u32>,
     /// Zones (level, area) some node of this tree is in, and how far `sync_zone_firsts` has scanned the nodes.
     zone_seen: HashSet<(u16, u8)>,
     zone_scan: usize,
@@ -221,49 +219,24 @@ impl Engine {
 
     /// How strongly the goal pulls: the pool weight of its objective (a regular objective weighs 1) and the share of plans
     /// that start from the tree's state nearest the goal and run it (see `plan_user_goal`).
-    pub fn set_pos_goal_strength(&mut self, weight: f64, share: f64) {
-        obrrt_core::posgoal::set_weight(weight);
+    pub fn set_pos_goal_strength(&mut self, _weight: f64, share: f64) {
         obrrt_core::posgoal::set_share(share);
     }
 
-    /// OBRRT_POSGOAL_SHARE (the web miner's goal strength): this share of plans starts from a state of the goal's zone
-    /// nearest the goal (a few of the nearest, each worn by `WEAR` units per use so a state under a wall gives way) and runs
-    /// the goal's objective from it, whatever the b draw and kind draw would have been.
-    pub(super) fn plan_user_goal(&mut self) -> Option<Plan> {
-        let share = obrrt_core::posgoal::share();
-        if share <= 0.0 {
-            return None;
-        }
+    /// The bubble's base state (OBRRT_POSGOAL_SHARE, the web miner's bubble strength): with probability `share` and a
+    /// bubble holding live nodes, a b drawn like the ordinary frontier draw (a cell uniformly, then a state in it,
+    /// soft-dedup weighted) but only from the nodes inside the bubble. No nodes inside, no bubble or no share: None,
+    /// and no random draw is made when there is no bubble, so a search without one is unchanged.
+    pub(super) fn plan_bubble(&mut self) -> Option<u32> {
         let g = obrrt_core::posgoal::get()?;
-        if !self.rng.random_bool(share) {
-            return None;
-        }
-        const WEAR: f32 = 120.0;
-        let wear = &self.manual.goal_wear;
-        let mut top: Vec<(f32, u32)> = Vec::with_capacity(4);
-        for (i, n) in self.tree.nodes.iter().enumerate() {
-            if n.st.zone() != g.zone || n.retired || n.st.modal() || !n.st.alive() {
-                continue;
-            }
-            let sc = obrrt_core::dist(n.st.pos, g.pos) + WEAR * wear.get(&(i as u32)).copied().unwrap_or(0) as f32;
-            if top.len() < 3 || sc < top[top.len() - 1].0 {
-                top.push((sc, i as u32));
-                top.sort_by(|a, b| a.0.total_cmp(&b.0));
-                top.truncate(3);
-            }
-        }
-        if top.is_empty() {
-            return None;
-        }
-        let b = top[self.rng.random_range(0..top.len())].1;
-        *self.manual.goal_wear.entry(b).or_default() += 1;
-        let st = self.tree.nodes[b as usize].st.clone();
-        let obj: Arc<dyn Objective> = Arc::new(obrrt_objectives::mario::PosTime::goal(&st, g.pos));
-        self.pool.insert(obj.clone(), &st);
-        let entry = self.pool.find(&obj.key())?;
-        let start = self.pick_start(entry, obj.as_ref(), b)?;
-        self.tree.nodes[b as usize].stats.as_b += 1;
-        Some(Plan { stages: vec![(entry, obj)], start, b, rewire: None, seed: None, polish: None, targets: None, window_b: None, window: Vec::new(), mv: None })
+        let share = obrrt_core::posgoal::share();
+        let nodes = &self.tree.nodes;
+        let inside = |i: u32| {
+            let n = &nodes[i as usize];
+            n.st.zone() == g.zone && !n.retired && !n.st.modal() && n.st.alive() && obrrt_core::dist(n.st.pos, g.pos) <= g.radius
+        };
+        let soft = self.cfg.soft_dedup;
+        bubble_pick(&mut self.rng, &self.b_index, share, inside, |i| if soft { 0.5f64.powi(nodes[i as usize].stats.crowd as i32) } else { 1.0 })
     }
 
     /// Tree sync's fast path: the first own node (not imported by sync) in each zone (level, area) this tree had not
@@ -290,9 +263,68 @@ impl Engine {
         self.tree.nodes.iter().enumerate().filter(|(_, n)| n.st.zone() == g.zone && !n.retired).map(|(i, n)| (obrrt_core::dist(n.st.pos, g.pos), i as u32)).min_by(|a, b| a.0.total_cmp(&b.0))
     }
 
-    /// A position goal for the objective generator: from the states of `zone` (level, area) it draws
-    /// `Mario::PosTime` objectives to `pos` (before the tree's record near it). None clears it.
-    pub fn set_pos_goal(&mut self, goal: Option<((u16, u8), [f32; 3])>) {
-        obrrt_core::posgoal::set(goal.map(|(zone, pos)| obrrt_core::posgoal::PosGoal { zone, pos }));
+    /// The sphere bubble base states are drawn from (see `plan_bubble`): `zone` (level, area), centre `pos`, `radius`
+    /// (clamped to 50..20000). None clears it.
+    pub fn set_pos_goal(&mut self, goal: Option<((u16, u8), [f32; 3], f32)>) {
+        use obrrt_core::posgoal::*;
+        set(goal.map(|(zone, pos, r)| PosGoal { zone, pos, radius: if r.is_finite() { r.clamp(MIN_RADIUS, MAX_RADIUS) } else { DEFAULT_RADIUS } }));
+    }
+}
+
+/// The bubble draw behind [`Engine::plan_bubble`]: with probability `share`, a b from the `b_index` cells' nodes for which `inside`
+/// holds (a non-empty restricted cell uniformly, then a node in it by `weight`); None without a draw or without nodes inside.
+fn bubble_pick(rng: &mut SmallRng, b_index: &[Vec<Vec<u32>>], share: f64, inside: impl Fn(u32) -> bool, weight: impl Fn(u32) -> f64) -> Option<u32> {
+    if share <= 0.0 || !rng.random_bool(share.min(1.0)) {
+        return None;
+    }
+    let cells: Vec<Vec<u32>> = b_index.iter().flatten().map(|c| c.iter().copied().filter(|&i| inside(i)).collect::<Vec<u32>>()).filter(|c| !c.is_empty()).collect();
+    if cells.is_empty() {
+        return None;
+    }
+    let cell = &cells[rng.random_range(0..cells.len())];
+    let w: Vec<(u32, f64)> = cell.iter().map(|&i| (i, weight(i))).collect();
+    Some(weighted(rng, &w).unwrap_or(cell[0]))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Nodes 0..12 in three cells; "inside" = ids 4..8 (cells 1 and part of 2).
+    fn idx() -> Vec<Vec<Vec<u32>>> {
+        vec![vec![vec![0, 1, 2, 3], vec![4, 5], vec![6, 7, 8, 9, 10, 11]]]
+    }
+
+    #[test]
+    fn only_inside_at_full_share() {
+        let mut rng = SmallRng::seed_from_u64(1);
+        for _ in 0..2000 {
+            let b = bubble_pick(&mut rng, &idx(), 1.0, |i| (4..8).contains(&i), |_| 1.0).unwrap();
+            assert!((4..8).contains(&b), "{b}");
+        }
+    }
+
+    #[test]
+    fn share_is_the_proportion_drawn() {
+        let mut rng = SmallRng::seed_from_u64(2);
+        let n = 20000;
+        let hits = (0..n).filter(|_| bubble_pick(&mut rng, &idx(), 0.5, |i| (4..8).contains(&i), |_| 1.0).is_some()).count();
+        let f = hits as f64 / n as f64;
+        assert!((f - 0.5).abs() < 0.02, "{f}");
+    }
+
+    #[test]
+    fn empty_bubble_or_no_share_defers_to_the_normal_draw() {
+        let mut rng = SmallRng::seed_from_u64(3);
+        for _ in 0..500 {
+            assert_eq!(bubble_pick(&mut rng, &idx(), 1.0, |_| false, |_| 1.0), None);
+            assert_eq!(bubble_pick(&mut rng, &idx(), 0.0, |_| true, |_| 1.0), None);
+        }
+    }
+
+    #[test]
+    fn no_bubble_makes_no_draw() {
+        // posgoal unset (the default): plan_bubble returns before touching the rng.
+        assert_eq!(obrrt_core::posgoal::get(), None);
     }
 }
