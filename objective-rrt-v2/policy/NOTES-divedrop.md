@@ -1,4 +1,4 @@
-# Dive-drop for the Lakitu hill overlay (opt-in, `OBRRT_HILL_DIVE=1`)
+# Dive-drop for the Lakitu hill overlay (always on; it was the opt-in `OBRRT_HILL_DIVE=1`)
 
 Code: `hill` in `objective-rrt-v2/objectives/src/extra/tech/lakituskip.rs` (and the v1 copy in the scratchpad that the fuzz harness builds). Default unchanged: with the flag unset the fuzz outcomes are identical to before on all 3002 starts. Builds: `CARGO_TARGET_DIR=/tmp/claude-1000/target-divedrop`; outputs, patch scripts and the python model in `/tmp/claude-1000/divedrop/` (`off.tsv`, `dive.tsv`, `cmp.py`, `model.py`).
 

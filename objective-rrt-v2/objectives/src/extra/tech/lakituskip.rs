@@ -1300,13 +1300,6 @@ pub mod hill {
         Dive,
     }
 
-    /// `OBRRT_HILL_DIVE=1`: the dive-drop option (off by default; see
-    /// policy/NOTES-divedrop.md).
-    fn dive_enabled() -> bool {
-        static F: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-        *F.get_or_init(|| obrrt_core::sys::env::var("OBRRT_HILL_DIVE").is_ok_and(|v| v != "0"))
-    }
-
     /// Where hop `h`, started now from the ground state `s`, lands.
     fn hop_land(h: Hop, s: &St) -> Option<Landing> {
         let fv = s.forward_vel;
@@ -1480,7 +1473,7 @@ pub mod hill {
             // too far east), A on the first flat frame.
             // Dive-drop: the dive slide on the bridge approach: A at once (rollout).
             // (a dive-drop's slide has fv <= 48; the ramp's is faster)
-            ACT_DIVE_SLIDE if dive_enabled() && s.forward_vel <= 52.0 && s.pos[2] < RAMP_Z && s.pos[2] > BOX_Z.1 - 50.0 => north(if last_a { 0 } else { A_BUTTON }),
+            ACT_DIVE_SLIDE if s.forward_vel <= 52.0 && s.pos[2] < RAMP_Z && s.pos[2] > BOX_Z.1 - 50.0 => north(if last_a { 0 } else { A_BUTTON }),
             ACT_DIVE_SLIDE => {
                 if s.floor_normal[1] > 0.99 && s.forward_vel > 60.0 {
                     return pad(if last_a { 0 } else { A_BUTTON }, s.yaw, 1.0);
@@ -1514,10 +1507,9 @@ pub mod hill {
             // --- Landings at speed.
             ACT_FREEFALL_LAND_STOP if fast && s.pos[2] > BOX_Z.1 && s.pos[2] < RAMP_Z && !last_a => north(A_BUTTON),
             ACT_FREEFALL_LAND_STOP | ACT_PUNCHING | ACT_MOVE_PUNCHING if fast && s.pos[2] > BOX_Z.1 => {
-                // Dive-drop (opt-in): the jump kick would land in the box,
+                // Dive-drop: the jump kick would land in the box,
                 // the dive lands short of it.
-                if dive_enabled()
-                    && last_a
+                if last_a
                     && s.pos[2] < RAMP_Z
                     && !hop_land(Hop::Kick, s).is_some_and(|l| clear_of_box(l.z))
                     && hop_land(Hop::Dive, s).is_some_and(|l| l.z > BOX_Z.1 + HOP_ERR)
@@ -1556,7 +1548,7 @@ pub mod hill {
                     if dj_ok_by(s, 2.0) && (!last_a || dj_ok_by(&after_landing_frame(s), 2.0)) {
                         return north(if last_a { 0 } else { A_BUTTON });
                     }
-                    if dive_enabled() && !sk_clear && last_a && hop_land(Hop::Dive, s).is_some_and(|l| l.z > BOX_Z.1 + HOP_ERR) {
+                    if !sk_clear && last_a && hop_land(Hop::Dive, s).is_some_and(|l| l.z > BOX_Z.1 + HOP_ERR) {
                         return dive();
                     }
                     return north(Z_TRIG);
