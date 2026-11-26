@@ -39,13 +39,11 @@ pub struct Budget {
     pub mem_mb: Option<usize>,
     /// OBRRT_ROUND: attempts planned per round.
     pub round_plans: usize,
-    /// OBRRT_TUNE_FRAMES: automatic tuning every this many emulated frames.
-    pub tune_frames: u64,
 }
 
 impl Default for Budget {
     fn default() -> Self {
-        Budget { ga_scale: 3.0, max_frames: None, mem_mb: None, round_plans: 64, tune_frames: 10_000_000 }
+        Budget { ga_scale: 3.0, max_frames: None, mem_mb: None, round_plans: 64 }
     }
 }
 
@@ -53,17 +51,12 @@ impl Default for Budget {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Rate {
-    pub floor: f64,
     pub cap: f64,
     pub tau: f64,
     /// OBRRT_RATE_PRIOR
     pub prior_frames: f64,
     /// OBRRT_RATE_NOSTART
     pub nostart_frames: f64,
-    /// OBRRT_RATE_NODE_PRIOR
-    pub node_prior: f64,
-    /// OBRRT_RATE_NODE_CAP
-    pub node_cap: f64,
     pub kind_scale: f64,
     pub route: f64,
     pub novel: f64,
@@ -77,13 +70,10 @@ pub struct Rate {
 impl Default for Rate {
     fn default() -> Self {
         Rate {
-            floor: 0.15,
             cap: 4.0,
             tau: 50_000_000.0,
             prior_frames: 200_000.0,
             nostart_frames: 5_000.0,
-            node_prior: 300_000.0,
-            node_cap: 2.0,
             kind_scale: 10.0,
             route: 0.0,
             novel: 1.0,
@@ -100,32 +90,12 @@ impl Default for Rate {
 pub struct Arrival {
     pub on: bool,
     pub pace: f64,
-    pub t: f64,
     pub band: Option<f64>,
-    /// OBRRT_ARRIVAL_DECAY=either (true) | arrival (false)
-    pub decay_either: bool,
-    pub mix: f64,
 }
 
 impl Default for Arrival {
     fn default() -> Self {
-        Arrival { on: false, pace: 20.0, t: 1.0, band: None, decay_either: true, mix: 0.5 }
-    }
-}
-
-/// Earliest-arrival boost (OBRRT_EARLIEST*).
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(default)]
-pub struct Earliest {
-    pub on: bool,
-    pub cap: u32,
-    pub share: f64,
-    pub cell: bool,
-}
-
-impl Default for Earliest {
-    fn default() -> Self {
-        Earliest { on: false, cap: 12, share: 0.15, cell: true }
+        Arrival { on: false, pace: 20.0, band: None }
     }
 }
 
@@ -136,17 +106,6 @@ pub struct Sampler {
     /// OBRRT_SAMPLER=rate (false: decay).
     pub rate_sampler: bool,
     pub rate: Rate,
-    /// OBRRT_KIND_CAP
-    pub kind_cap: f64,
-    pub kind_bandit: bool,
-    pub kind_gamma: f64,
-    pub entry_bandit: bool,
-    pub zone_bandit: bool,
-    pub value_zones: bool,
-    pub start_wear: bool,
-    pub decay_route: bool,
-    /// OBRRT_ROUTE: share of b drawn from the best routes.
-    pub route_share: f64,
     /// OBRRT_PICK_BY_B
     pub pick_by_b: bool,
     /// OBRRT_NEW_ELIGIBLE
@@ -154,7 +113,6 @@ pub struct Sampler {
     /// OBRRT_STAR: RRT* mode.
     pub rrt_star: bool,
     pub arrival: Arrival,
-    pub earliest: Earliest,
 }
 
 impl Default for Sampler {
@@ -162,20 +120,10 @@ impl Default for Sampler {
         Sampler {
             rate_sampler: false,
             rate: Rate::default(),
-            kind_cap: 0.0,
-            kind_bandit: false,
-            kind_gamma: 0.995,
-            entry_bandit: false,
-            zone_bandit: false,
-            value_zones: false,
-            start_wear: false,
-            decay_route: false,
-            route_share: 0.0,
             pick_by_b: true,
             new_eligible: false,
             rrt_star: false,
             arrival: Arrival::default(),
-            earliest: Earliest::default(),
         }
     }
 }
@@ -186,15 +134,11 @@ impl Default for Sampler {
 pub struct Chain {
     /// OBRRT_CHAIN=route (false: stack).
     pub route: bool,
-    /// OBRRT_CHAIN_FOLLOW
-    pub follow: f64,
-    /// OBRRT_CHAIN_PROB: fixes the extension probability instead of learning it.
-    pub fixed: Option<f64>,
 }
 
 impl Default for Chain {
     fn default() -> Self {
-        Chain { route: false, follow: 0.5, fixed: None }
+        Chain { route: false }
     }
 }
 
@@ -221,7 +165,6 @@ pub struct Dense {
     /// OBRRT_DENSE_CAP (None: 256 with `all`, else 0).
     pub cap: Option<usize>,
     pub ne: bool,
-    pub mem_objects: bool,
     pub every: u32,
     /// OBRRT_DENSE_EVERY=obj[:n]
     pub per_obj: bool,
@@ -230,7 +173,7 @@ pub struct Dense {
 
 impl Default for Dense {
     fn default() -> Self {
-        Dense { add: None, grid: 64, cap: None, ne: true, mem_objects: true, every: 1, per_obj: false, air: true }
+        Dense { add: None, grid: 64, cap: None, ne: true, every: 1, per_obj: false, air: true }
     }
 }
 
@@ -241,12 +184,11 @@ pub struct Near {
     pub seed: bool,
     pub radius: f32,
     pub p: f64,
-    pub keep: usize,
 }
 
 impl Default for Near {
     fn default() -> Self {
-        Near { seed: false, radius: 300.0, p: 0.5, keep: 32 }
+        Near { seed: false, radius: 300.0, p: 0.5 }
     }
 }
 
@@ -260,19 +202,10 @@ pub struct Dedup {
     pub starset_key: bool,
     /// OBRRT_STAR_WINDOW (None: 1, or 99 with the zone lock).
     pub star_window: Option<i16>,
-    /// OBRRT_RETIRE_SUBSET / _CAP
-    pub retire_subset: bool,
-    pub retire_subset_cap: usize,
     /// OBRRT_KEEP_WIP / _N / _FRAMES
     pub keep_wip: bool,
-    pub keep_wip_n: usize,
-    pub keep_wip_frames: u32,
     /// OBRRT_CELL_MOTION
     pub cell_motion: bool,
-    /// OBRRT_SETTLE_RANK
-    pub settle_rank: bool,
-    /// OBRRT_FINGERPRINT=0 turns it off.
-    pub fingerprint: bool,
     pub replay_max: ReplayMax,
     /// OBRRT_SPARSE_CHECK
     pub sparse_check: usize,
@@ -286,14 +219,8 @@ impl Default for Dedup {
             soft_dedup: false,
             starset_key: false,
             star_window: None,
-            retire_subset: false,
-            retire_subset_cap: 6,
             keep_wip: false,
-            keep_wip_n: 64,
-            keep_wip_frames: 3000,
             cell_motion: false,
-            settle_rank: false,
-            fingerprint: true,
             replay_max: ReplayMax::Auto,
             sparse_check: 0,
             dense: Dense::default(),
@@ -312,10 +239,6 @@ pub struct Zone {
     pub path: String,
     /// OBRRT_ZONE_SHARE / _K / _CAP / _SHARE / _BG
     pub share: bool,
-    pub share_k: usize,
-    pub share_cap: u32,
-    pub share_share: f64,
-    pub share_bg: usize,
     /// OBRRT_ZONE_SHARE_DONOR=sample
     pub donor_sample: bool,
     /// OBRRT_ZONE_SHARE_STATS
@@ -323,14 +246,10 @@ pub struct Zone {
     /// OBRRT_REROUTE / _SCHEMA / _SHARE / _MARGIN
     pub reroute: bool,
     pub reroute_schema: Option<String>,
-    pub reroute_share: f64,
-    pub reroute_margin: u32,
     /// OBRRT_POLISH: share of a round's plans re-attempting the best route's milestones.
     pub polish: f64,
     /// OBRRT_REPLAY_BUDGET (None / 0: the slot shares).
     pub replay_budget: Option<f64>,
-    /// OBRRT_BACKCHAIN and its settings.
-    pub backchain: Backchain,
 }
 
 impl Default for Zone {
@@ -339,39 +258,13 @@ impl Default for Zone {
             lock: false,
             path: String::new(),
             share: false,
-            share_k: 4,
-            share_cap: 3000,
-            share_share: 0.2,
-            share_bg: 2,
             donor_sample: false,
             share_stats: false,
             reroute: false,
             reroute_schema: None,
-            reroute_share: 0.25,
-            reroute_margin: 10,
             polish: 0.0,
             replay_budget: None,
-            backchain: Backchain::default(),
         }
-    }
-}
-
-/// OBRRT_BACKCHAIN=1 and OBRRT_BACKCHAIN_*.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(default)]
-pub struct Backchain {
-    pub on: bool,
-    pub share: f64,
-    pub kmin: u32,
-    pub kmax: u32,
-    pub cap: usize,
-    pub per_target: u32,
-    pub min_weight: f64,
-}
-
-impl Default for Backchain {
-    fn default() -> Self {
-        Backchain { on: false, share: 0.1, kmin: 2, kmax: 6, cap: 900, per_target: 3, min_weight: 1.0 }
     }
 }
 

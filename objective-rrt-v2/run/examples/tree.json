@@ -28,18 +28,12 @@
     "fitness": "steps",
     "ga_new_ops": true,
     "arrival": false,
-    "arrival_pace": 20.0,
-    "arrival_mix": 0.5,
-    "earliest": false,
-    "tune_frames": 10000000
+    "arrival_pace": 20.0
   },
 
   "switches": {
     "starset_key": true,
     "keep_wip": true,
-    "fingerprint": true,
-    "retire_subset": false,
-    "settle_rank": false,
     "fast_modal": true
   },
 

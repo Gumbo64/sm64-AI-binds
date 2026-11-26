@@ -7,22 +7,11 @@ use obrrt_core::{GamePad, Objective, St};
 
 use crate::store::Delta;
 
-/// OBRRT_RETIRE_SUBSET=1: the frontier is every maximal collected set, not
-/// just the highest count. A state is behind it (and retired) only when a
-/// frontier set has everything it has (`St::collected` superset, keys and
-/// stars at least as many), so a fight or a set of coins under way survives
-/// another star being collected elsewhere. Off by default.
-pub static RETIRE_SUBSET: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-/// OBRRT_RETIRE_SUBSET_CAP: at most this many frontier sets per star count;
-/// beyond it, the set that last gained a state longest ago is dropped
-/// (its states retired). Default 6.
-pub static RETIRE_SUBSET_CAP: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(6);
-
 /// OBRRT_STAR_WINDOW=W (default 1): the frontier spans the top W star counts
 /// (with the best key count). A state is behind it only when it has fewer
 /// stars than best - (W - 1), so with 2 a slower or different k+1th star stays
 /// open until some state has k+2: which star comes next is judged by what it
-/// leads to. Not with OBRRT_RETIRE_SUBSET, whose sets have their own rule.
+/// leads to.
 pub static STAR_WINDOW: std::sync::atomic::AtomicI16 = std::sync::atomic::AtomicI16::new(1);
 
 /// OBRRT_ZONE_LOCK=1 (per-zone trees of the 120-star plan): the level the
@@ -60,8 +49,8 @@ fn window_floor(p: (u8, i16)) -> (u8, i16) {
 /// frames before the frontier's earliest state in that level (or anywhere,
 /// with none there). They are b candidates and starts. Off by default.
 pub static KEEP_WIP: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-pub static KEEP_WIP_N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(64);
-pub static KEEP_WIP_FRAMES: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(3000);
+const KEEP_WIP_N: usize = 64;
+const KEEP_WIP_FRAMES: u32 = 3000;
 
 /// OBRRT_REPLAY_MAX (sparse saves, objective-scattershot's `replay_max`):
 /// a node keeps a save state only when rebuilding it would replay more than
@@ -148,15 +137,6 @@ pub fn covers(b: &SetKey, a: &SetKey) -> bool {
     b.1 >= a.1 && b.2 >= a.2 && a.0.iter().zip(&b.0).all(|(x, y)| x & !y == 0)
 }
 
-/// One maximal collected set on the frontier (OBRRT_RETIRE_SUBSET).
-#[derive(Debug, Clone)]
-pub struct FrontierSet {
-    pub key: SetKey,
-    /// The node that last joined it.
-    pub last: u32,
-    pub states: usize,
-}
-
 /// Per-state diagnostics and the state's own failure back-off.
 #[derive(Debug, Clone, Default)]
 pub struct NodeStats {
@@ -237,13 +217,6 @@ pub struct Tree {
     /// OBRRT_POLISH: a frontier advance pins the new frontier's ancestors
     /// before retiring what is behind it (the route there stays loadable).
     pub pin_routes: bool,
-    /// OBRRT_RETIRE_SUBSET: the maximal collected sets (an antichain), the
-    /// sets dropped by the cap (states in or under them are behind), and
-    /// the most sets that coexisted.
-    pub subset: bool,
-    pub sets: Vec<FrontierSet>,
-    pub dropped: Vec<SetKey>,
-    pub sets_peak: usize,
     /// OBRRT_KEEP_WIP: each node's `St::wip` (taken when added, as retiring
     /// drops the objects), the states kept for it (sorted), and counts.
     pub keep_wip: bool,
@@ -308,10 +281,6 @@ impl Tree {
             pinned: Default::default(),
             pin_next: false,
             pin_routes: false,
-            subset: RETIRE_SUBSET.load(std::sync::atomic::Ordering::Relaxed),
-            sets: Vec::new(),
-            dropped: Vec::new(),
-            sets_peak: 0,
             keep_wip: KEEP_WIP.load(std::sync::atomic::Ordering::Relaxed),
             wip: vec![root_wip],
             wip_kept: Vec::new(),
@@ -328,7 +297,6 @@ impl Tree {
             kin_stats: Default::default(),
             records: None,
         }
-        .with_root_set()
         .with_sparse()
     }
 
@@ -347,85 +315,9 @@ impl Tree {
         self
     }
 
-    fn with_root_set(mut self) -> Tree {
-        if self.subset {
-            self.sets.push(FrontierSet { key: set_key(&self.nodes[0].st), last: 0, states: 1 });
-            self.sets_peak = 1;
-        }
-        self
-    }
-
-    /// Whether `st` is on the frontier: at its best count, or with
-    /// OBRRT_RETIRE_SUBSET in one of its maximal sets.
+    /// Whether `st` is on the frontier: at its best count (or within the star window).
     pub fn on_frontier(&self, st: &St) -> bool {
-        if self.subset {
-            let k = set_key(st);
-            self.sets.iter().any(|s| s.key == k)
-        } else {
-            st.progress() >= window_floor(self.frontier_progress)
-        }
-    }
-
-    /// OBRRT_RETIRE_SUBSET: places the new node `id` among the frontier
-    /// sets; returns whether it is on the frontier.
-    fn add_subset(&mut self, id: u32) -> bool {
-        let k = set_key(&self.nodes[id as usize].st);
-        if let Some(s) = self.sets.iter_mut().find(|s| s.key == k) {
-            s.last = id;
-            s.states += 1;
-            self.frontier.push(id);
-            return true;
-        }
-        if self.sets.iter().any(|s| covers(&s.key, &k)) || self.dropped.iter().any(|d| covers(d, &k)) {
-            if !self.hold_retire && !self.wip_note(id) {
-                self.retire_one(id);
-            }
-            return false;
-        }
-        // A new maximal set: it replaces the sets it covers.
-        self.sets.retain(|s| !covers(&k, &s.key));
-        self.sets.push(FrontierSet { key: k, last: id, states: 1 });
-        let cap = RETIRE_SUBSET_CAP.load(std::sync::atomic::Ordering::Relaxed).max(1);
-        while self.sets.iter().filter(|s| s.key.2 == k.2).count() > cap {
-            let (i, _) = self
-                .sets
-                .iter()
-                .enumerate()
-                .filter(|(_, s)| s.key.2 == k.2 && s.key != k)
-                .min_by_key(|(_, s)| s.last)
-                .unwrap();
-            let d = self.sets.remove(i);
-            self.dropped.push(d.key);
-        }
-        self.sets_peak = self.sets_peak.max(self.sets.len());
-        if !self.hold_retire {
-            let frame = self.nodes[id as usize].st.frame;
-            let bits: Vec<String> = k.0.iter().enumerate().filter(|(_, b)| **b != 0).map(|(c, b)| format!("{c}:{b:02x}")).collect();
-            println!("NEW SET keys {} stars {} at node {id} frame {frame}: [{}]; {} sets, {} dropped", k.1, k.2, bits.join(" "), self.sets.len(), self.dropped.len());
-        }
-        let keys: std::collections::HashSet<SetKey> = self.sets.iter().map(|s| s.key).collect();
-        let nodes = &self.nodes;
-        self.frontier.retain(|&i| keys.contains(&set_key(&nodes[i as usize].st)));
-        self.frontier.push(id);
-        if !self.hold_retire {
-            self.retire_subset();
-        }
-        true
-    }
-
-    /// OBRRT_RETIRE_SUBSET: retires every state in no frontier set.
-    fn retire_subset(&mut self) {
-        let keys: std::collections::HashSet<SetKey> = self.sets.iter().map(|s| s.key).collect();
-        let keep = self.wip_select(|t, n| !keys.contains(&set_key(&t.nodes[n as usize].st)));
-        let ids: Vec<u32> = (0..self.nodes.len() as u32)
-            .filter(|&i| {
-                let n = &self.nodes[i as usize];
-                !n.retired && !keys.contains(&set_key(&n.st)) && keep.binary_search(&i).is_err()
-            })
-            .collect();
-        for i in ids {
-            self.retire_at(i);
-        }
+        st.progress() >= window_floor(self.frontier_progress)
     }
 
     /// Builds the records (obrrt_core::records) from the nodes so far; from
@@ -569,13 +461,6 @@ impl Tree {
             self.good_exits += 1;
         }
         let advanced = progress > self.frontier_progress;
-        if self.subset {
-            if advanced {
-                self.frontier_progress = progress;
-            }
-            self.add_subset(id);
-            return (id, advanced);
-        }
         if advanced {
             self.frontier_progress = progress;
             let floor = window_floor(progress);
@@ -648,9 +533,6 @@ impl Tree {
     /// Retires every state behind the frontier (after `hold_retire`).
     pub fn retire_behind(&mut self) {
         self.pin_frontier_routes();
-        if self.subset {
-            return self.retire_subset();
-        }
         self.retire(window_floor(self.frontier_progress));
     }
 
@@ -695,7 +577,7 @@ impl Tree {
             return false;
         }
         let (best, arrival) = bounds.0.get(&n.st.level).copied().unwrap_or((0, bounds.1));
-        let m = KEEP_WIP_FRAMES.load(std::sync::atomic::Ordering::Relaxed);
+        let m = KEEP_WIP_FRAMES;
         w > best && (arrival == u32::MAX || n.st.frame.saturating_add(m) >= arrival)
     }
 
@@ -714,7 +596,7 @@ impl Tree {
                 by_level.entry(st.level).or_default().push((-self.wip[i as usize], st.frame, i));
             }
         }
-        let cap = KEEP_WIP_N.load(std::sync::atomic::Ordering::Relaxed);
+        let cap = KEEP_WIP_N;
         let mut keep = Vec::new();
         for (_, mut v) in by_level {
             v.sort_unstable();
@@ -754,7 +636,7 @@ impl Tree {
         let pos = self.wip_kept.binary_search(&id).unwrap_or_else(|p| p);
         self.wip_kept.insert(pos, id);
         self.wip_ever.insert(id);
-        let cap = KEEP_WIP_N.load(std::sync::atomic::Ordering::Relaxed);
+        let cap = KEEP_WIP_N;
         let mut same: Vec<(i64, u32, u32)> = self
             .wip_kept
             .iter()

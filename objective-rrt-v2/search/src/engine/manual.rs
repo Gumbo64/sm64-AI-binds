@@ -149,9 +149,6 @@ impl Engine {
         if self.cfg.new_eligible {
             self.ne_note(id, at);
         }
-        if self.cfg.earliest {
-            self.ea_note(id);
-        }
         self.note_best_at(id, progress, zone, fr, "manual")?;
         if modal {
             self.modal_queue.push(id);

@@ -46,10 +46,8 @@ pub struct Config {
     pub chain_prob: f64,
     pub max_chain: usize,
     pub chain_reach: f32,
-    /// Experiment knobs: multiply the GA's generations; fix the chain
-    /// probability instead of learning it.
+    /// Experiment knob: multiply the GA's generations.
     pub ga_scale: f64,
-    pub chain_fixed: Option<f64>,
     pub fitness: crate::ga::Fitness,
     pub ga_new_ops: bool,
     pub ga_pink: f64,
@@ -89,9 +87,6 @@ pub struct Config {
     /// Share of b drawn from the best routes (the states leading to each
     /// zone's earliest frontier state), so PosTime targets the route.
     pub route_share: f64,
-    /// Draw b's zone by the most valuable objective available there, not
-    /// uniformly.
-    pub value_zones: bool,
     /// Soft dedupe: keep states that only repeat a place (an earlier state
     /// got there), at half the sampling weight per earlier state, instead of
     /// dropping them; over `mem_budget` bytes of saves, the lowest-weight
@@ -100,32 +95,7 @@ pub struct Config {
     pub round_plans: usize,
     /// Stop after emulating this many frames (None: only the time limit).
     pub max_frames: Option<u64>,
-    /// Cap on one objective kind's share of picks (0 = off).
-    pub kind_cap: f64,
-    /// Draw b's zone by recent new states per attempt there.
-    pub zone_bandit: bool,
     pub soft_dedup: bool,
-    /// Start wear (OBRRT_START_WEAR): a start's weight for an objective is
-    /// ×0.5 per two attempts of it from there that didn't improve on the
-    /// start, so dead-end starts burn out and other kin states get picked.
-    pub start_wear: bool,
-    /// Decay recovery from other routes (OBRRT_DECAY_ROUTE): an objective's
-    /// decay also recovers (to at least 0.5, a bounded number of times)
-    /// when an attempt from a start not used for it before adds a state
-    /// that improves on that start's heuristic, even if not on best_start.
-    pub decay_route: bool,
-    /// Entry bandit: objective weights are Thompson samples of each entry's
-    /// discounted improvement rate (redrawn every round), replacing the
-    /// ×decay per failure and its reset rules.
-    pub entry_bandit: bool,
-    /// Entry bandit: evidence fades by this per attempt at the entry.
-    pub bandit_gamma: f64,
-    /// Kind bandit (OBRRT_KIND_BANDIT): each kind's multiplier is its
-    /// posterior mean improvements per kframe (the entry bandit's signal),
-    /// normalised to mean 1, replacing the yield EMA in `tune`.
-    pub kind_bandit: bool,
-    /// Kind bandit: evidence fades by this per attempt of the kind.
-    pub kind_gamma: f64,
     pub mem_budget: usize,
     /// Pick only objectives b (or its parent) satisfies the base criteria
     /// of, so a start always exists.
@@ -147,22 +117,6 @@ pub struct Config {
     /// times in a run. Rare unlocking states (a boss's star spawned) would
     /// otherwise wait in a crowded b cell.
     pub new_eligible: bool,
-    /// Earliest-arrival boost (OBRRT_EARLIEST=1): a state that is the
-    /// earliest ever (by frame) in its zone tier (level, area, stars, keys,
-    /// collected set with OBRRT_STARSET_KEY), or that beats its b cell's
-    /// earliest state by `EA_CELL_MARGIN` frames, is queued for up to
-    /// `earliest_cap` attempts started from itself (the objective drawn
-    /// as for b among those it can start), at most `earliest_share` of a
-    /// round's plans and `EA_PER_ROUND` per state per round: zone records
-    /// first (earliest frame first), then cell records (largest lead
-    /// first). A new fastest arrival would otherwise tie on distance with
-    /// hundreds of later states and get a few attempts. A state no longer
-    /// within the margin of its record when served is skipped.
-    pub earliest: bool,
-    pub earliest_cap: u32,
-    pub earliest_share: f64,
-    /// Whether b-cell records are queued too (OBRRT_EARLIEST_CELL, on).
-    pub earliest_cell: bool,
     /// Progress report (log, nodes.csv, summary.json) every this much wall
     /// time. Reports only; no decision depends on them.
     pub report_every: Duration,
@@ -250,7 +204,6 @@ impl Default for Config {
             max_chain: 3,
             chain_reach: 2000.0,
             ga_scale: 3.0,
-            chain_fixed: None,
             fitness: crate::ga::Fitness::Steps,
             ga_new_ops: true,
             ga_pink: 0.0,
@@ -265,18 +218,9 @@ impl Default for Config {
             arrival_mix: 0.5,
             // Off by default: v15 (0.2 and on) did worse than v14.
             route_share: 0.0,
-            value_zones: false,
             round_plans: 64,
             max_frames: None,
-            kind_cap: 0.0,
-            zone_bandit: false,
             soft_dedup: false,
-            start_wear: false,
-            decay_route: false,
-            entry_bandit: false,
-            bandit_gamma: 0.97,
-            kind_bandit: false,
-            kind_gamma: 0.995,
             mem_budget: 3_000_000_000,
             pick_by_b: true,
             rewire_share: 0.3,
@@ -286,10 +230,6 @@ impl Default for Config {
             time_cost: 0.4,
             rewire_margin: 10,
             new_eligible: obrrt_core::config::current().sampler.new_eligible,
-            earliest: false,
-            earliest_cap: 12,
-            earliest_share: 0.15,
-            earliest_cell: true,
             report_every: Duration::from_secs(30),
             tune_frames: 10_000_000,
             reroute: false,
@@ -497,7 +437,7 @@ fn improves(cfg: &Config, new: (f64, Option<f64>), old: (f64, Option<f64>)) -> b
     match (new.1, old.1) {
         (Some(a), Some(b)) => {
             let sooner = a < b - cfg.arrival_margin;
-            sooner || (cfg.arrival_decay_either && closer)
+            sooner || closer
         }
         _ => closer,
     }
@@ -525,14 +465,7 @@ fn weighted<T: Copy>(rng: &mut SmallRng, items: &[(T, f64)]) -> Option<T> {
 /// states at the same place; only same-progress states compete on time.
 type Cell = (u16, u8, i16, u8, i16, i32, i32, i32, i16, u64);
 
-/// Whether the duplicate check includes St::fingerprint (OBRRT_FINGERPRINT=0
-/// turns it off, to compare with runs from before it).
-pub static FINGERPRINT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
 
-/// OBRRT_SETTLE_RANK=1: in pick_start, a standing state (hspeed < 2, not
-/// rising or falling) weighs half as a start for a non-modal objective, so
-/// moving states are extended first (a restart from rest costs frames).
-pub static SETTLE_RANK: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// Whether the duplicate check and the frontier's b cells tell apart states
 /// with the same progress count but different collected sets
@@ -592,7 +525,7 @@ fn replay_edges(game: &mut crate::game::Game, tree: &Tree, bases: &[Vec<u8>], fr
 fn cell(st: &St) -> Cell {
     let c = |v: f32| (v / 64.0).floor() as i32;
     let modal = if st.in_dialog() { st.dialog } else if st.in_save_menu() { -2 } else if st.act_select { -3 } else { -1 };
-    let fp = if FINGERPRINT.load(std::sync::atomic::Ordering::Relaxed) { st.fingerprint() } else { 0 };
+    let fp = st.fingerprint();
     // Off, the last field is exactly the fingerprint as before.
     let fp = if STARSET.load(std::sync::atomic::Ordering::Relaxed) {
         let mut h = std::collections::hash_map::DefaultHasher::new();
@@ -693,10 +626,8 @@ pub struct Engine {
     /// OBRRT_ATTEMPT_MODEL: attempts so far per (kind, start state) and per start state.
     tried_kind: HashMap<(&'static str, u32), u32>,
     tried_node: HashMap<u32, u32>,
-    /// Per b_index zone: its draw weight (value_zones).
+    /// Per b_index zone: its draw weight (all 1).
     zone_weights: Vec<f64>,
-    /// Zone bandit: per zone, (new states, attempts), decaying.
-    zone_stats: HashMap<(u16, u8), (f64, f64)>,
     /// The best routes' states (see route_share).
     route: Vec<u32>,
     events: BufWriter<File>,
@@ -721,10 +652,6 @@ pub struct Engine {
     hot: HashSet<u32>,
     /// New-eligible boost (see `Config::new_eligible`).
     ne: NewEligible,
-    /// Earliest-arrival boost (see `Config::earliest`).
-    ea: Earliest,
-    /// Backward chaining (OBRRT_BACKCHAIN, see backchain.rs).
-    bc: crate::backchain::Backchain,
     /// Wall seconds spent planning (steps 1-4) and merging (step 6).
     diag_plan_secs: (f64, f64),
     /// Wall seconds (report only): [pre-plan refresh+index_frontier, attempts
@@ -812,45 +739,6 @@ struct NewEligible {
     secs: f64,
 }
 
-/// Earliest-arrival boost: frames a state must beat its b cell's record by,
-/// and plans per queued state per round.
-const EA_CELL_MARGIN: u32 = 30;
-const EA_PER_ROUND: u32 = 2;
-const EA_QUEUE: usize = 2048;
-
-/// Zone tier: level, area, stars, keys, collected set (STARSET only).
-type Tier = (u16, u8, i16, u8, u64);
-/// b cell within a tier (as index_frontier groups them).
-type BCell = (Tier, i32, i32, i32, i64, i16);
-
-fn tier(st: &St) -> Tier {
-    (st.level, st.area, st.stars, st.keys, starset(st))
-}
-
-fn bcell(st: &St) -> BCell {
-    let c = |v: f32| (v / 512.0).floor() as i32;
-    (tier(st), c(st.pos[0]), c(st.pos[1]), c(st.pos[2]), st.level_changes(), st.red_coins)
-}
-
-#[derive(Default)]
-struct Earliest {
-    /// Earliest frame (and state) per tier and per b cell.
-    tier_best: HashMap<Tier, (u32, u32)>,
-    cell_best: HashMap<BCell, (u32, u32)>,
-    /// Priority (higher served first), state; attempts left per state.
-    queue: std::collections::BTreeSet<(u64, u32)>,
-    left: HashMap<u32, (u32, u64, bool)>,
-    /// Plans left this round, and per state this round.
-    budget: usize,
-    round_used: HashMap<u32, u32>,
-    queued_tier: u64,
-    queued_cell: u64,
-    dropped: u64,
-    stale: u64,
-    planned: u64,
-    no_objective: u64,
-}
-
 fn key_hash(k: &str) -> u64 {
     use std::hash::{Hash, Hasher};
     let mut h = std::hash::DefaultHasher::new();
@@ -911,7 +799,6 @@ impl Engine {
         let mut cells = HashMap::new();
         cells.insert(cell(&root), vec![0]);
         let root_zone = root.zone();
-        let root_st = root.clone();
         let rr = if cfg.reroute {
             let key = match &cfg.reroute_schema {
                 Some(path) => crate::reroute::RerouteKey::Schema(Box::new(objective_scattershot::objective::Tree::load(&fs::read_to_string(path)?)?)),
@@ -947,7 +834,7 @@ impl Engine {
             rb,
             tree,
             pool: Pool::default(),
-            diag: Diagnostics { chain_prob: cfg.chain_fixed.unwrap_or(cfg.chain_prob), ..Default::default() },
+            diag: Diagnostics { chain_prob: cfg.chain_prob, ..Default::default() },
             generator,
             workers,
             bases: vec![crate::game::into_plain(root_save).into_bytes()],
@@ -967,7 +854,6 @@ impl Engine {
             tried_kind: HashMap::new(),
             tried_node: HashMap::new(),
             zone_weights: vec![1.0],
-            zone_stats: HashMap::new(),
             route: Vec::new(),
             events,
             total_frames: 0,
@@ -983,11 +869,6 @@ impl Engine {
             rewire_cold: Default::default(),
             hot: HashSet::new(),
             ne: NewEligible { rng: Some(SmallRng::seed_from_u64(cfg.seed ^ 0x6e65_7765_6c69_6769)), ..Default::default() },
-            ea: Earliest {
-                tier_best: HashMap::from([(tier(&root_st), (root_st.frame, 0))]),
-                cell_best: HashMap::from([(bcell(&root_st), (root_st.frame, 0))]),
-                ..Default::default()
-            },
             diag_plan_secs: (0.0, 0.0),
             diag_secs: [0.0; 6],
             diag_index_secs: 0.0,
@@ -997,7 +878,6 @@ impl Engine {
             live: Vec::new(),
             live_upto: 0,
             skip_rr: 0,
-            bc: crate::backchain::Backchain::new(cfg.seed),
             dense: crate::dense::settings().filter(|d| d.modes.any()),
             dstats: Default::default(),
             near: crate::near::NearSeed::new(cfg.seed),
@@ -1082,26 +962,8 @@ impl Engine {
             ks.filter(|ks| ks.attempts > 0).map_or(5000.0, |ks| ks.frames as f64 / ks.attempts as f64 + crate::diag::ATTEMPT_OVERHEAD)
         };
         let mean_cost = kinds.iter().map(|(k, _)| cost(k)).sum::<f64>() / kinds.len() as f64;
-        let mut weights: Vec<f64> =
+        let weights: Vec<f64> =
             kinds.iter().map(|(k, w)| w.max(self.cfg.kind_floor * total * (mean_cost / cost(k)).min(1.0))).collect();
-        // Cap any one kind's share of picks (kind_cap): its excess goes to the
-        // others in proportion (a few rounds, since capping raises the rest).
-        if self.cfg.kind_cap > 0.0 && weights.len() > 1 {
-            let cap = self.cfg.kind_cap.max(1.0 / weights.len() as f64);
-            for _ in 0..4 {
-                let sum: f64 = weights.iter().sum();
-                let mut changed = false;
-                for w in &mut weights {
-                    if *w > cap * sum {
-                        *w = cap * sum;
-                        changed = true;
-                    }
-                }
-                if !changed {
-                    break;
-                }
-            }
-        }
         let sum: f64 = weights.iter().sum();
         let mut x = self.rng.random_range(0.0..sum);
         let mut chosen = kinds[kinds.len() - 1].0;
@@ -1207,8 +1069,6 @@ impl Engine {
         }
         let b_st = &self.tree.nodes[b as usize].st;
         let (b_keys, b_stars, b_lives) = (b_st.keys, b_st.stars, b_st.lives);
-        // OBRRT_RETIRE_SUBSET: a start has everything b has, not just as many.
-        let b_set = self.tree.subset.then(|| crate::tree::set_key(b_st));
         let mut cands: Vec<(u32, f64, f64)> = Vec::new();
         // Arrival band: each candidate's own heuristic, to keep only those
         // within `arrival_band` of the closest.
@@ -1226,7 +1086,6 @@ impl Engine {
                 || !s.alive()
                 || (!wip && s.keys < b_keys)
                 || (!wip && s.stars < b_stars)
-                || (!wip && b_set.as_ref().is_some_and(|k| !crate::tree::covers(&crate::tree::set_key(s), k)))
                 || s.modal() != obj.modal()
                 || !obj.base_criteria(s)
             {
@@ -1254,12 +1113,7 @@ impl Engine {
             let u = (s.wedges() as f64 / 8.0).powf(self.cfg.alpha)
                 * self.cfg.gamma.powi((b_lives as i32 - s.lives as i32).max(0));
             let crowd = if self.cfg.soft_dedup { 0.5f64.powi(n.stats.crowd as i32) } else { 1.0 };
-            let wear = match self.pool.entries[entry].wear.get(&(i as u32)) {
-                Some(&w) if self.cfg.start_wear => 0.5f64.powf(w as f64 / 2.0),
-                _ => 1.0,
-            };
-            let settle = if SETTLE_RANK.load(std::sync::atomic::Ordering::Relaxed) && !obj.modal() && s.vel[0].hypot(s.vel[2]) < 2.0 && s.vel[1].abs() < 1.0 { 0.5 } else { 1.0 };
-            cands.push((i as u32, h, u * self.start_mult(&n.stats) * crowd * wear * settle * kw as f64 * self.manual_start_mult(i)));
+            cands.push((i as u32, h, u * self.start_mult(&n.stats) * crowd * kw as f64 * self.manual_start_mult(i)));
         }
         if cands.is_empty() {
             return None;
@@ -1552,38 +1406,8 @@ impl Engine {
             self.goal_top.push(GoalTop { key, obj, cells: ranked.into_iter().map(|(_, i, c)| (i, c)).collect(), weight, base, cps: cp.into_iter().map(|(w, (h, i))| (w, h, i)).collect(), h1: first.map(|f| f.1), h0 });
         }
         tick!(8);
-        // Zone weights: 1 + the most valuable objective (weight × decay ×
-        // kind multiplier) some of the zone's frontier states can start.
-        // Self objectives (weight 1, everywhere) are the baseline and skipped.
-        let bandit: Vec<f64> = zones
-            .keys()
-            .map(|z| self.zone_stats.get(z).map_or(1.0, |(novel, tries)| (1.0 + novel) / (1.0 + tries)))
-            .collect();
-        let bandit_max = bandit.iter().cloned().fold(0.0, f64::max);
-        self.zone_weights = zones
-            .iter()
-            .enumerate()
-            .map(|(zi, (_, cells))| {
-                // Zone bandit: recent new states per attempt, floored at 15%
-                // of the best zone's so no zone is starved.
-                if self.cfg.zone_bandit {
-                    return bandit[zi].max(0.15 * bandit_max);
-                }
-                if !self.cfg.value_zones {
-                    return 1.0;
-                }
-                let reps: Vec<&St> = cells.values().take(4).map(|c| &self.tree.nodes[c[0] as usize].st).collect();
-                let best = self
-                    .pool
-                    .entries
-                    .iter()
-                    .filter(|e| e.base_weight > 1.0 && !e.obj.modal())
-                    .filter(|e| reps.iter().any(|s| e.obj.exists_in(s) && e.obj.base_criteria(s)))
-                    .map(|e| e.base_weight * e.decay * self.diag.kinds.get(e.obj.kind()).map_or(1.0, |k| k.multiplier))
-                    .fold(0.0, f64::max);
-                1.0 + best
-            })
-            .collect();
+        // Zone weights: uniform (the value-weighted and bandit draws are gone; the weighted draw stays so seeds replay).
+        self.zone_weights = vec![1.0; zones.len()];
         self.b_index = zones.into_values().map(|cells| cells.into_values().collect()).collect();
         self.wip_top = top
             .into_iter()
@@ -2162,121 +1986,15 @@ impl Engine {
         out
     }
 
-    /// Earliest-arrival boost, on adding `id`: updates the tier and b-cell
-    /// records and queues `id` if it set one (see `Config::earliest`).
-    fn ea_note(&mut self, id: u32) {
-        let st = &self.tree.nodes[id as usize].st;
-        if st.modal() || !st.alive() {
-            return;
-        }
-        let (t, c, f) = (tier(st), bcell(st), st.frame);
-        let tier_rec = self.ea.tier_best.get(&t).is_none_or(|&(bf, _)| f < bf);
-        let old_cell = self.ea.cell_best.get(&c).map(|&(bf, _)| bf);
-        if old_cell.is_none_or(|bf| f < bf) {
-            self.ea.cell_best.insert(c, (f, id));
-        }
-        if tier_rec {
-            self.ea.tier_best.insert(t, (f, id));
-        }
-        let cell_rec = self.cfg.earliest_cell && old_cell.is_some_and(|bf| f + EA_CELL_MARGIN <= bf);
-        if !(tier_rec || cell_rec) || self.ea.left.contains_key(&id) {
-            return;
-        }
-        let prio = if tier_rec {
-            self.ea.queued_tier += 1;
-            (1u64 << 63) | (u32::MAX - f) as u64
-        } else {
-            self.ea.queued_cell += 1;
-            (old_cell.unwrap() - f) as u64
-        };
-        self.ea.queue.insert((prio, id));
-        self.ea.left.insert(id, (self.cfg.earliest_cap, prio, tier_rec));
-        if self.ea.queue.len() > EA_QUEUE {
-            if let Some((_, j)) = self.ea.queue.pop_first() {
-                self.ea.left.remove(&j);
-                self.ea.dropped += 1;
-            }
-        }
-    }
-
-    /// Earliest-arrival boost: the next queued state as b and start, with
-    /// an objective it can start, within this round's budget.
-    fn plan_earliest(&mut self) -> Option<Plan> {
-        while self.ea.budget > 0 {
-            let used = &self.ea.round_used;
-            let Some(&(prio, b)) = self.ea.queue.iter().rev().find(|(_, i)| used.get(i).copied().unwrap_or(0) < EA_PER_ROUND) else {
-                break;
-            };
-            let n = &self.tree.nodes[b as usize];
-            let rec = if self.ea.left[&b].2 {
-                self.ea.tier_best.get(&tier(&n.st)).map(|r| r.0)
-            } else {
-                self.ea.cell_best.get(&bcell(&n.st)).map(|r| r.0)
-            };
-            if n.retired
-                || n.st.modal()
-                || !n.st.alive()
-                || !(self.tree.on_frontier(&n.st) || self.tree.is_wip(b))
-                || (!any_exit() && n.st.course_done(n.st.course))
-                || (self.cfg.rrt_star && n.dominated)
-                || rec.is_some_and(|r| r + EA_CELL_MARGIN <= n.st.frame)
-            {
-                self.ea.queue.remove(&(prio, b));
-                self.ea.left.remove(&b);
-                self.ea.stale += 1;
-                continue;
-            }
-            *self.ea.round_used.entry(b).or_default() += 1;
-            let left = &mut self.ea.left.get_mut(&b).unwrap().0;
-            *left -= 1;
-            if *left == 0 {
-                self.ea.queue.remove(&(prio, b));
-                self.ea.left.remove(&b);
-            }
-            self.tree.nodes[b as usize].stats.as_b += 1;
-            let b_st = self.tree.nodes[b as usize].st.clone();
-            for o in self.generator.generate(&b_st, &mut self.rng) {
-                self.pool.insert(o, &b_st);
-            }
-            self.insert_learned(b, &b_st);
-            let Some(entry) = self.sample_entry(b, true) else {
-                self.ea.no_objective += 1;
-                continue;
-            };
-            self.ea.budget -= 1;
-            self.ea.planned += 1;
-            let obj = self.pool.entries[entry].obj.clone();
-            let kind = obj.kind();
-            self.diag.kind(kind).samples += 1;
-            self.diag.kind(kind).window_samples += 1;
-            self.pool.entries[entry].unattemptable = 0;
-            let stages = self.extend_chain(entry, obj, b);
-            return Some(Plan { stages, start: b, b, rewire: None, seed: None, polish: None, targets: None, window_b: None, window: Vec::new(), mv: None });
-        }
-        None
-    }
-
     fn plan(&mut self) -> Option<Plan> {
         if let Some(b) = self.modal_queue.pop() {
             return self.plan_modal(b, true);
-        }
-        if self.bc.budget > 0 {
-            if let Some((start, obj)) = self.bc.next(&self.tree) {
-                self.pool.insert(obj.clone(), &self.tree.nodes[start as usize].st);
-                let entry = self.pool.find(&obj.key()).unwrap();
-                return Some(Plan { stages: vec![(entry, obj)], start, b: start, rewire: None, seed: None, polish: None, targets: None, window_b: None, window: Vec::new(), mv: None });
-            }
         }
         if self.cfg.rrt_star
             && !(self.rewire_hot.is_empty() && self.rewire_cold.is_empty())
             && self.rng.random_bool(self.cfg.rewire_share)
         {
             if let Some(p) = self.plan_rewire() {
-                return Some(p);
-            }
-        }
-        if self.cfg.earliest && self.ea.budget > 0 {
-            if let Some(p) = self.plan_earliest() {
                 return Some(p);
             }
         }
@@ -2460,8 +2178,6 @@ impl Engine {
                             self.pool.rate_one(entry, self.total_frames, &p);
                             self.pool.rate.nostart_charges += 1;
                         }
-                    } else if self.cfg.entry_bandit {
-                        e.observe(false, self.cfg.bandit_gamma);
                     } else {
                         e.decay *= self.cfg.decay;
                     }
@@ -2860,7 +2576,7 @@ impl Engine {
             let fo_reject = crate::speed::settings().faster_only && seg.success && seg.end.as_ref().is_some_and(|(st, _)| !self.faster_ok(plan, i, &obj, &seg_start, st));
             let success = seg.success && !fo_reject;
             if let Some((st, packed)) = seg.end {
-                if self.cfg.start_wear || self.cfg.decay_route || self.cfg.entry_bandit || self.cfg.sampler_rate {
+                if self.cfg.sampler_rate {
                     end_k = self.keys_of(obj.as_ref(), &st);
                 }
                 // Progress alone counts only for objectives worth at least 1:
@@ -2914,9 +2630,6 @@ impl Engine {
                     }
                     if self.cfg.new_eligible {
                         self.ne_note(id, parent);
-                    }
-                    if self.cfg.earliest {
-                        self.ea_note(id);
                     }
                     // Best game time per milestone, for the anytime curve.
                     self.note_best_at(id, progress, zone_now, frame, kind)?;
@@ -2993,9 +2706,6 @@ impl Engine {
                         let rank = if success { (frame - seg_start.frame) as f64 } else { self.keys_of(obj.as_ref(), &self.tree.nodes[id as usize].st).0 };
                         self.near.note(obj.key(), plan.start, id, success, rank);
                     }
-                    if success && self.bc.on() {
-                        self.bc.note_success(&self.tree, id, &obj, weight, adv);
-                    }
                 }
             }
             // Stats.
@@ -3037,47 +2747,18 @@ impl Engine {
                     k.frontier += 1;
                     chain_frontier += 1;
                 }
-                // Kind bandit: the entry bandit's improvement signal (no-start
-                // picks spend no frames and aren't counted). Modal kinds are
-                // never picked through `sample_entry`'s kind stage: they stay
-                // unobserved, so out of the normalisation, at multiplier 1.
                 // OBRRT_GAMMA_SET: the first stage's outcome under its γ.
                 if i == 0 && crate::gammaset::set().is_some() {
                     crate::gammaset::observe(obj.kind(), (success && novel) || (added.is_some() && improves(&self.cfg, end_k, start_k)));
                 }
-                if self.cfg.kind_bandit && !obj.modal() {
-                    k.observe((success && novel) || (added.is_some() && improves(&self.cfg, end_k, start_k)), self.cfg.kind_gamma);
-                    self.diag.refresh_kind_bandit();
-                }
             }
             {
-                let cfg = &self.cfg;
                 let e = &mut self.pool.entries[entry];
                 e.attempts += 1;
                 // Improved on its start: met, or kept a state nearer by the
                 // objective's own heuristic (with `arrival`: sooner by the
                 // estimated arrival, so a slow walk inching closer doesn't
                 // count; or either, `arrival_decay_either`).
-                let improved = added.is_some() && improves(cfg, end_k, start_k);
-                let first_from_here = !e.wear.contains_key(&from);
-                if self.cfg.start_wear || self.cfg.decay_route {
-                    let w = e.wear.entry(from).or_insert(0);
-                    if success || improved {
-                        *w = 0;
-                    } else {
-                        *w += 1;
-                    }
-                }
-                // Progress along another route than the best start's: the
-                // entry's decay partly recovers (bounded per entry), after
-                // this failure's own decay below.
-                let recover = self.cfg.decay_route
-                    && !success
-                    && improved
-                    && novel
-                    && first_from_here
-                    && improves(cfg, (e.best_start, start_k.1.map(|_| e.best_arrival)), start_k)
-                    && e.recoveries > 0;
                 e.best_start = e.best_start.min(start_k.0);
                 if let Some(f) = start_k.1 {
                     e.best_arrival = e.best_arrival.min(f);
@@ -3085,9 +2766,6 @@ impl Engine {
                 if self.cfg.sampler_rate {
                     // Rate sampler: credited below, no decay.
                     e.successes += success as u32;
-                } else if self.cfg.entry_bandit {
-                    e.successes += success as u32;
-                    e.observe((success && novel) || improved, self.cfg.bandit_gamma);
                 } else if success && novel {
                     e.successes += 1;
                     e.decay = 1.0;
@@ -3095,11 +2773,6 @@ impl Engine {
                     // A success that only reproduced an existing state decays too.
                     e.successes += success as u32;
                     e.decay *= self.cfg.decay;
-                }
-                if recover && !self.cfg.entry_bandit && !self.cfg.sampler_rate && e.decay < 0.5 {
-                    e.decay = 0.5;
-                    e.recoveries -= 1;
-                    self.diag.kind(kind).route_recoveries += 1;
                 }
             }
             let end_frame = next_start.as_ref().map(|s| s.frame);
@@ -3175,7 +2848,7 @@ impl Engine {
                                 self.pool.rate.imp_first += imp;
                                 self.pool.rate_note(j, imp, 0.0, self.total_frames, &p, false);
                             }
-                        } else if !self.cfg.entry_bandit && novel {
+                        } else if novel {
                             // Met for the first time from a new state: as a
                             // stage's novel success would.
                             e.decay = 1.0;
@@ -3217,7 +2890,7 @@ impl Engine {
                 let st = &self.tree.nodes[id as usize].st;
                 let cfg = &self.cfg;
                 let eta = &self.eta;
-                for e in self.pool.entries.iter_mut().filter(|_| !cfg.entry_bandit && !cfg.sampler_rate) {
+                for e in self.pool.entries.iter_mut().filter(|_| !cfg.sampler_rate) {
                     if e.decay < 1.0 && e.obj.exists_in(st) && e.obj.base_criteria(st) && {
                         let h = obrrt_core::start_eta(e.obj.as_ref(), st) * eta.c(e.obj.kind());
                         let f = arrival_est(cfg, e.obj.as_ref(), st, h);
@@ -3300,18 +2973,6 @@ impl Engine {
         b.frontier += chain_frontier;
         b.new_zones += chain_zones;
         b.value += chain_value;
-        // Zone bandit statistics: per zone of b, attempts and new states,
-        // decaying so the weights follow recent progress.
-        if self.cfg.zone_bandit {
-            for v in self.zone_stats.values_mut() {
-                v.0 *= 0.998;
-                v.1 *= 0.998;
-            }
-            let z = self.tree.nodes[plan.b as usize].st.zone();
-            let e = self.zone_stats.entry(z).or_insert((0.0, 0.0));
-            e.0 += chain_added as f64;
-            e.1 += 1.0;
-        }
         Ok(())
     }
 
@@ -3372,9 +3033,6 @@ impl Engine {
             }
             if ne {
                 self.ne_note(id, parent);
-            }
-            if self.cfg.earliest {
-                self.ea_note(id);
             }
             self.note_best_at(id, progress, zone, frame, via)?;
             if modal {
@@ -3446,12 +3104,11 @@ impl Engine {
             let tail: usize = t.nodes.iter().map(|n| n.tail.capacity() * std::mem::size_of::<GamePad>()).sum();
             let inputs: usize = t.nodes.iter().map(|n| n.inputs.capacity() * std::mem::size_of::<GamePad>()).sum();
             let made_by = t.nodes.iter().filter(|n| n.made_by.is_some()).count();
-            let wear: usize = self.pool.entries.iter().map(|e| e.wear.capacity() * 9).sum();
             let ne: usize = self.ne.sets.values().map(|b| b.len() * 8 + 16).sum::<usize>() + self.ne.sets.capacity() * 21;
             println!(
-                "   memdiag: saves len {} MB cap {} MB; tail {} MB inputs {} MB; nodes vec {} MB (cap {} x {} B); made_by {}; pool {} x {} B + wear {} MB; ne sets {} MB; dkeys cap {}; frontier cap {}",
+                "   memdiag: saves len {} MB cap {} MB; tail {} MB inputs {} MB; nodes vec {} MB (cap {} x {} B); made_by {}; pool {} x {} B; ne sets {} MB; dkeys cap {}; frontier cap {}",
                 mb(save_len), mb(save_cap), mb(tail), mb(inputs), mb(t.nodes.capacity() * std::mem::size_of::<crate::tree::Node>()), t.nodes.capacity(), std::mem::size_of::<crate::tree::Node>(),
-                made_by, self.pool.entries.capacity(), std::mem::size_of::<crate::pool::Entry>(), mb(wear), mb(ne), t.dkeys.capacity(), t.frontier.capacity()
+                made_by, self.pool.entries.capacity(), std::mem::size_of::<crate::pool::Entry>(), mb(ne), t.dkeys.capacity(), t.frontier.capacity()
             );
         }
         let cells: usize = self.cells.values().map(|v| v.capacity() * 4).sum();
@@ -3527,19 +3184,16 @@ impl Engine {
             multi.value += c.value;
         }
         // Route chains learn nothing from how chains fared.
-        if let Some(single) = single.filter(|_| multi.attempts >= 20 && self.cfg.chain_fixed.is_none() && !self.cfg.chain_route) {
+        if let Some(single) = single.filter(|_| multi.attempts >= 20 && !self.cfg.chain_route) {
             let ratio = (multi.yield_per_kframe() + 0.05) / (single + 0.05);
             self.diag.chain_prob = (0.7 * self.diag.chain_prob + 0.3 * (0.5 * ratio)).clamp(0.1, 0.9);
         }
         let mean = self.diag.mean_yield();
-        let kind_bandit = self.cfg.kind_bandit;
         for k in self.diag.kinds.values_mut() {
             if k.attempts < 10 {
                 continue;
             }
-            // Kind bandit: the multiplier is set at every merge
-            // (`Diagnostics::refresh_kind_bandit`), not here.
-            if !kind_bandit {
+            {
                 let y = k.yield_per_kframe();
                 let target = ((y + 0.05) / (mean + 0.05)).clamp(0.1, 5.0);
                 let old = k.multiplier;
@@ -3586,7 +3240,6 @@ impl Engine {
         }
         print!("{}", self.diag.report(&self.tree, secs, self.total_frames));
         print!("{}", self.eta.report(8));
-        self.bc.write(&self.cfg.out_dir, &self.tree)?;
         self.events.flush()?;
         let mut csv = String::from("id,parent,depth,x,y,z,level,area,stars,keys,coins,frame,via,as_b,as_start,successes,added,barren,hspeed,fwd_vel,action,red_coins,act,star_flags,retired,caps,save_flags,health\n");
         for (i, n) in self.tree.nodes.iter().enumerate() {
@@ -3635,19 +3288,16 @@ impl Engine {
         }
         fs::write(format!("{}/nodes.csv", self.cfg.out_dir), csv)?;
         self.write_tree()?;
-        // Per kind: entries, mean objective weight multiplier (decay, or the
-        // entry bandit's draw) and discounted improvement rate.
-        let mut weights: BTreeMap<&'static str, (usize, f64, f64, f64)> = BTreeMap::new();
+        // Per kind: entries and mean objective weight multiplier (decay).
+        let mut weights: BTreeMap<&'static str, (usize, f64)> = BTreeMap::new();
         for e in &self.pool.entries {
             let w = weights.entry(e.obj.kind()).or_default();
             w.0 += 1;
             w.1 += e.decay;
-            w.2 += e.bandit_k;
-            w.3 += e.bandit_n;
         }
         let weights: BTreeMap<&str, serde_json::Value> = weights
             .into_iter()
-            .map(|(k, (n, d, bk, bn))| (k, serde_json::json!({"entries": n, "mean_decay": d / n as f64, "improve_rate": if bn > 0.0 { bk / bn } else { 0.0 }})))
+            .map(|(k, (n, d))| (k, serde_json::json!({"entries": n, "mean_decay": d / n as f64})))
             .collect();
         let summary = serde_json::json!({
             "secs": secs, "nodes": self.tree.nodes.len(), "frames": self.total_frames,
@@ -3658,12 +3308,6 @@ impl Engine {
             "entry_weights": weights,
         });
         let mut summary = summary;
-        if self.tree.subset {
-            summary["frontier"]["sets"] = serde_json::json!(self.tree.sets.len());
-            summary["frontier"]["sets_peak"] = serde_json::json!(self.tree.sets_peak);
-            summary["frontier"]["sets_dropped"] = serde_json::json!(self.tree.dropped.len());
-            summary["frontier"]["set_list"] = self.tree.sets.iter().map(|f| serde_json::json!({"keys": f.key.1, "stars": f.key.2, "states": f.states, "last": f.last, "frontier_states": self.tree.frontier.iter().filter(|&&i| crate::tree::set_key(&self.tree.nodes[i as usize].st) == f.key).count()})).collect();
-        }
         if self.tree.keep_wip {
             let t = &self.tree;
             summary["frontier"]["wip"] = serde_json::json!({
@@ -3810,22 +3454,6 @@ impl Engine {
                 "planned": self.ne.planned, "queue": self.ne.queue.len(), "keys": self.ne.queued_per_key.len(),
                 "sets": self.ne.sets.len(), "secs": self.ne.secs,
             });
-        }
-        if self.cfg.earliest {
-            summary["earliest"] = serde_json::json!({
-                "queued_tier": self.ea.queued_tier, "queued_cell": self.ea.queued_cell, "dropped": self.ea.dropped,
-                "stale": self.ea.stale, "planned": self.ea.planned, "no_objective": self.ea.no_objective,
-                "queue": self.ea.queue.len(), "tiers": self.ea.tier_best.len(), "cells": self.ea.cell_best.len(),
-            });
-        }
-        if self.cfg.kind_bandit {
-            let kb: BTreeMap<&str, serde_json::Value> = self
-                .diag
-                .kinds
-                .iter()
-                .map(|(name, k)| (*name, serde_json::json!({"k": k.bandit_k, "n": k.bandit_n, "m": k.bandit_mean(), "multiplier": k.multiplier})))
-                .collect();
-            summary["kind_bandit"] = serde_json::json!(kb);
         }
         if crate::movegenome::enabled() {
             summary["move_ga"] = crate::movegenome::stats_json();
@@ -4212,9 +3840,6 @@ impl Engine {
             if self.cfg.new_eligible {
                 self.ne_note(id, parent);
             }
-            if self.cfg.earliest {
-                self.ea_note(id);
-            }
             self.note_best_at(id, progress, zone, frame, via)?;
             if modal {
                 self.modal_queue.push(id);
@@ -4398,9 +4023,6 @@ impl Engine {
         if self.cfg.new_eligible {
             self.ne_note(id, at);
         }
-        if self.cfg.earliest {
-            self.ea_note(id);
-        }
         self.note_best_at(id, progress, zone, fr, via)?;
         if modal {
             self.modal_queue.push(id);
@@ -4496,9 +4118,6 @@ impl Engine {
         }
         if self.cfg.new_eligible {
             self.ne_note(id, g.from);
-        }
-        if self.cfg.earliest {
-            self.ea_note(id);
         }
         self.note_best_at(id, progress, zone, frame, kind)?;
         if let (true, Some(m)) = (self.tree.nodes[id as usize].met, self.tree.nodes[id as usize].made_by.clone()) {
@@ -4666,8 +4285,6 @@ impl Engine {
                 }
                 tick(1, &mut self.diag_pre);
                 self.pool.rate_refresh(self.total_frames, &p);
-            } else if self.cfg.entry_bandit {
-                self.pool.redraw(&mut self.rng);
             }
             tick(2, &mut self.diag_pre);
             self.tree.wip_refresh();
@@ -4675,10 +4292,6 @@ impl Engine {
             self.index_frontier();
             tick(4, &mut self.diag_pre);
             self.ne.budget = if self.cfg.new_eligible { ((self.cfg.round_plans as f64 * NE_SHARE).ceil() as usize).max(1) } else { 0 };
-            if self.cfg.earliest {
-                self.ea.budget = ((self.cfg.round_plans as f64 * self.cfg.earliest_share).ceil() as usize).max(1);
-                self.ea.round_used.clear();
-            }
             self.diag_secs[0] += pre_t.elapsed().as_secs_f64();
             let plan_t = Instant::now();
             // More attempts than workers, so a slow attempt doesn't leave the
@@ -4686,7 +4299,6 @@ impl Engine {
             // A fixed number of attempts per round, whatever the thread
             // count: the tree only updates between rounds, so the round size
             // shapes the search (how stale planning is); 64 = 16 threads × 4.
-            self.bc.begin_round(self.cfg.round_plans);
             obrrt_core::mover::publish(); // movers see caches observed before this round only
             // Grafts take up to reroute_share of the round's slots (none when off).
             let grafts = match self.rr.as_mut() {
@@ -4730,7 +4342,7 @@ impl Engine {
             };
             let mut plans: Vec<Plan> = (0..self.cfg.round_plans.saturating_sub(grafts.len() + shares.len() + n_polish))
                 .filter_map(|_| {
-                    let p = self.plan().inspect(|_| self.bc.made += 1);
+                    let p = self.plan();
                     // OBRRT_ATTEMPT_MODEL: counted when planned, so the plans of
                     // one round see each other (the model was trained on counts
                     // in attempt order).
@@ -4769,9 +4381,9 @@ impl Engine {
                 }
             }
             if self.near.on.is_some() {
-                for (i, p) in plans.iter_mut().enumerate() {
+                for p in plans.iter_mut() {
                     let o = &p.stages[0].1;
-                    if self.bc.is_pending(i) || p.rewire.is_some() || p.polish.is_some() || p.seed.is_some() || o.modal() || !o.fixed().is_none() {
+                    if p.rewire.is_some() || p.polish.is_some() || p.seed.is_some() || o.modal() || !o.fixed().is_none() {
                         continue;
                     }
                     p.seed = self.near.pick(&self.tree, &o.key(), p.start);
@@ -4783,9 +4395,9 @@ impl Engine {
             // OBRRT_PARENT_WINDOW_MAX frames, same zone, parent still loadable,
             // and the goal not already met by the copy).
             if let Some((share, max)) = parent_window() {
-                for (i, p) in plans.iter_mut().enumerate() {
+                for p in plans.iter_mut() {
                     let o = p.stages[0].1.clone();
-                    if self.bc.is_pending(i) || p.rewire.is_some() || p.polish.is_some() || p.seed.is_some() || o.modal() || o.fixed().is_some() {
+                    if p.rewire.is_some() || p.polish.is_some() || p.seed.is_some() || o.modal() || o.fixed().is_some() {
                         continue;
                     }
                     // Back through the ancestors until the copy is at least
@@ -4867,7 +4479,6 @@ impl Engine {
             };
             let bnb = &bnb_v;
             let workers = &self.workers;
-            let bc = &self.bc;
             let params = crate::ga::GaParams { scale: self.cfg.ga_scale, fitness: self.cfg.fitness, new_ops: self.cfg.ga_new_ops, pink: self.cfg.ga_pink, per_objective_budget: self.cfg.ga_per_objective_budget };
             let dense = self.dense;
             let replay_max = self.tree.sparse.as_ref().map_or(0, |sp| sp.cap);
@@ -4905,7 +4516,7 @@ impl Engine {
                         start_dist: tree.dist(plan.start),
                         pack: &pack,
                     });
-                    let seed_in = bc.seed(i).or(plan.seed.as_deref());
+                    let seed_in = plan.seed.as_deref();
                     crate::ga::set_repair_targets(plan.targets.clone());
                     crate::ga::set_tail((!node.tail.is_empty() && plan.window.is_empty()).then(|| node.tail.clone()));
                     crate::ga::set_window(plan.window.clone());
@@ -4944,7 +4555,6 @@ impl Engine {
             self.diag_secs[5] += att_ns.into_inner() as f64 * 1e-9;
             let merge_t = Instant::now();
             for (i, (plan, r)) in plans.iter().zip(results).enumerate() {
-                let bc = self.bc.is_pending(i).then(|| (self.tree.nodes.len(), r.as_ref().ok().map(crate::backchain::outcome)));
                 if plan.stages[0].1.kind() == "Road::Leg" {
                     if let (Some(road), Ok(att)) = (self.road.as_mut(), r.as_ref()) {
                         road.stats.legs_ok += att.segments.first().is_some_and(|s| s.success) as u64;
@@ -4983,11 +4593,7 @@ impl Engine {
                                 let p = self.cfg.rate;
                                 self.pool.rate_note(*entry, 0.0, p.nostart_frames, self.total_frames, &p, true);
                             } else if let Some(e) = self.pool.entries.get_mut(*entry) {
-                                if self.cfg.entry_bandit {
-                                    e.observe(false, self.cfg.bandit_gamma);
-                                } else {
-                                    e.decay *= self.cfg.decay;
-                                }
+                                e.decay *= self.cfg.decay;
                             }
                             self.diag.kind(obj.kind()).died += 1;
                         }
@@ -4995,9 +4601,6 @@ impl Engine {
                             eprintln!("emulator trap #{} (node {} traps {}): {:#}", self.emulator_errors, plan.start, traps, e);
                         }
                     }
-                }
-                if let Some((before, out)) = bc {
-                    self.bc.merged(i, &self.tree, before, out);
                 }
             }
             self.diag_plan_secs.1 += merge_t.elapsed().as_secs_f64();

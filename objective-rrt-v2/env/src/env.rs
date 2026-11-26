@@ -86,7 +86,6 @@ pub fn from_env_with(base: SearchConfig, get: Lookup) -> Result<SearchConfig> {
     e.strict_opt("OBRRT_MAX_FRAMES", &mut budget.max_frames)?;
     e.strict_opt("OBRRT_MEM_MB", &mut budget.mem_mb)?;
     e.strict("OBRRT_ROUND", &mut budget.round_plans)?;
-    e.strict("OBRRT_TUNE_FRAMES", &mut budget.tune_frames)?;
 
     // sampler
     match e.get("OBRRT_SAMPLER").as_deref() {
@@ -95,13 +94,10 @@ pub fn from_env_with(base: SearchConfig, get: Lookup) -> Result<SearchConfig> {
         Some(v) => bail!("OBRRT_SAMPLER: rate or decay, not {v}"),
     }
     let r = &mut sampler.rate;
-    e.strict("OBRRT_RATE_FLOOR", &mut r.floor)?;
     e.strict("OBRRT_RATE_CAP", &mut r.cap)?;
     e.strict("OBRRT_RATE_TAU", &mut r.tau)?;
     e.strict("OBRRT_RATE_PRIOR", &mut r.prior_frames)?;
     e.strict("OBRRT_RATE_NOSTART", &mut r.nostart_frames)?;
-    e.strict("OBRRT_RATE_NODE_PRIOR", &mut r.node_prior)?;
-    e.strict("OBRRT_RATE_NODE_CAP", &mut r.node_cap)?;
     e.strict("OBRRT_RATE_KIND_SCALE", &mut r.kind_scale)?;
     e.strict("OBRRT_RATE_ROUTE", &mut r.route)?;
     e.strict("OBRRT_RATE_NOVEL", &mut r.novel)?;
@@ -112,36 +108,13 @@ pub fn from_env_with(base: SearchConfig, get: Lookup) -> Result<SearchConfig> {
     }
     e.eq1("OBRRT_RATE_NOSTART_SKIP", &mut r.nostart_skip);
     e.strict("OBRRT_RATE_SKIP_BUDGET", &mut r.skip_budget)?;
-    e.strict("OBRRT_KIND_CAP", &mut sampler.kind_cap)?;
-    e.eq1("OBRRT_KIND_BANDIT", &mut sampler.kind_bandit);
-    e.strict("OBRRT_KIND_GAMMA", &mut sampler.kind_gamma)?;
-    e.eq1("OBRRT_ENTRY_BANDIT", &mut sampler.entry_bandit);
-    e.on("OBRRT_ZONE_BANDIT", &mut sampler.zone_bandit);
-    e.eq1("OBRRT_VALUE_ZONES", &mut sampler.value_zones);
-    e.eq1("OBRRT_START_WEAR", &mut sampler.start_wear);
-    e.eq1("OBRRT_DECAY_ROUTE", &mut sampler.decay_route);
-    e.strict("OBRRT_ROUTE", &mut sampler.route_share)?;
     e.eq1("OBRRT_PICK_BY_B", &mut sampler.pick_by_b);
     e.eq1("OBRRT_NEW_ELIGIBLE", &mut sampler.new_eligible);
     e.on("OBRRT_STAR", &mut sampler.rrt_star);
     let a = &mut sampler.arrival;
     e.on("OBRRT_ARRIVAL", &mut a.on);
     e.strict("OBRRT_ARRIVAL_PACE", &mut a.pace)?;
-    e.strict("OBRRT_ARRIVAL_T", &mut a.t)?;
     e.strict_opt("OBRRT_ARRIVAL_BAND", &mut a.band)?;
-    match e.get("OBRRT_ARRIVAL_DECAY").as_deref() {
-        Some("arrival") => a.decay_either = false,
-        Some("either") | None => a.decay_either = true,
-        Some(v) => bail!("OBRRT_ARRIVAL_DECAY: either or arrival, not {v}"),
-    }
-    e.strict("OBRRT_ARRIVAL_MIX", &mut a.mix)?;
-    let ea = &mut sampler.earliest;
-    e.on("OBRRT_EARLIEST", &mut ea.on);
-    e.strict("OBRRT_EARLIEST_CAP", &mut ea.cap)?;
-    e.strict("OBRRT_EARLIEST_SHARE", &mut ea.share)?;
-    if let Some(v) = e.get("OBRRT_EARLIEST_CELL") {
-        ea.cell = v != "0";
-    }
 
     // chain
     match e.get("OBRRT_CHAIN").as_deref() {
@@ -149,24 +122,14 @@ pub fn from_env_with(base: SearchConfig, get: Lookup) -> Result<SearchConfig> {
         Some("stack") | None => {}
         Some(v) => bail!("OBRRT_CHAIN: route or stack, not {v}"),
     }
-    e.strict("OBRRT_CHAIN_FOLLOW", &mut chain.follow)?;
-    e.strict_opt("OBRRT_CHAIN_PROB", &mut chain.fixed)?;
 
     // dedup
     e.on("OBRRT_SOFT_DEDUP", &mut dedup.soft_dedup);
     e.on("OBRRT_STARSET_KEY", &mut dedup.starset_key);
     // (a value that does not parse is ignored, as the tree's setting always did)
     e.lenient_opt("OBRRT_STAR_WINDOW", &mut dedup.star_window);
-    e.on("OBRRT_RETIRE_SUBSET", &mut dedup.retire_subset);
-    e.strict("OBRRT_RETIRE_SUBSET_CAP", &mut dedup.retire_subset_cap)?;
     e.on("OBRRT_KEEP_WIP", &mut dedup.keep_wip);
-    e.strict("OBRRT_KEEP_WIP_N", &mut dedup.keep_wip_n)?;
-    e.strict("OBRRT_KEEP_WIP_FRAMES", &mut dedup.keep_wip_frames)?;
     e.on("OBRRT_CELL_MOTION", &mut dedup.cell_motion);
-    e.on("OBRRT_SETTLE_RANK", &mut dedup.settle_rank);
-    if e.get("OBRRT_FINGERPRINT").is_some_and(|v| v == "0") {
-        dedup.fingerprint = false;
-    }
     match e.get("OBRRT_REPLAY_MAX").as_deref() {
         Some("off") => dedup.replay_max = ReplayMax::Off,
         Some(v) => dedup.replay_max = ReplayMax::Frames(v.parse().with_context(|| format!("OBRRT_REPLAY_MAX={v}"))?),
@@ -179,9 +142,6 @@ pub fn from_env_with(base: SearchConfig, get: Lookup) -> Result<SearchConfig> {
     e.strict_opt("OBRRT_DENSE_CAP", &mut d.cap)?;
     if let Some(v) = e.get("OBRRT_DENSE_NE") {
         d.ne = v != "0";
-    }
-    if let Some(v) = e.get("OBRRT_DENSE_MEMOBJ") {
-        d.mem_objects = v != "0";
     }
     match e.get("OBRRT_DENSE_EVERY").as_deref() {
         None => {}
@@ -201,7 +161,6 @@ pub fn from_env_with(base: SearchConfig, get: Lookup) -> Result<SearchConfig> {
     e.on("OBRRT_NEAR_SEED", &mut n.seed);
     e.strict("OBRRT_NEAR_R", &mut n.radius)?;
     e.strict("OBRRT_NEAR_P", &mut n.p)?;
-    e.strict("OBRRT_NEAR_KEEP", &mut n.keep)?;
 
     // zone
     e.eq1("OBRRT_ZONE_LOCK", &mut zone.lock);
@@ -209,32 +168,16 @@ pub fn from_env_with(base: SearchConfig, get: Lookup) -> Result<SearchConfig> {
         zone.path = v;
     }
     e.on("OBRRT_ZONE_SHARE", &mut zone.share);
-    e.strict("OBRRT_ZONE_SHARE_K", &mut zone.share_k)?;
-    e.strict("OBRRT_ZONE_SHARE_CAP", &mut zone.share_cap)?;
-    e.strict("OBRRT_ZONE_SHARE_SHARE", &mut zone.share_share)?;
-    e.strict("OBRRT_ZONE_SHARE_BG", &mut zone.share_bg)?;
     zone.donor_sample = e.get("OBRRT_ZONE_SHARE_DONOR").is_some_and(|v| v == "sample");
     e.eq1("OBRRT_ZONE_SHARE_STATS", &mut zone.share_stats);
     e.on("OBRRT_REROUTE", &mut zone.reroute);
     e.string("OBRRT_REROUTE_SCHEMA", &mut zone.reroute_schema);
-    e.strict("OBRRT_REROUTE_SHARE", &mut zone.reroute_share)?;
-    e.strict("OBRRT_REROUTE_MARGIN", &mut zone.reroute_margin)?;
     e.strict("OBRRT_POLISH", &mut zone.polish)?;
     if let Some(v) = e.get("OBRRT_REPLAY_BUDGET") {
         let f: f64 = v.parse().with_context(|| format!("OBRRT_REPLAY_BUDGET={v}"))?;
         if f > 0.0 {
             zone.replay_budget = Some(f);
         }
-    }
-    if e.is1("OBRRT_BACKCHAIN") {
-        let b = &mut zone.backchain;
-        b.on = true;
-        e.strict("OBRRT_BACKCHAIN_SHARE", &mut b.share)?;
-        e.strict("OBRRT_BACKCHAIN_KMIN", &mut b.kmin)?;
-        e.strict("OBRRT_BACKCHAIN_KMAX", &mut b.kmax)?;
-        e.strict("OBRRT_BACKCHAIN_CAP", &mut b.cap)?;
-        e.strict("OBRRT_BACKCHAIN_PER_TARGET", &mut b.per_target)?;
-        e.strict("OBRRT_BACKCHAIN_MINW", &mut b.min_weight)?;
     }
 
     // goal focus

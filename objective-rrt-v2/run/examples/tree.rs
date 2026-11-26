@@ -79,34 +79,13 @@ fn main() -> Result<()> {
     let sw = obj(&root, "switches")?;
     check_keys(
         &sw,
-        &["fingerprint", "settle_rank", "starset_key", "retire_subset", "retire_subset_cap", "keep_wip", "keep_wip_n", "keep_wip_frames", "fast_modal"],
+        &["starset_key", "keep_wip", "fast_modal"],
         "switches",
     )?;
-    let e = obrrt_search::engine::FINGERPRINT.load(Relaxed);
-    obrrt_search::engine::FINGERPRINT.store(bool_or(&sw, "fingerprint", e)?, Relaxed);
-    obrrt_search::engine::SETTLE_RANK.store(bool_or(&sw, "settle_rank", false)?, Relaxed);
     obrrt_search::engine::STARSET.store(bool_or(&sw, "starset_key", false)?, Relaxed);
-    obrrt_search::tree::RETIRE_SUBSET.store(bool_or(&sw, "retire_subset", false)?, Relaxed);
-    obrrt_search::tree::RETIRE_SUBSET_CAP.store(num_or(&sw, "retire_subset_cap", 6.0)? as usize, Relaxed);
     obrrt_search::tree::KEEP_WIP.store(bool_or(&sw, "keep_wip", false)?, Relaxed);
-    obrrt_search::tree::KEEP_WIP_N.store(num_or(&sw, "keep_wip_n", 64.0)? as usize, Relaxed);
-    obrrt_search::tree::KEEP_WIP_FRAMES.store(num_or(&sw, "keep_wip_frames", 3000.0)? as u32, Relaxed);
     if let Some(v) = sw.get("fast_modal") {
         obrrt_objectives::set_fast_modal(v.as_bool().ok_or_else(|| anyhow!("switches.fast_modal: bool"))?);
-    }
-
-    // 4. Backward chaining (search/src/backchain.rs); present = on.
-    if let Some(b) = root.get("backchain") {
-        let b = b.as_object().ok_or_else(|| anyhow!("backchain: an object"))?;
-        check_keys(b, &["share", "kmin", "kmax", "cap", "per_target", "min_weight"], "backchain")?;
-        let mut s = obrrt_search::backchain::Settings::default();
-        s.share = num_or(b, "share", s.share)?;
-        s.kmin = num_or(b, "kmin", s.kmin as f64)? as u32;
-        s.kmax = num_or(b, "kmax", s.kmax as f64)? as u32;
-        s.cap = num_or(b, "cap", s.cap as f64)? as usize;
-        s.per_target = num_or(b, "per_target", s.per_target as f64)? as u32;
-        s.min_weight = num_or(b, "min_weight", s.min_weight)?;
-        obrrt_search::backchain::configure(Some(s));
     }
 
     // 5. Engine and GA settings: every `Config` field.
@@ -194,19 +173,17 @@ fn apply_engine(cfg: &mut Config, e: &Map<String, Value>) -> Result<()> {
         // Objective weight decay and start back-off.
         decay: f64, state_decay: f64, alpha: f64, gamma: f64, expire_rounds: u32, kind_floor: f64,
         // Chains of objectives per attempt.
-        chain_prob: f64, max_chain: usize, chain_reach: f32, chain_fixed: opt_f64,
+        chain_prob: f64, max_chain: usize, chain_reach: f32,
         // GA.
         ga_scale: f64, ga_new_ops: bool, ga_pink: f64, ga_per_objective_budget: bool,
         // Start selection and speed.
-        rrt_star: bool, arrival: bool, arrival_pace: f64, arrival_t: f64, arrival_margin: f64,
-        arrival_band: opt_f64, arrival_decay_either: bool, arrival_mix: f64, time_cost: f64,
-        rewire_share: f64, rewire_margin: u32, route_share: f64, value_zones: bool, pick_by_b: bool,
+        rrt_star: bool, arrival: bool, arrival_pace: f64, arrival_margin: f64,
+        arrival_band: opt_f64, time_cost: f64,
+        rewire_share: f64, rewire_margin: u32, route_share: f64, pick_by_b: bool,
         // Rounds, dedupe, bandits.
-        round_plans: usize, kind_cap: f64, zone_bandit: bool, soft_dedup: bool, start_wear: bool,
-        decay_route: bool, entry_bandit: bool, bandit_gamma: f64, kind_bandit: bool, kind_gamma: f64,
+        round_plans: usize, soft_dedup: bool,
         // Boosts and tuning.
-        new_eligible: bool, earliest: bool, earliest_cap: u32, earliest_share: f64, earliest_cell: bool,
-        tune_frames: u64,
+        new_eligible: bool,
     }
     if let Some(v) = e.get("mem_mb") {
         cfg.mem_budget = v.as_u64().ok_or_else(|| anyhow!("engine.mem_mb: an integer"))? as usize * 1_000_000;
@@ -229,19 +206,15 @@ fn describe(c: &Config) -> Value {
         "seed": c.seed, "minutes": c.minutes, "max_frames": c.max_frames, "decay": c.decay,
         "state_decay": c.state_decay, "alpha": c.alpha, "gamma": c.gamma, "expire_rounds": c.expire_rounds,
         "kind_floor": c.kind_floor, "chain_prob": c.chain_prob, "max_chain": c.max_chain,
-        "chain_reach": c.chain_reach, "chain_fixed": c.chain_fixed, "ga_scale": c.ga_scale,
+        "chain_reach": c.chain_reach, "ga_scale": c.ga_scale,
         "fitness": format!("{:?}", c.fitness), "ga_new_ops": c.ga_new_ops, "ga_pink": c.ga_pink,
         "ga_per_objective_budget": c.ga_per_objective_budget, "rrt_star": c.rrt_star, "arrival": c.arrival,
-        "arrival_pace": c.arrival_pace, "arrival_t": c.arrival_t, "arrival_margin": c.arrival_margin,
-        "arrival_band": c.arrival_band, "arrival_decay_either": c.arrival_decay_either,
-        "arrival_mix": c.arrival_mix, "time_cost": c.time_cost, "rewire_share": c.rewire_share,
-        "rewire_margin": c.rewire_margin, "route_share": c.route_share, "value_zones": c.value_zones,
-        "pick_by_b": c.pick_by_b, "round_plans": c.round_plans, "kind_cap": c.kind_cap,
-        "zone_bandit": c.zone_bandit, "soft_dedup": c.soft_dedup, "start_wear": c.start_wear,
-        "decay_route": c.decay_route, "entry_bandit": c.entry_bandit, "bandit_gamma": c.bandit_gamma,
-        "kind_bandit": c.kind_bandit, "kind_gamma": c.kind_gamma, "mem_mb": c.mem_budget / 1_000_000,
-        "new_eligible": c.new_eligible, "earliest": c.earliest, "earliest_cap": c.earliest_cap,
-        "earliest_share": c.earliest_share, "earliest_cell": c.earliest_cell, "tune_frames": c.tune_frames,
+        "arrival_pace": c.arrival_pace, "arrival_margin": c.arrival_margin,
+        "arrival_band": c.arrival_band, "time_cost": c.time_cost, "rewire_share": c.rewire_share,
+        "rewire_margin": c.rewire_margin, "route_share": c.route_share,
+        "pick_by_b": c.pick_by_b, "round_plans": c.round_plans,
+        "soft_dedup": c.soft_dedup, "mem_mb": c.mem_budget / 1_000_000,
+        "new_eligible": c.new_eligible,
     })
 }
 

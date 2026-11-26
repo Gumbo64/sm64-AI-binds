@@ -23,18 +23,6 @@ pub struct Entry {
     pub best_start: f64,
     /// Arrival ranking: best (soonest) estimated arrival of any start.
     pub best_arrival: f64,
-    /// Start wear (`Config::start_wear`): per start node, attempts of this
-    /// objective from it that didn't improve on it (no success, no state
-    /// added with a better base_heuristic than the start's).
-    pub wear: HashMap<u32, u32>,
-    /// Route recoveries (`Config::decay_route`) left: decay recoveries from
-    /// progress along a start other than the best one.
-    pub recoveries: u32,
-    /// Entry bandit (`Config::entry_bandit`): discounted improvements and
-    /// attempts. Each round its `decay` is redrawn from
-    /// Beta(improvements + 1, failures + 1), scaled so a new entry averages 1.
-    pub bandit_k: f64,
-    pub bandit_n: f64,
     /// Rate sampler (`Config::sampler_rate`): improvement and frames spent,
     /// both faded by exp(-Δ/tau) in emulated frames since `rate_t`.
     pub rate_i: f64,
@@ -153,17 +141,7 @@ impl Entry {
         let k = (-(now.saturating_sub(self.rate_t) as f64) / p.tau).exp();
         (self.rate_i * k + r0 * p.prior_frames) / (self.rate_f * k + p.prior_frames)
     }
-    /// Entry bandit: one attempt, improved (a new success, or a kept state
-    /// better than its start) or not. Older evidence fades by `gamma`.
-    pub fn observe(&mut self, improved: bool, gamma: f64) {
-        self.bandit_k = self.bandit_k * gamma + improved as u32 as f64;
-        self.bandit_n = self.bandit_n * gamma + 1.0;
-    }
 }
-
-/// How many times one entry's decay may recover through progress from a
-/// start other than its best (`Config::decay_route`).
-pub const ROUTE_RECOVERIES: u32 = 8;
 
 #[derive(Default)]
 pub struct Pool {
@@ -354,19 +332,8 @@ impl Pool {
         }
         let base_weight = obj.obj_weight(b).max(0.0) * kind_weight(obj.kind());
         self.index.insert(key, self.entries.len());
-        self.entries.push(Entry { obj, base_weight, decay: 1.0, attempts: 0, successes: 0, unattemptable: 0, best_start: f64::INFINITY, best_arrival: f64::INFINITY, wear: HashMap::new(), recoveries: ROUTE_RECOVERIES, bandit_k: 0.0, bandit_n: 0.0, rate_i: 0.0, rate_f: 0.0, rate_t: 0, best_hit: u32::MAX, best_end: (f64::INFINITY, None), ns_upto: 0 });
+        self.entries.push(Entry { obj, base_weight, decay: 1.0, attempts: 0, successes: 0, unattemptable: 0, best_start: f64::INFINITY, best_arrival: f64::INFINITY, rate_i: 0.0, rate_f: 0.0, rate_t: 0, best_hit: u32::MAX, best_end: (f64::INFINITY, None), ns_upto: 0 });
         true
-    }
-
-    /// Entry bandit: redraws every entry's `decay` as a Thompson sample of
-    /// its improvement rate, ×2 (the prior mean is 1/2, so a new entry
-    /// averages the old starting weight of 1).
-    pub fn redraw(&mut self, rng: &mut impl Rng) {
-        for e in &mut self.entries {
-            let a = e.bandit_k + 1.0;
-            let b = (e.bandit_n - e.bandit_k).max(0.0) + 1.0;
-            e.decay = 2.0 * beta(rng, a, b);
-        }
     }
 
     /// Rate sampler: adds `imp` improvement and `frames` frames to entry `i`
@@ -532,29 +499,3 @@ pub(crate) fn kind_weight(kind: &str) -> f64 {
     .map_or(1.0, |t| t.get(kind).copied().unwrap_or(1.0))
 }
 
-/// A Beta(a, b) draw for a, b >= 1, from two Gamma draws.
-fn beta(rng: &mut impl Rng, a: f64, b: f64) -> f64 {
-    let x = gamma(rng, a);
-    let y = gamma(rng, b);
-    if x + y > 0.0 { x / (x + y) } else { 0.5 }
-}
-
-/// A Gamma(shape, 1) draw for shape >= 1 (Marsaglia and Tsang).
-fn gamma(rng: &mut impl Rng, shape: f64) -> f64 {
-    let d = shape - 1.0 / 3.0;
-    let c = 1.0 / (9.0 * d).sqrt();
-    loop {
-        // A standard normal draw (Box-Muller).
-        let u1: f64 = rng.random_range(f64::MIN_POSITIVE..1.0);
-        let u2: f64 = rng.random_range(0.0..1.0);
-        let z = (-2.0 * u1.ln()).sqrt() * (std::f64::consts::TAU * u2).cos();
-        let v = (1.0 + c * z).powi(3);
-        if v <= 0.0 {
-            continue;
-        }
-        let u: f64 = rng.random_range(f64::MIN_POSITIVE..1.0);
-        if u.ln() < 0.5 * z * z + d - d * v + d * v.ln() {
-            return d * v;
-        }
-    }
-}

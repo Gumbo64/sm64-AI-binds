@@ -156,12 +156,12 @@ fn ok_for(tree: &Tree, i: u32, obj: &dyn Objective, cutoff: f64, c: f64, rrt_sta
 
 /// b's: at least its keys, stars and (OBRRT_RETIRE_SUBSET) collected set,
 /// unless the state is kept for its work under way.
-fn ok_for_b(tree: &Tree, i: u32, b: &St, b_set: &Option<crate::tree::SetKey>) -> bool {
+fn ok_for_b(tree: &Tree, i: u32, b: &St) -> bool {
     if tree.is_wip(i) {
         return true;
     }
     let s = &tree.nodes[i as usize].st;
-    s.keys >= b.keys && s.stars >= b.stars && b_set.as_ref().is_none_or(|k| crate::tree::covers(&crate::tree::set_key(s), k))
+    s.keys >= b.keys && s.stars >= b.stars
 }
 
 impl SchemaPick {
@@ -212,7 +212,6 @@ impl SchemaPick {
         self.stats.picks += 1;
         let obj = cx.obj;
         let b_st = &tree.nodes[cx.b as usize].st;
-        let b_set = tree.subset.then(|| crate::tree::set_key(b_st));
         let hash = |k: &dyn Fn(&mut std::collections::hash_map::DefaultHasher)| {
             use std::hash::Hasher;
             let mut h = std::collections::hash_map::DefaultHasher::new();
@@ -220,7 +219,7 @@ impl SchemaPick {
             h.finish()
         };
         use std::hash::Hash;
-        let set_hash = b_set.as_ref().map_or(0, |k| hash(&|h| k.hash(h)));
+        let set_hash = 0u64;
         let ck = (hash(&|h| obj.key().hash(h)), b_st.keys, b_st.stars, set_hash);
         let table = match self.cache.get(&ck) {
             Some(t) => {
@@ -236,7 +235,7 @@ impl SchemaPick {
                         continue;
                     }
                     let Some(h) = ok_for(tree, r, obj, cx.cutoff, cx.eta_c, cx.rrt_star) else { continue };
-                    if !ok_for_b(tree, r, b_st, &b_set) {
+                    if !ok_for_b(tree, r, b_st) {
                         continue;
                     }
                     members += self.cells[c].len() as u64;
@@ -260,7 +259,7 @@ impl SchemaPick {
             for &i in kin {
                 if (i as usize) >= self.node_cell.len()
                     || ok_for(tree, i, obj, cx.cutoff, cx.eta_c, cx.rrt_star).is_none()
-                    || !ok_for_b(tree, i, b_st, &b_set)
+                    || !ok_for_b(tree, i, b_st)
                 {
                     continue;
                 }
@@ -302,7 +301,7 @@ impl SchemaPick {
             let elig: Vec<u32> = self.cells[c as usize]
                 .iter()
                 .copied()
-                .filter(|&i| ok_for(tree, i, obj, cx.cutoff, cx.eta_c, cx.rrt_star).is_some() && ok_for_b(tree, i, b_st, &b_set))
+                .filter(|&i| ok_for(tree, i, obj, cx.cutoff, cx.eta_c, cx.rrt_star).is_some() && ok_for_b(tree, i, b_st))
                 .collect();
             if !elig.is_empty() {
                 self.stats.random += 1;

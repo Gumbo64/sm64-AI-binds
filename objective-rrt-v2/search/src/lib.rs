@@ -2,7 +2,6 @@
 //! objective. See the design doc "Objective-based RRT".
 
 pub mod attempt_model;
-pub mod backchain;
 pub mod dense;
 pub mod diag;
 pub mod game;

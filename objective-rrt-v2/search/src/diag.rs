@@ -49,16 +49,6 @@ pub struct KindStats {
     pub pool_size: usize,
     /// Successes as the 2nd or later objective of a chain.
     pub chained_successes: u64,
-    /// Decay recoveries from progress along another route (decay_route).
-    pub route_recoveries: u64,
-    /// Kind bandit (`Config::kind_bandit`): discounted improvements and
-    /// attempts of this kind (the entry bandit's signal), faded by
-    /// `kind_gamma` per attempt of this kind. Reported in summary.json's
-    /// `kind_bandit` section, not here.
-    #[serde(skip)]
-    pub bandit_k: f64,
-    #[serde(skip)]
-    pub bandit_n: f64,
 }
 
 /// Per chain length (objectives per attempt), over the whole run.
@@ -83,19 +73,6 @@ impl ChainStats {
 }
 
 impl KindStats {
-    /// Kind bandit: one attempt of this kind, improved or not.
-    pub fn observe(&mut self, improved: bool, gamma: f64) {
-        self.bandit_k = self.bandit_k * gamma + improved as u32 as f64;
-        self.bandit_n = self.bandit_n * gamma + 1.0;
-    }
-
-    /// Kind bandit: posterior mean of the improvement rate per attempt,
-    /// Beta(k + 1, n - k + 1). No Thompson draw: optimism over many arms
-    /// is what we avoid.
-    pub fn bandit_mean(&self) -> f64 {
-        (self.bandit_k + 1.0) / (self.bandit_n + 2.0)
-    }
-
     /// Frames an attempt of this kind costs, overhead included (as the kind
     /// floor in `sample_entry` reckons it; 5000 before any attempt).
     pub fn cost_per_attempt(&self) -> f64 {
@@ -238,34 +215,6 @@ impl Diagnostics {
 
     pub fn kind(&mut self, k: &'static str) -> &mut KindStats {
         self.kinds.entry(k).or_insert_with(|| KindStats { multiplier: 1.0, cutoff: f64::INFINITY, ..Default::default() })
-    }
-
-    /// Kind bandit: sets every observed kind's multiplier to its posterior
-    /// mean improvements per kframe, normalised to geometric mean 1 over those kinds
-    /// (unobserved kinds, modal ones among them, keep 1), then clamped to
-    /// [0.1, 5], the old yield target's range: the bandit changes the signal
-    /// and the forgetting, not the dynamic range.
-    ///
-    /// Per kframe, not per attempt: a pick of a kind spends that kind's cost
-    /// in frames, and frames are the budget. Per attempt, a GA kind costing
-    /// ~10x a macro would get the same picks at the same rate, so ~10x the
-    /// compute for the same improvements per pick. Dividing by cost makes
-    /// the pick share follow improvements per frame; `ATTEMPT_OVERHEAD`
-    /// keeps very cheap kinds from being overrated, and the cost-scaled
-    /// floor (and the cap) in `sample_entry` still bound the shares.
-    pub fn refresh_kind_bandit(&mut self) {
-        let rate = |k: &KindStats| k.bandit_mean() / (k.cost_per_attempt() / 1000.0);
-        let seen: Vec<f64> = self.kinds.values().filter(|k| k.bandit_n > 0.0).map(rate).collect();
-        if seen.is_empty() {
-            return;
-        }
-        // Geometric mean, so one or two cheap macro kinds with very high
-        // rates don't set the scale for every other kind. Rates are > 0
-        // ((k+1)/(n+2) > 0, cost > 0), so ln is finite.
-        let mean = (seen.iter().map(|r| r.ln()).sum::<f64>() / seen.len() as f64).exp();
-        for k in self.kinds.values_mut().filter(|k| k.bandit_n > 0.0) {
-            k.multiplier = (rate(k) / mean).clamp(0.1, 5.0);
-        }
     }
 
     pub fn mean_yield(&self) -> f64 {
