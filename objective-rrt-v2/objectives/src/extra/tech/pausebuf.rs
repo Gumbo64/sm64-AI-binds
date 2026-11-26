@@ -23,8 +23,6 @@
 //! play [`TAIL`] while paused; then hand back to the chain overlay, which
 //! sees A released and presses at once.
 
-use std::sync::OnceLock;
-
 use obrrt_core::buttons::{A_BUTTON, START_BUTTON, Z_TRIG};
 use obrrt_core::{GamePad, PadOverlay, St};
 
@@ -45,13 +43,11 @@ fn open_seq(played: &[GamePad]) -> Option<usize> {
     (k < TAIL.len() && played[j + 1..].iter().zip(TAIL).all(|(p, t)| p.button == t)).then_some(k)
 }
 
-/// The backward speed from which a chain press is buffered
-/// (`OBRRT_PAUSE_BUF_MIN`, default 200): a ground frame then moves Mario at
-/// least that far, off most BLJ spots (the JRB dock's TAS chain buffers
-/// from -246, the moat bank's from -539).
+/// The backward speed from which a chain press is buffered: a ground frame
+/// then moves Mario at least that far, off most BLJ spots (the JRB dock's TAS
+/// chain buffers from -246, the moat bank's from -539).
 fn min_speed() -> f32 {
-    static V: OnceLock<f32> = OnceLock::new();
-    *V.get_or_init(|| obrrt_core::sys::env::var("OBRRT_PAUSE_BUF_MIN").ok().and_then(|v| v.parse().ok()).unwrap_or(200.0))
+    200.0
 }
 
 /// Whether Mario is wall-stalled: his last frame (a landing, or a jump that

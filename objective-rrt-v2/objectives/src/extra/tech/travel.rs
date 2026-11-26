@@ -30,8 +30,7 @@
 //!
 //! Dive-rollout variants (TAS catalogue G05, G17, G07; one is picked per b
 //! from those b qualifies for, half the time, else the plain one; same kind,
-//! so they share its pick weight; each can be turned off with
-//! `OBRRT_KICKS_OFF`, see kicks.rs [`fix`]):
+//! so they share its pick weight):
 //!
 //! - **Hop** (`hop`, G05 edge dive-hop). act_freefall turns B into ACT_DIVE
 //!   at any speed (mario_actions_airborne.c:535), while jumps dive only above
@@ -59,7 +58,7 @@ use std::sync::Arc;
 
 use obrrt_core::layout::{INTERACT_BBH_ENTRANCE, INTERACT_DOOR, INTERACT_STAR_OR_KEY, INTERACT_WARP, INTERACT_WARP_DOOR, LEVEL_CASTLE};
 
-use super::kicks::{Boost, Kick, KickRun, fix, move_weight};
+use super::kicks::{Boost, Kick, KickRun, move_weight};
 
 /// Actions (include/sm64.h).
 pub(super) const ACT_DIVE: u32 = 0x0188088A;
@@ -451,13 +450,13 @@ impl Dash {
     fn variant(b: &St) -> Variant {
         let air = b.action & ACT_FLAG_AIR != 0;
         let mut can = Vec::new();
-        if fix("hop") && !air && b.forward_vel < 30.0 {
+        if !air && b.forward_vel < 30.0 {
             can.push(Variant::Hop);
         }
-        if fix("high") && !air && b.forward_vel >= 29.0 {
+        if !air && b.forward_vel >= 29.0 {
             can.push(Variant::High);
         }
-        if fix("boost") && Boost::eligible(b) {
+        if Boost::eligible(b) {
             can.push(Variant::Boost);
         }
         let u = unit(b, Move::DiveRollout.salt(), 5);
@@ -602,7 +601,7 @@ impl Objective for Dash {
                 ACT_DIVE_SLIDE | ACT_FORWARD_ROLLOUT => A_BUTTON,
                 ACT_DIVE => 0,
                 // act_freefall dives on B at any speed (G05).
-                ACT_FREEFALL if fix("hop") => B_BUTTON,
+                ACT_FREEFALL => B_BUTTON,
                 _ if air && s.forward_vel > 28.0 => B_BUTTON,
                 // The rollout lands in ACT_FREEFALL_LAND_STOP, which zeroes
                 // forward speed unless the stick (held towards p) walks

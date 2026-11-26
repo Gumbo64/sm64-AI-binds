@@ -60,11 +60,10 @@ const PACE_GRACE: f32 = 10.0;
 /// The most frames after `start` that still meet the pace, under
 /// `OBRRT_PACE=1` (v1: the latest trajectory index): a deadline.
 fn pace_limit(start: &St, p: [f32; 3]) -> u32 {
-    static SPEED: std::sync::OnceLock<f32> = std::sync::OnceLock::new();
     if !super::time::pace_on() {
         return u32::MAX;
     }
-    let speed = *SPEED.get_or_init(|| obrrt_core::sys::env::var("OBRRT_PACE_DIST").ok().and_then(|v| v.parse().ok()).unwrap_or(20.0));
+    let speed = 20.0f32;
     (start.dist(p) / speed + PACE_GRACE) as u32
 }
 

@@ -141,10 +141,6 @@ pub fn generate_level(b: &St, out: &mut Vec<Arc<dyn Objective>>) {
     }
     for o in b.objects() {
         let Some(path) = carpet_path(o) else { continue };
-        // OBRRT_RR_NO8=1 (test knob): no ride on path 8, to see how far the other carpets get.
-        if path == 8 && obrrt_core::sys::env::var("OBRRT_RR_NO8").is_ok_and(|v| v == "1") {
-            continue;
-        }
         if path_of(path).is_none() || !leads(path).0.iter().any(|&i| !b.has_star(15, i)) {
             continue;
         }
@@ -328,7 +324,7 @@ pub fn generate_route(b: &St, out: &mut Vec<Arc<dyn Objective>>) {
         return;
     }
     for r in [Route::Triangles, Route::Swing] {
-        if r.open(b) && obrrt_core::sys::env::var(format!("OBRRT_RR_NO{:?}", r)).is_err() {
+        if r.open(b) {
             out.push(Arc::new(RrRoute { zone: b.zone(), r }));
         }
     }

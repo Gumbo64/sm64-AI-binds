@@ -301,15 +301,6 @@ pub fn misalign_frames(s: &St, mem: &Mem, goal: [f32; 3]) -> f64 {
     ALIGN_SHARE * (1.0 - alignment(s, goal).max(0.0) as f64) * built
 }
 
-/// With OBRRT_BLJ_ALIGN_SUCCESS=1 a spot's speed success also needs the
-/// travel within 30 degrees of the goal's bearing.
-fn align_success() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| obrrt_core::sys::env::var("OBRRT_BLJ_ALIGN_SUCCESS").is_ok_and(|v| v == "1"))
-}
-pub(super) fn aligned_ok(s: &St, goal: [f32; 3]) -> bool {
-    !align_success() || alignment(s, goal) >= 0.866
-}
 
 /// The full-tilt raw stick that points `intendedYaw` along `yaw` (s16
 /// units), camera-relative as in update_mario_joystick_inputs.
@@ -950,7 +941,7 @@ impl Objective for Blj {
         let target = self.chain_target();
         let slow = start.forward_vel > -target;
         let built = sp >= CHAIN_BUILT;
-        let speed_ok = slow && !first && sp > 0.0 && self.in_area(s) && s.alive() && long_jumping(s) && s.forward_vel <= -target && aligned_ok(s, self.align_goal());
+        let speed_ok = slow && !first && sp > 0.0 && self.in_area(s) && s.alive() && long_jumping(s) && s.forward_vel <= -target;
         let place_ok = built
             && (self.arrived(s)
                 || self.spot.star.is_some_and(|(c, k)| s.stars > start.stars && s.has_star(c, k))

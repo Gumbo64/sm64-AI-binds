@@ -111,12 +111,11 @@ fn milestone(tree: &Tree, i: u32, end: u32) -> bool {
 
 impl Polish {
     pub fn new(share: f64) -> Polish {
-        let env = |k: &str, d: u64| obrrt_core::sys::env::var(k).ok().and_then(|v| v.parse().ok()).unwrap_or(d);
         Polish {
             share,
-            keep_rounds: env("OBRRT_POLISH_KEEP", 60),
-            back: env("OBRRT_POLISH_BACK", 8) as usize,
-            margin: env("OBRRT_POLISH_MARGIN", 10) as u32,
+            keep_rounds: 60,
+            back: 8,
+            margin: 10,
             repairs: VecDeque::new(),
             tries: HashMap::new(),
             best: HashMap::new(),

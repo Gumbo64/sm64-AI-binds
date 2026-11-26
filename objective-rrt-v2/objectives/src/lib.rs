@@ -180,9 +180,8 @@ impl Generator for Registry {
             // so Boss::Hit never entered the pool and nothing drew the tree up
             // the mountain; the audit (STAR120-AUDIT.md) lists eight more such
             // goals far from their course's entry.
-            static GOAL_MIN: std::sync::OnceLock<f64> = std::sync::OnceLock::new();
             let wide = obrrt_core::config::current().goal_focus.wide;
-            let goal_min = *GOAL_MIN.get_or_init(|| obrrt_core::sys::env::var("OBRRT_GOAL_MIN").ok().and_then(|v| v.parse().ok()).unwrap_or(20.0));
+            let goal_min = 20.0;
             let far = dist(o.pos, b.pos).min(dist(star::rest_pos(o), b.pos)) > OBJECT_RADIUS;
             if far && !wide {
                 continue;

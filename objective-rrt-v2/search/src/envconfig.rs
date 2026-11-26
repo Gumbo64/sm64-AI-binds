@@ -44,10 +44,10 @@ pub fn apply_globals(sc: &SearchConfig, cfg: &mut Config) -> Result<()> {
     cfg.sampler_rate = s.rate_sampler;
     cfg.rate = crate::pool::RateParams {
         floor: 0.15,
-        cap: s.rate.cap,
-        tau: s.rate.tau,
+        cap: 4.0,
+        tau: 50_000_000.0,
         prior_frames: s.rate.prior_frames,
-        nostart_frames: s.rate.nostart_frames,
+        nostart_frames: 5_000.0,
         hier: s.rate.hier,
         kind_scale: s.rate.kind_scale,
         nostart_skip: s.rate.nostart_skip,

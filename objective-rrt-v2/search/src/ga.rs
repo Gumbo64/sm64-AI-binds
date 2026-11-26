@@ -2013,8 +2013,7 @@ fn tail_on() -> bool {
 }
 
 /// The GA budget of objectives without [`Objective::ga_budget`]:
-/// `OBRRT_GA_POP` / `OBRRT_GA_GENS` / `OBRRT_GA_HORIZON`, default 16 / 5 /
-/// 150 (v1's most common budget).
+/// `OBRRT_GA_POP` (16), 5 generations, horizon 150 (v1's most common budget).
 /// OBRRT_REACH_PRIOR=<file>: a JSON object, objective kind -> the start ETA
 /// (frames) beyond which attempts of that kind have not succeeded in past
 /// runs (backbone/attempts/reach.py, from every attempt logged). An attempt
@@ -2030,14 +2029,10 @@ fn reach_prior() -> &'static std::collections::HashMap<String, f64> {
     })
 }
 
-/// OBRRT_REACH_BUDGET=pop,gens,horizon: the budget of an attempt from beyond
-/// its kind's reach (default 12,3,120: about what a move costs).
+/// The budget of an attempt from beyond its kind's reach (12, 3, 120: about
+/// what a move costs).
 fn reach_budget() -> GaBudget {
-    static B: OnceLock<GaBudget> = OnceLock::new();
-    *B.get_or_init(|| {
-        let v: Vec<usize> = obrrt_core::sys::env::var("OBRRT_REACH_BUDGET").ok().map(|s| s.split(',').filter_map(|x| x.trim().parse().ok()).collect()).unwrap_or_default();
-        if v.len() == 3 { GaBudget { population: v[0].max(1), generations: v[1].max(1), horizon: v[2].max(1) } } else { GaBudget { population: 12, generations: 3, horizon: 120 } }
-    })
+    GaBudget { population: 12, generations: 3, horizon: 120 }
 }
 
 /// OBRRT_RESCUE_PRIOR=<file>: a JSON object, objective kind -> how often an
@@ -2046,17 +2041,15 @@ fn reach_budget() -> GaBudget {
 /// 776,061 single-objective attempts on disk on 2026-11-09, generation 0 met
 /// the objective in 25% and 92.5% of those succeeded; of the rest 8.2%
 /// succeeded, and they took 83% of all frames. So for a kind whose rescue
-/// rate is under OBRRT_RESCUE_MIN (default 0.05), an attempt whose
-/// generation 0 missed stops after OBRRT_GATE_GENS more generations (default
-/// 2) unless one has met the objective by then: it still adds its best end
+/// rate is under 0.05, an attempt whose
+/// generation 0 missed stops after 2 more generations unless one has met the objective by then: it still adds its best end
 /// state, as an approach. Returns that number of generations for `o`.
 fn gen0_gate(o: &dyn Objective) -> Option<usize> {
     static R: OnceLock<(std::collections::HashMap<String, f64>, f64, usize)> = OnceLock::new();
     let (prior, min, gens) = R.get_or_init(|| {
         let Some(path) = obrrt_core::config::current().priors.rescue_prior.clone() else { return Default::default() };
         let text = obrrt_core::sys::fs::read_to_string(&path).unwrap_or_else(|e| panic!("OBRRT_RESCUE_PRIOR {path}: {e}"));
-        let f = |k: &str, d: f64| obrrt_core::sys::env::var(k).ok().and_then(|v| v.parse().ok()).unwrap_or(d);
-        (serde_json::from_str(&text).unwrap_or_else(|e| panic!("OBRRT_RESCUE_PRIOR {path}: {e}")), f("OBRRT_RESCUE_MIN", 0.05), f("OBRRT_GATE_GENS", 2.0) as usize)
+        (serde_json::from_str(&text).unwrap_or_else(|e| panic!("OBRRT_RESCUE_PRIOR {path}: {e}")), 0.05, 2usize)
     });
     prior.get(o.kind()).is_some_and(|r| r < min).then_some(*gens)
 }
@@ -2070,7 +2063,7 @@ fn default_budget() -> GaBudget {
     static B: OnceLock<GaBudget> = OnceLock::new();
     *B.get_or_init(|| {
         let env = |k: &str, d: usize| obrrt_core::sys::env::var(k).ok().and_then(|v| v.parse().ok()).unwrap_or(d);
-        GaBudget { population: env("OBRRT_GA_POP", 16).max(1), generations: env("OBRRT_GA_GENS", 5).max(1), horizon: env("OBRRT_GA_HORIZON", 150).max(1) }
+        GaBudget { population: env("OBRRT_GA_POP", 16).max(1), generations: 5, horizon: 150 }
     })
 }
 

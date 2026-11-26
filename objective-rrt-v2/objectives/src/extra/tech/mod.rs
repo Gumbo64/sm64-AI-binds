@@ -42,7 +42,6 @@ mod kinghits;
 mod whomphits;
 mod lakituskip;
 mod openers;
-mod wfclimb;
 pub mod blj;
 pub mod lblj;
 pub mod bljany;
@@ -100,7 +99,6 @@ pub fn generate_level(b: &St, out: &mut Vec<Arc<dyn Objective>>) {
     if enabled("lakituskip") { lakituskip::generate_level(b, out); }
     if enabled("wfopener") { openers::generate_level(b, openers::Which::Wf, out); }
     if enabled("bobopener") { openers::generate_level(b, openers::Which::Bob, out); }
-    if enabled("wfclimb") && obrrt_core::sys::env::var("OBRRT_WFCLIMB").is_ok_and(|v| v == "1") { wfclimb::generate_level(b, out); }
     if enabled("slidekick") && kicks::KickRun::applies(b) { out.push(Arc::new(kicks::KickRun::new(b, kicks::Kick::Slide))); }
     if enabled("jumpkick") && kicks::KickRun::applies(b) { out.push(Arc::new(kicks::KickRun::new(b, kicks::Kick::Jump))); }
     if travel::aim_on() { travel::generate_aim(b, out); }
@@ -276,11 +274,6 @@ pub const TECHNIQUES: &[Technique] = &[Technique {
     description: "Opener::Bob: from the BoB painting landing, the Chain Chomp plateau near (1600, 768, 4150) within 6 s (TAS 5.1 s with slide-kick / dive-rollout chains); A/B hints",
     tags: &[Tag::Location],
     course: Some(1),
-}, Technique {
-    name: "wfclimb",
-    description: "Wf::FortressClimb: from the WF painting landing, the fortress top (y 3584, within 1450 of the Whomp King: a whomphits start) within 8 / 11 / 15 s (distance to the arena disc; TAS 175 frames: long jumps, wall kicks, dive rollouts, steep jumps, side-flip wall kick); progress = distance gained on long-jump / wall-kick / flip / steep-jump / dive / rollout frames only, every loss counted, minus 1 a frame (no walk credit); success needs one in the segment; Z/A/B hints; experimental: also needs OBRRT_WFCLIMB=1 (0 successes in 4 test trees)",
-    tags: &[Tag::Location],
-    course: Some(2),
 }, Technique {
     name: "poleredirect",
     description: "Tech::PoleRedirect: hyperspeed (|vel_xz| >= 150) into a tree/pole low on its trunk keeps the speed in vel; on the IDLE frame stick + Z + C-up crouch-slides at +|v| along the stick, BRAKING keeps it, A+B jump-kicks (TAS BoB tree +380); success fv >= 0.8 stored within 10 frames; also makes blj bob-elevator succeed at the tree (300+ toward it)",

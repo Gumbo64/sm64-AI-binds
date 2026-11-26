@@ -167,11 +167,7 @@ pub fn score(o: &Out) -> f64 {
     }
 }
 
-/// (OBRRT_ATTEMPT_PROPOSE, OBRRT_ATTEMPT_BETA).
+/// (proposals per pick, score exponent).
 pub fn settings() -> (usize, f64) {
-    static S: OnceLock<(usize, f64)> = OnceLock::new();
-    *S.get_or_init(|| {
-        let f = |k: &str, d: f64| obrrt_core::sys::env::var(k).ok().and_then(|v| v.parse().ok()).unwrap_or(d);
-        ((f("OBRRT_ATTEMPT_PROPOSE", 4.0) as usize).max(1), f("OBRRT_ATTEMPT_BETA", 1.0))
-    })
+    (4, 1.0)
 }

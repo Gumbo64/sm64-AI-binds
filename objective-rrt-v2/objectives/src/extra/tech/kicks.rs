@@ -36,9 +36,7 @@
 //! Steering hints only make the buttons available on alternate frames
 //! (`steer_button`); the GA does the timing.
 //!
-//! Fixes from the TAS catalogue (ref/tas/techniques/CATALOGUE.md), each on
-//! by default and off with `OBRRT_KICKS_OFF` (a comma list of `jk`, `hop`,
-//! `high`, `boost`, or `all`; see [`fix`]):
+//! Fixes from the TAS catalogue (ref/tas/techniques/CATALOGUE.md), always on:
 //!
 //! - `jk` (G15): the landing-frame kick needs A *down but not newly pressed*
 //!   and B pressed on the LAND_STOP frame, stick neutral (act_punching exits
@@ -55,32 +53,11 @@
 //!   60 frames.
 //! - `hop`, `high`: dive-rollout variants, travel.rs.
 
-use std::sync::OnceLock;
 
 use obrrt_core::layout::{ACT_FLAG_AIR, ACT_FLAG_MOVING};
 use obrrt_core::{Eta, GamePad, Mem, Objective, PadOverlay, St, buttons, frames_for};
 
 use super::travel::{ACT_CROUCH_SLIDE, ACT_DIVE, ACT_DIVE_SLIDE, ACT_FORWARD_ROLLOUT, ACT_FREEFALL, ACT_LONG_JUMP, StartKind, aim_key, aim_weight, can_start, timed_eta_with, unit};
-
-/// Whether the catalogue fix `name` (`jk`, `hop`, `high`, `boost`) is on:
-/// all are unless `OBRRT_KICKS_OFF` lists it (or `all`). With all off the
-/// techniques behave exactly as before the fixes.
-pub(super) fn fix(name: &str) -> bool {
-    static OFF: OnceLock<Vec<String>> = OnceLock::new();
-    let off = OFF.get_or_init(|| {
-        let v: Vec<String> = obrrt_core::sys::env::var("OBRRT_KICKS_OFF")
-            .unwrap_or_default()
-            .split(',')
-            .map(|w| w.trim().to_string())
-            .filter(|w| !w.is_empty())
-            .collect();
-        for w in &v {
-            assert!(["all", "jk", "hop", "high", "boost"].contains(&w.as_str()), "OBRRT_KICKS_OFF: unknown fix {w:?}");
-        }
-        v
-    });
-    !off.iter().any(|w| w == name || w == "all")
-}
 
 /// The objective weight of a movement technique (diverollout, ljchain and
 /// their variants, jumpkick, slidekick, flipheight, the wall-kick modes)
@@ -386,7 +363,7 @@ impl KickRun {
             unit(b, s, 2) * std::f32::consts::TAU
         };
         let p = [b.pos[0] + r * a.sin(), b.pos[1] + dy, b.pos[2] + r * a.cos()];
-        let boost = (kick == Kick::Slide && fix("boost") && Boost::eligible(b) && unit(b, s, 5) < 0.5).then(|| Boost::new(b, s));
+        let boost = (kick == Kick::Slide && Boost::eligible(b) && unit(b, s, 5) < 0.5).then(|| Boost::new(b, s));
         KickRun { kick, p, speed, downhill, zone: b.zone(), boost, aim: false }
     }
 
@@ -471,7 +448,7 @@ impl Objective for KickRun {
         if self.boost.is_some() {
             return Some(Boost::overlay());
         }
-        (self.kick == Kick::Jump && fix("jk")).then(landing_kick_overlay)
+        (self.kick == Kick::Jump).then(landing_kick_overlay)
     }
     fn steer_button(&self, s: &St) -> u16 {
         use buttons::{A_BUTTON, B_BUTTON, Z_TRIG};
@@ -492,8 +469,8 @@ impl Objective for KickRun {
                 ACT_FREEFALL_LAND_STOP | ACT_JUMP_LAND_STOP | ACT_DOUBLE_JUMP_LAND_STOP
                 | ACT_SIDE_FLIP_LAND_STOP | ACT_LONG_JUMP_LAND_STOP => {
                     // A held + B (G15; the overlay keeps A held and the
-                    // stick neutral); before the fix B alone.
-                    if fix("jk") { A_BUTTON | B_BUTTON } else { B_BUTTON }
+                    // stick neutral).
+                    A_BUTTON | B_BUTTON
                 }
                 ACT_PUNCHING | ACT_MOVE_PUNCHING => A_BUTTON,
                 ACT_DIVE_SLIDE => A_BUTTON,

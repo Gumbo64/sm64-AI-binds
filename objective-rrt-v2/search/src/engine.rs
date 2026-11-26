@@ -281,22 +281,20 @@ struct Plan {
 /// The macro goals of OBRRT_WIP_FOCUS (see `index_frontier`).
 const MACROS: usize = 5;
 
-/// OBRRT_WIP_FOCUS (share of b draws) and OBRRT_WIP_FOCUS_W (levels of wip kept).
+/// OBRRT_WIP_FOCUS (share of b draws); levels of wip kept: 2.
 fn wip_focus() -> (f64, i64) {
     static S: std::sync::OnceLock<(f64, i64)> = std::sync::OnceLock::new();
     *S.get_or_init(|| {
         let p: f64 = obrrt_core::sys::env::var("OBRRT_WIP_FOCUS").ok().and_then(|v| v.parse().ok()).unwrap_or(0.0);
-        let w: i64 = obrrt_core::sys::env::var("OBRRT_WIP_FOCUS_W").ok().and_then(|v| v.parse().ok()).unwrap_or(2);
-        (p.clamp(0.0, 1.0), w.max(1))
+        (p.clamp(0.0, 1.0), 2)
     })
 }
 
 /// OBRRT_GOAL_FOCUS (see `index_frontier`): the share of plans drawn toward a
-/// goal; OBRRT_GOAL_FOCUS_C: ETA frames each draw adds to its cell (default
-/// 10); OBRRT_GOAL_FOCUS_FORCE: the share of those plans that attempt the goal
-/// itself from the drawn state (default 0.5; the rest plan from it as usual);
-/// OBRRT_GOAL_MIN: the least objective weight that makes a goal (default 20:
-/// stars, bosses, mission spots).
+/// goal; each draw adds 10 ETA frames to its cell; half of those plans attempt
+/// the goal itself from the drawn state (the rest plan from it as usual); the
+/// least objective weight that makes a goal is 20 (stars, bosses, mission
+/// spots).
 /// OBRRT_GOAL_EXPLORE=1: a goal whose best ETA has stopped dropping keeps its
 /// share of the plans, and spends them exploring from its best cells (b there,
 /// the objective drawn as usual) instead of attempting the goal: the share of
@@ -314,15 +312,13 @@ fn goal_explore() -> bool {
 fn goal_focus() -> (f64, f64, f64, f64) {
     static S: std::sync::OnceLock<(f64, f64, f64, f64)> = std::sync::OnceLock::new();
     *S.get_or_init(|| {
-        let f = |k: &str, d: f64| obrrt_core::sys::env::var(k).ok().and_then(|v| v.parse().ok()).unwrap_or(d);
-        (obrrt_core::config::current().goal_focus.share.clamp(0.0, 1.0), f("OBRRT_GOAL_FOCUS_C", 10.0).max(0.0), f("OBRRT_GOAL_FOCUS_FORCE", 0.5).clamp(0.0, 1.0), f("OBRRT_GOAL_MIN", 20.0))
+        (obrrt_core::config::current().goal_focus.share.clamp(0.0, 1.0), 10.0, 0.5, 20.0)
     })
 }
 
-/// OBRRT_GEO_AHEAD: how far along the walkable path an approach move aims.
+/// How far along the walkable path an approach move aims.
 fn geo_ahead() -> f32 {
-    static S: std::sync::OnceLock<f32> = std::sync::OnceLock::new();
-    *S.get_or_init(|| obrrt_core::sys::env::var("OBRRT_GEO_AHEAD").ok().and_then(|v| v.parse().ok()).unwrap_or(700.0))
+    700.0
 }
 
 /// A frontier cell (see `index_frontier`), with its zone.

@@ -51,12 +51,8 @@ impl Default for Budget {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Rate {
-    pub cap: f64,
-    pub tau: f64,
     /// OBRRT_RATE_PRIOR
     pub prior_frames: f64,
-    /// OBRRT_RATE_NOSTART
-    pub nostart_frames: f64,
     pub kind_scale: f64,
     pub route: f64,
     pub novel: f64,
@@ -70,10 +66,7 @@ pub struct Rate {
 impl Default for Rate {
     fn default() -> Self {
         Rate {
-            cap: 4.0,
-            tau: 50_000_000.0,
             prior_frames: 200_000.0,
-            nostart_frames: 5_000.0,
             kind_scale: 10.0,
             route: 0.0,
             novel: 1.0,

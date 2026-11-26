@@ -41,20 +41,6 @@ fn stars_needed(name: &str) -> i16 {
     }
 }
 
-/// OBRRT_PAINT_FRONT=1: Painting::Enter starts only in front of the
-/// painting (a painting is entered head-on from the room it faces), and a
-/// painting behind a star door with a known [`room`] starts only in its room
-/// or at its door: the door is `StarDoor::Enter`'s job (one attempt can't
-/// do door, cutscene and room within the horizon: 0 / ~100 such attempts
-/// succeeded in the v46 trees). A start deep in the room needs no stars (a
-/// 0-star BLJ / HyperWalk through the door). Without the switch the
-/// straight-line heuristic ranked states behind the painting's wall or in
-/// the next corridor (x ~ -766 by the WF room) first.
-pub fn paint_front() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| obrrt_core::sys::env::var("OBRRT_PAINT_FRONT").is_ok_and(|v| v == "1"))
-}
-
 /// The room in front of a painting behind a star door, from its centre
 /// along its facing and across it: (depth of the room plus the door's
 /// approach, depth of the room past the door, half width, top y). WF: the 1-star
@@ -261,24 +247,7 @@ impl Objective for Enter {
         if self.progress.is_some_and(|p| p != s.progress_set()) {
             return false;
         }
-        if !paint_front() {
-            return s.stars >= stars_needed(self.painting.name);
-        }
-        // In front: ahead of the wall, within a cone widening from the
-        // painting's own width.
-        let (front, across) = facing(self.painting, self.centre, s.pos);
-        if front < -50.0 || across > self.painting.size + 1.5 * front {
-            return false;
-        }
-        match room(self.painting.name) {
-            Some((approach, depth, half, top)) => {
-                across < half
-                    && front < approach
-                    && s.pos[1] < top
-                    && (front < depth || s.stars >= stars_needed(self.painting.name))
-            }
-            None => s.stars >= stars_needed(self.painting.name),
-        }
+        s.stars >= stars_needed(self.painting.name)
     }
     fn eta(&self, s: &St, _start: &St, _mem: &mut Mem) -> Eta {
         if s.level as u32 == self.painting.dest {

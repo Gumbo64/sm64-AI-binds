@@ -17,12 +17,12 @@
 //! pace. From a start `s` at distance `d0` the arrival must be within
 //! `d0 / pace` frames of `s` as well as before b's frame. The pace is a rung
 //! of a ladder picked per b (by a hash of b, so it's deterministic and
-//! stateless): `OBRRT_PACE_SPEED` (35 u/frame, TAS-like; the TAS averages
-//! 44 in levels, the tree 16-24), `OBRRT_PACE_SPEED2` (25), or none (the old
+//! stateless): a ladder of 35 u/frame, TAS-like; the TAS averages
+//! 44 in levels, the tree 16-24), 25, or none (the old
 //! rule, the fallback). The rung is in the key. A rung that keeps failing
 //! decays like any objective, so the pool's weight drifts to the rungs that
 //! succeed. With the switch on, PosTime and PosDist also get a dive-rollout
-//! steering hint ([`pace_button`], `OBRRT_PACE_HINT=0` turns it off).
+//! steering hint ([`pace_button`]).
 
 use obrrt_core::buttons::{A_BUTTON, B_BUTTON};
 use obrrt_core::layout::{ACT_FLAG_AIR, ACT_FLAG_MOVING, ACT_FLAG_SWIMMING};
@@ -43,10 +43,6 @@ const MARGIN: u32 = 1;
 fn margin() -> u32 {
     static M: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
     *M.get_or_init(|| obrrt_core::sys::env::var("OBRRT_POSTIME_MARGIN").ok().and_then(|v| v.parse().ok()).unwrap_or(MARGIN))
-}
-
-fn env_f32(name: &str, default: f32) -> f32 {
-    obrrt_core::sys::env::var(name).ok().and_then(|v| v.parse().ok()).unwrap_or(default)
 }
 
 /// `OBRRT_POSTIME=self`: the old PosTime (b's own position and frame).
@@ -73,10 +69,9 @@ pub(super) fn pace_on() -> bool {
     *ON.get_or_init(|| obrrt_core::sys::env::var("OBRRT_PACE").is_ok_and(|v| v == "1"))
 }
 
-/// The pace ladder (u/frame): `OBRRT_PACE_SPEED`, `OBRRT_PACE_SPEED2`.
+/// The pace ladder (u/frame).
 fn ladder() -> [f32; 2] {
-    static L: std::sync::OnceLock<[f32; 2]> = std::sync::OnceLock::new();
-    *L.get_or_init(|| [env_f32("OBRRT_PACE_SPEED", 35.0), env_f32("OBRRT_PACE_SPEED2", 25.0)])
+    [35.0, 25.0]
 }
 
 /// Steering hint for travel under the pace switch: dive at running speed
@@ -86,8 +81,7 @@ fn ladder() -> [f32; 2] {
 /// something, so jumps up still happen; the GA's genomes are untouched
 /// (its own B/Z/A mutations find long jumps and jump kicks).
 pub(super) fn pace_button(s: &St, target: [f32; 3]) -> u16 {
-    static HINT: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    if !pace_on() || !*HINT.get_or_init(|| obrrt_core::sys::env::var("OBRRT_PACE_HINT").map_or(true, |v| v != "0")) {
+    if !pace_on() {
         return 0;
     }
     const ACT_DIVE: u32 = 0x0188088A;

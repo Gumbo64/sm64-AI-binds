@@ -94,10 +94,7 @@ pub fn from_env_with(base: SearchConfig, get: Lookup) -> Result<SearchConfig> {
         Some(v) => bail!("OBRRT_SAMPLER: rate or decay, not {v}"),
     }
     let r = &mut sampler.rate;
-    e.strict("OBRRT_RATE_CAP", &mut r.cap)?;
-    e.strict("OBRRT_RATE_TAU", &mut r.tau)?;
     e.strict("OBRRT_RATE_PRIOR", &mut r.prior_frames)?;
-    e.strict("OBRRT_RATE_NOSTART", &mut r.nostart_frames)?;
     e.strict("OBRRT_RATE_KIND_SCALE", &mut r.kind_scale)?;
     e.strict("OBRRT_RATE_ROUTE", &mut r.route)?;
     e.strict("OBRRT_RATE_NOVEL", &mut r.novel)?;

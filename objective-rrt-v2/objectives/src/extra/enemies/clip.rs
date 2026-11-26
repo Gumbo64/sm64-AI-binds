@@ -34,7 +34,7 @@
 //! star. The success rule and `star_blocked`'s softening (`clip_setup`)
 //! are GateClip's own, as before.
 
-use obrrt_core::{Eta, Mem, Obj, Objective, PadOverlay, St, dist, frames_for};
+use obrrt_core::{Eta, Mem, Obj, Objective, PadOverlay, St, dist};
 
 use crate::extra::tech::bombclip::{self, Wall};
 
@@ -130,12 +130,6 @@ pub fn clip_setup(s: &St) -> bool {
     g.behind(s.pos) || (holding_bobomb(s) && s.dist(g.pos) < SETUP_RADIUS)
 }
 
-/// OBRRT_DEATHFADE=1: GateClip succeeds on star 6 only (see `done`).
-fn death_fade() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| obrrt_core::sys::env::var("OBRRT_DEATHFADE").is_ok_and(|v| v == "1"))
-}
-
 pub struct GateClip {
     zone: (u16, u8),
     wall: Wall,
@@ -176,7 +170,7 @@ impl GateClip {
     /// Star 6 (not any star) or Mario behind the gate; base_criteria
     /// excludes states that already meet either.
     ///
-    /// With OBRRT_DEATHFADE=1 (catalogue G13), star 6 only. The TAS enters
+    /// (Catalogue G13, the star-6-only variant, was tested and dropped.) The TAS enters
     /// the cage through an out-of-bounds frame at the gate rock (f22059-60,
     /// a 108-unit shove: no floor, so update_mario_geometry_inputs queues
     /// WARP_OP_DEATH, 48 frames), falls in and grabs the star at
@@ -194,7 +188,7 @@ impl GateClip {
     /// from the doomed nodes), so this stays off.
     fn done(&self, s: &St) -> bool {
         s.has_star(COURSE, INDEX)
-            || (!death_fade() && s.zone() == self.zone && Gate::find(s).is_some_and(|g| g.behind(s.pos)))
+            || (s.zone() == self.zone && Gate::find(s).is_some_and(|g| g.behind(s.pos)))
     }
 }
 
@@ -255,13 +249,6 @@ impl Objective for GateClip {
     fn eta(&self, s: &St, _start: &St, mem: &mut Mem) -> Eta {
         if self.done(s) {
             return Eta::Done;
-        }
-        // OBRRT_DEATHFADE=1: behind the bars (doomed) the star is what's left.
-        if s.zone() == self.zone
-            && let Some(g) = Gate::find(s)
-            && g.behind(s.pos)
-        {
-            return Eta::Frames(frames_for(dist(s.pos, g.star)));
         }
         // The general bomb clip's phases through the gate.
         bombclip::eta(&self.wall, self.zone, s, mem)

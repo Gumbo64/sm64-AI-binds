@@ -111,7 +111,7 @@ impl Objective for Lblj {
         // the corridor once a chain reached blj::CHAIN_BUILT (not walked).
         let sp = blj::chain_step(s, mem);
         let slow = start.forward_vel > -blj::CHAIN_SPEED;
-        if (slow && sp > 0.0 && in_lobby(s) && s.alive() && blj::long_jumping(s) && s.forward_vel <= -blj::CHAIN_SPEED && blj::aligned_ok(s, TRAP))
+        if (slow && sp > 0.0 && in_lobby(s) && s.alive() && blj::long_jumping(s) && s.forward_vel <= -blj::CHAIN_SPEED)
             || (sp >= blj::CHAIN_BUILT && (s.level == LEVEL_BITDW || (behind_door(s) && s.alive())))
         {
             return Eta::Done;
