@@ -22,6 +22,9 @@ pub(super) struct Manual {
     seen: HashSet<u64>,
     /// Times a state was the goal plans' start (the next-nearest take over a state that led nowhere).
     goal_wear: HashMap<u32, u32>,
+    /// Zones (level, area) some node of this tree is in, and how far `sync_zone_firsts` has scanned the nodes.
+    zone_seen: HashSet<(u16, u8)>,
+    zone_scan: usize,
 }
 
 /// What [`Engine::insert_manual`] did.
@@ -261,6 +264,24 @@ impl Engine {
         let start = self.pick_start(entry, obj.as_ref(), b)?;
         self.tree.nodes[b as usize].stats.as_b += 1;
         Some(Plan { stages: vec![(entry, obj)], start, b, rewire: None, seed: None, polish: None, targets: None, window_b: None, window: Vec::new(), mv: None })
+    }
+
+    /// Tree sync's fast path: the first own node (not imported by sync) in each zone (level, area) this tree had not
+    /// been in before, at most `k` per call (the rest next time; imported nodes mark their zone as known, so a worker
+    /// does not offer what it was given). The caller offers them to the other workers at once instead of at the
+    /// next round (a new area is worth more to the others than a better state of a place they all know).
+    pub fn sync_zone_firsts(&mut self, k: usize) -> Vec<u32> {
+        let mut out = Vec::new();
+        while self.manual.zone_scan < self.tree.nodes.len() && out.len() < k {
+            let i = self.manual.zone_scan;
+            self.manual.zone_scan += 1;
+            let n = &self.tree.nodes[i];
+            if self.manual.zone_seen.insert(n.st.zone()) && i > 0 && n.via != "sync" && !n.retired && !self.sync_sent.contains(&(i as u32)) {
+                out.push(i as u32);
+            }
+        }
+        self.sync_sent.extend(out.iter().copied());
+        out
     }
 
     /// The tree's state in the goal's zone nearest the goal: (distance, node id), or None without a goal or a state there.
