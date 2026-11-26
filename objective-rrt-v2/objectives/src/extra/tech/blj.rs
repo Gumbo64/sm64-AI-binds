@@ -769,19 +769,8 @@ pub struct Blj {
     run: bool,
     /// The pole objects of the base (`tree_handoff` with `poleredirect` on).
     poles: Vec<[f32; 3]>,
-    /// The generic BLJ ([`generic_overlay`]: start region + destination
-    /// only) with OBRRT_BLJ_GENERIC=1, else the per-spot pose rules.
-    generic: bool,
     /// OBRRT_BLJ_FAST's setup variant (rule spots; 0 off).
     var: u8,
-}
-
-/// The per-spot pose-based setup ([`staged_overlay`]): the default; with
-/// OBRRT_BLJ_GENERIC=1 the generic BLJ ([`generic_overlay`]) instead (it
-/// doesn't build speed yet: lab 0 / 48, RUNS.md bljtree).
-fn pose_mode() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| !obrrt_core::sys::env::var("OBRRT_BLJ_GENERIC").is_ok_and(|v| v == "1"))
 }
 
 impl Blj {
@@ -791,11 +780,7 @@ impl Blj {
     pub fn generate(b: &St, out: &mut Vec<std::sync::Arc<dyn Objective>>) {
         for spot in SPOTS.iter().filter(|s| enabled(s.tech)) {
             let poles = if spot.tree_handoff && enabled("poleredirect") { poleredirect::poles(b) } else { Vec::new() };
-            let generic = !pose_mode();
-            if generic {
-                obrrt_core::geo::want_static_floors();
-            }
-            let mut o = Blj { spot, run: generic || spot.rule.is_some(), poles, generic, var: 0 };
+            let mut o = Blj { spot, run: spot.rule.is_some(), poles, var: 0 };
             if o.fast() {
                 o.var = super::bljfast::variant(b, spot.start, spot.rule.unwrap().0, (b.frame % 2) as u8);
             }
@@ -807,7 +792,7 @@ impl Blj {
 
     /// OBRRT_BLJ_FAST on a rule spot (bljfast): the fast setup.
     fn fast(&self) -> bool {
-        super::bljfast::on() && self.run && !self.generic && self.spot.rule.is_some()
+        super::bljfast::on() && self.run && self.spot.rule.is_some()
     }
 
     /// The fast setup's platform phase (a rule spot without a riser: a
@@ -821,13 +806,6 @@ impl Blj {
     }
 
     fn start(&self, s: &St) -> bool {
-        if self.generic {
-            // Anywhere in the rough start region, not already fast backwards.
-            return spot_open(self.spot, s)
-                && s.controllable()
-                && s.forward_vel > -CHAIN_BUILT
-                && s.dist(self.spot.start) < GENERIC_RADIUS.max(self.spot.start_radius);
-        }
         if self.run {
             // Anywhere near the spot (the setup stage walks to the pose),
             // not already moving backwards fast (that's HyperWalk's). The
@@ -918,9 +896,6 @@ impl Objective for Blj {
         self.start(s)
     }
     fn ga_budget(&self) -> Option<obrrt_core::GaBudget> {
-        if self.generic {
-            return Some(obrrt_core::GaBudget { population: 48, generations: 7, horizon: self.spot.horizon + GENERIC_SETUP_FRAMES });
-        }
         if self.run {
             // The lab's 48 x 20 is about 7 generations at the default 3x
             // scale; the horizon has room for the setup stage too.
@@ -953,20 +928,15 @@ impl Objective for Blj {
             return Eta::Lost;
         }
         // The chain to the target speed, set up at the pose (run spots),
-        // the generic launch point, or the start point.
-        let setup = if self.generic {
-            launch_point(self.spot)
-        } else {
-            pose_point(self.spot).filter(|_| self.run).map_or(self.spot.start, |(p, _)| p)
-        };
+        // or the start point.
+        let setup = pose_point(self.spot).filter(|_| self.run).map_or(self.spot.start, |(p, _)| p);
         let mut speed = if self.fast() {
             super::bljfast::build_eta(s, self.spot.start, self.spot.rule.unwrap().0, target, self.wait(s))
         } else {
             build_eta(s, Some(setup), target)
         };
-        // OBRRT_BLJ_ALIGN: v1's alignment factor (not for generic spots,
-        // whose v1 progress had none).
-        if align_eta() && !self.generic {
+        // OBRRT_BLJ_ALIGN: v1's alignment factor.
+        if align_eta() {
             speed += misalign_frames(s, mem, self.align_goal());
         }
         // Once built, the place at the chain's speed is the other way in.
@@ -984,15 +954,6 @@ impl Objective for Blj {
         3.0
     }
     fn steer_target(&self, s: &St) -> Option<[f32; 3]> {
-        if self.generic {
-            // Before the chain: run away from the destination through the
-            // start region (the BLJ then carries Mario back towards it);
-            // in a long jump: straight back.
-            if long_jumping(s) || s.forward_vel <= -CHAIN_BUILT {
-                return Some(steer(s, self.spot.goal));
-            }
-            return Some(launch_point(self.spot));
-        }
         // OBRRT_BLJ_FAST: the approach is the genome's, to the spot.
         if self.fast() && !long_jumping(s) && s.forward_vel > -CHAIN_BUILT {
             return Some(self.spot.start);
@@ -1013,9 +974,6 @@ impl Objective for Blj {
         }
     }
     fn pad_overlay(&self) -> Option<PadOverlay> {
-        if self.generic {
-            return Some(generic_overlay(self.spot));
-        }
         let (yaw, run_up, riser) = self.spot.rule.filter(|_| self.run)?;
         if self.fast() {
             let f = super::bljfast::Board::Near;
@@ -1117,89 +1075,13 @@ pub fn staged_overlay(spot: &'static Spot) -> PadOverlay {
 }
 
 
-// ---- The generic BLJ (OBRRT_BLJ_GENERIC=1; default: the pose rules) ----
-//
-// A spot is used only as a rough start region (`start`, GENERIC_RADIUS) and
-// a destination (`goal`, `dest`) with a speed target (`chain_target`); its
-// `rule` (pose, yaw, riser point, run-up) is not read. The GA does the
-// setup (where and which way to run, the first long jump's stick, the press
-// sticks); the overlay only supplies what the decomp fixes for every BLJ.
-
-/// The start region's radius.
+/// The rough start region's radius of a spot (the riser probe's search area).
 const GENERIC_RADIUS: f32 = 600.0;
-/// The controller's pre-chain target: this far from the start, away from
-/// the destination.
-const GENERIC_ANCHOR: f32 = 300.0;
-const ACT_WALKING: u32 = 0x0400_0440;
 
 /// The facing whose backwards travel points from the spot's start at its
 /// destination (straight-line bearing).
 fn away_yaw(spot: &Spot) -> i32 {
     yaw_to(spot.goal, spot.start)
-}
-
-/// The generic BLJ overlay:
-/// - setup: the genome's pad without its Z; Z (a new press) while walking
-///   at fv >= 10.5 facing within 0x1000 of [`away_yaw`] inside the start
-///   region, so a run away from the destination becomes a crouch slide
-///   (act_walking), and in the crouch slide a new A with the stick back:
-///   the long jump (act_crouch_slide needs fv > 10);
-/// - the first long jump's air stick: the genome's (key frames), so the GA
-///   finds where it lands (a riser, a slope, a rising floor);
-/// - the chain: Z held and the stick back in the air; on ACT_LONG_JUMP_LAND
-///   with fv < 0 a new A + Z from the chain's lowest floor (any landing on
-///   an object floor: elevators rise), with the genome's stick (key frames);
-///   neutral between presses (the landing keeps the speed);
-/// - after the chain: neutral.
-pub fn generic_overlay(spot: &'static Spot) -> PadOverlay {
-    let away = setup_facing(spot);
-    let (start, radius) = (spot.start, GENERIC_RADIUS.max(spot.start_radius));
-    let riser = probe_riser(spot);
-    // The chain (and the crouch slide's long jump) is the shared rule, with
-    // the probed riser as its first-landing aim (none: every landing
-    // presses, as on a rising floor).
-    let rule = Rule { start, yaw: away, run_up: 0.0, spot: riser, stop: 1000.0, free_exit: false };
-    PadOverlay::keyed(move |traj, played, genome| {
-        let s = traj.last().unwrap();
-        let held_z = played.last().is_some_and(|p| p.button & Z_TRIG != 0);
-        let mid_chain = long_jumping(&traj[0]) && traj[0].forward_vel < 0.0;
-        let chain = if mid_chain { traj } else { &traj[1..] };
-        let begun = mid_chain || chain.iter().any(|t| t.action == ACT_LONG_JUMP);
-        if begun || s.action == ACT_CROUCH_SLIDE {
-            let pad = rule.pad(traj, played, Some(genome));
-            let key = pad.button & A_BUTTON != 0 && s.action == ACT_LONG_JUMP_LAND;
-            return (pad, key);
-        }
-        // With a riser, launch at a long jump's reach from it (a crouch
-        // slide's long jump comes back down ~225 behind its start at -16:
-        // pose lab / TAS), so the first landing can be steered onto it.
-        // A slow launch (fv 10.5..15, as the rule's 40-unit run-up from
-        // idle): faster crouch-slide long jumps fly past a riser.
-        let z = s.action == ACT_WALKING
-            && (10.5..=LAUNCH_FV).contains(&s.forward_vel)
-            && yaw_err(s.yaw as i32, away) < 0x1000
-            && s.dist(start) < radius
-            && riser.is_none_or(|r| (LAUNCH_REACH.0..LAUNCH_REACH.1).contains(&s.hdist(r)))
-            && !held_z;
-        (GamePad::new((genome.button & !Z_TRIG) | if z { Z_TRIG } else { 0 }, genome.stick_x, genome.stick_y), false)
-    })
-}
-
-/// The generic setup's highest launch speed.
-const LAUNCH_FV: f32 = 15.0;
-/// Horizontal distance from a riser at which the generic setup launches.
-const LAUNCH_REACH: (f32, f32) = (180.0, 280.0);
-
-/// The generic setup's run target: [`LAUNCH_REACH`] mid-distance from the
-/// probed riser, away from the destination (else the start region's
-/// anchor).
-fn launch_point(spot: &'static Spot) -> [f32; 3] {
-    let away = setup_facing(spot) as f32 * std::f32::consts::TAU / 65536.0;
-    let (c, d) = match probe_riser(spot) {
-        Some(r) => (r, 0.5 * (LAUNCH_REACH.0 + LAUNCH_REACH.1) + 40.0),
-        None => (spot.start, GENERIC_ANCHOR),
-    };
-    [c[0] + d * away.sin(), c[1], c[2] + d * away.cos()]
 }
 
 /// A step riser for a BLJ in `spot`'s start region, from the zone's static
@@ -1292,7 +1174,6 @@ pub fn probe_named(name: &str) -> Option<[f32; 3]> {
 /// Frames added to a run spot's horizon for the setup stage (GA budget).
 const SETUP_FRAMES: usize = 150;
 /// Frames added to the spot's horizon for the GA's own setup (GA budget).
-const GENERIC_SETUP_FRAMES: usize = 100;
 
 #[cfg(test)]
 mod align_tests {

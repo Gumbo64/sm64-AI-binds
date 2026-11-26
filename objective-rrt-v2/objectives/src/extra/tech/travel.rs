@@ -54,11 +54,7 @@
 use obrrt_core::layout::{ACT_FLAG_AIR, ACT_FLAG_MOVING, ACT_FLAG_ON_POLE, ACT_FLAG_SWIMMING, ACT_FLAG_HANGING};
 use obrrt_core::{Eta, GamePad, Mem, Objective, PadOverlay, St, buttons, frames_for};
 
-use std::sync::Arc;
-
-use obrrt_core::layout::{INTERACT_BBH_ENTRANCE, INTERACT_DOOR, INTERACT_STAR_OR_KEY, INTERACT_WARP, INTERACT_WARP_DOOR, LEVEL_CASTLE};
-
-use super::kicks::{Boost, Kick, KickRun, move_weight};
+use super::kicks::{Boost, move_weight};
 
 /// Actions (include/sm64.h).
 pub(super) const ACT_DIVE: u32 = 0x0188088A;
@@ -150,106 +146,6 @@ pub(super) fn can_start(s: &St) -> bool {
     s.controllable() && s.action & (ACT_FLAG_SWIMMING | ACT_FLAG_ON_POLE | ACT_FLAG_HANGING) == 0
 }
 
-/// `OBRRT_TRAVEL_AIM=1` (off by default): the travel techniques also get
-/// targets that are route goals (see [`generate_aim`]).
-pub(super) fn aim_on() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| obrrt_core::sys::env::var("OBRRT_TRAVEL_AIM").is_ok_and(|v| v == "1"))
-}
-
-/// Goals an aimed attempt may target per b (`OBRRT_TRAVEL_AIM_N`, 3).
-fn aim_n() -> usize {
-    static N: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
-    *N.get_or_init(|| obrrt_core::sys::env::var("OBRRT_TRAVEL_AIM_N").ok().and_then(|v| v.parse().ok()).unwrap_or(3))
-}
-
-/// The weight of an aimed objective, × [`move_weight`]`(0.5)`
-/// (`OBRRT_TRAVEL_AIM_W`, 10). Aimed entries are keyed by goal, so a zone
-/// has only a few, against hundreds of random-target ones a kind (one per
-/// b); at 1 they got about 1 attempt a kind in 60 M frames.
-pub(super) fn aim_weight() -> f64 {
-    static W: std::sync::OnceLock<f64> = std::sync::OnceLock::new();
-    move_weight(0.5) * *W.get_or_init(|| obrrt_core::sys::env::var("OBRRT_TRAVEL_AIM_W").ok().and_then(|v| v.parse().ok()).unwrap_or(10.0))
-}
-
-/// Aimed arrival: horizontal radius and height band around the goal (a
-/// painting's centre sits in its wall about 300 up, a door's at its foot).
-const AIM_R: f32 = 250.0;
-const AIM_RY: f32 = 400.0;
-/// Entering the goal (warp, door, painting, star grab: control lost) counts
-/// within this horizontal distance of it.
-const AIM_ENTER: f32 = 600.0;
-
-/// Route goals near `b` in its zone (as HyperWalk's list, hyperwalk.rs):
-/// stars not yet had (and not walled off), spawned stars, warps, doors b
-/// can open, BBH's entrance, and the castle area's paintings; 500–3000
-/// straight-line from b, the nearest [`aim_n`].
-pub(super) fn aim_goals(b: &St) -> Vec<[f32; 3]> {
-    let mut v: Vec<[f32; 3]> = Vec::new();
-    for o in b.objects() {
-        let g = match o.interact_type {
-            INTERACT_STAR_OR_KEY => {
-                if crate::star::star_of(b, o).is_some_and(|(c, i)| b.has_star(c, i) || crate::star::star_blocked(b, c, i)) {
-                    continue;
-                }
-                crate::star::rest_pos(o)
-            }
-            _ if crate::star::spawned_star(o) => crate::star::rest_pos(o),
-            INTERACT_WARP | INTERACT_WARP_DOOR | INTERACT_DOOR | INTERACT_BBH_ENTRANCE => {
-                let needs = if matches!(o.bhv_name(), "bhvDoor" | "bhvStarDoor") { (o.beh_params >> 24) as i16 } else { 0 };
-                if b.stars < needs {
-                    continue;
-                }
-                o.pos
-            }
-            _ => continue,
-        };
-        v.push(g);
-    }
-    if b.level as u32 == LEVEL_CASTLE {
-        for p in crate::painting_table::PAINTINGS.iter().filter(|p| p.area == b.area) {
-            v.push(p.centre());
-        }
-    }
-    v.retain(|&p| (500.0..3000.0).contains(&b.dist(p)));
-    v.sort_by(|x, y| b.dist(*x).total_cmp(&b.dist(*y)));
-    v.dedup_by(|x, y| obrrt_core::dist(*x, *y) < 200.0);
-    v.truncate(aim_n());
-    v
-}
-
-/// Aimed objectives from `b` under [`aim_on`]: for each enabled travel
-/// technique (diverollout, ljchain, slidekick, jumpkick) and each goal of
-/// [`aim_goals`] inside its start window, one objective keyed by the goal's
-/// 200-unit cell (so every b near that goal shares it). Their success is
-/// arriving at (or entering) the goal by `d0 / pace + slack` frames with
-/// the technique in the segment ([`timed_eta_with`]).
-pub(super) fn generate_aim(b: &St, out: &mut Vec<Arc<dyn Objective>>) {
-    if !can_start(b) {
-        return;
-    }
-    let goals = aim_goals(b);
-    let within = |(lo, hi): (f32, f32), p: [f32; 3]| (lo..=hi).contains(&b.dist(p));
-    for &p in &goals {
-        for mv in [Move::DiveRollout, Move::LongJumpChain] {
-            if super::enabled(if mv == Move::DiveRollout { "diverollout" } else { "ljchain" }) && within((MIN_START, MAX_START), p) {
-                out.push(Arc::new(Dash::aimed(b, mv, p)));
-            }
-        }
-        for k in [Kick::Slide, Kick::Jump] {
-            if super::enabled(if k == Kick::Slide { "slidekick" } else { "jumpkick" }) && within(k.starts(), p) {
-                out.push(Arc::new(KickRun::aimed(b, k, p)));
-            }
-        }
-    }
-}
-
-/// The aimed key: kind, zone and the goal's 200-unit cell.
-pub(super) fn aim_key(kind: &str, zone: (u16, u8), p: [f32; 3]) -> String {
-    let c = |v: f32| (v / 200.0).round() as i32;
-    format!("{kind} aim {zone:?} {},{},{}", c(p[0]), c(p[1]), c(p[2]))
-}
-
 /// Frames one more start of the technique costs on top of the approach (the
 /// run-up to a dive, the crouch slide before a long jump, a kick's wind-up):
 /// a rough figure from the TAS catalogue (chains start within ~5–10 frames).
@@ -257,9 +153,7 @@ pub(super) const START_FRAMES: f64 = 8.0;
 
 /// [`Mem`] layout of a timed run ([`timed_eta_with`]): `f[0]` frames since the
 /// start (the index in the rollout), `f[1]` the previous frame's action,
-/// `f[2]` technique starts so far; `flags` bit 0: the previous frame was
-/// controllable in the zone within [`AIM_ENTER`] of the goal.
-const PREV_NEAR: u32 = 1;
+/// `f[2]` technique starts so far.
 
 /// OBRRT_FREE_SETUP=1: which technique start [`start_frames`] prices.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -322,9 +216,7 @@ pub(super) fn start_frames(kind: StartKind, s: &St) -> f64 {
 /// A timed run's goal: get to `p` of `zone` within `limit` frames of the
 /// start with `needed` starts of the technique (`started(prev_action, s)`
 /// says whether the frame into `s` is one) by then. Arrival is within
-/// [`RADIUS`] (`aim`: within [`AIM_R`] / [`AIM_RY`], or control lost within
-/// [`AIM_ENTER`] of the goal: a warp, door or painting entered, a star
-/// grabbed). As v1: the first arrival decides: with enough starts `Done`,
+/// [`RADIUS`]. As v1: the first arrival decides: with enough starts `Done`,
 /// else `Lost`; past `limit`, or out of the zone, `Lost`. Before that
 /// `frames_for(dist) + START_FRAMES × starts still needed`.
 /// With `free` (OBRRT_FREE_SETUP=1, else None) the starts still needed
@@ -337,7 +229,6 @@ pub(super) fn timed_eta_with(
     zone: (u16, u8),
     p: [f32; 3],
     limit: usize,
-    aim: bool,
     needed: usize,
     started: impl Fn(u32, &St) -> bool,
     free: Option<StartKind>,
@@ -346,20 +237,13 @@ pub(super) fn timed_eta_with(
     if i > 0 && started(mem.f[1] as u32, s) {
         mem.f[2] += 1.0;
     }
-    let prev_near = i > 0 && mem.flags & PREV_NEAR != 0;
     mem.f[0] += 1.0;
     mem.f[1] = s.action as f64;
-    let near = s.controllable() && s.zone() == zone && s.hdist(p) <= AIM_ENTER;
-    mem.flags = if near { mem.flags | PREV_NEAR } else { mem.flags & !PREV_NEAR };
     if i > limit {
         return Eta::Lost;
     }
     let n = mem.f[2] as usize;
-    let arrived = if aim {
-        (s.zone() == zone && s.hdist(p) <= AIM_R && (s.pos[1] - p[1]).abs() <= AIM_RY) || (prev_near && !s.controllable())
-    } else {
-        s.zone() == zone && s.dist(p) <= RADIUS
-    };
+    let arrived = s.zone() == zone && s.dist(p) <= RADIUS;
     if arrived {
         return if n >= needed { Eta::Done } else { Eta::Lost };
     }
@@ -390,8 +274,6 @@ pub struct Dash {
     var: Variant,
     /// The slope-boost objective, for `Variant::Boost`.
     boost: Option<Boost>,
-    /// Aimed at a route goal `p` (`OBRRT_TRAVEL_AIM`, [`generate_aim`]).
-    aim: bool,
 }
 
 /// `pad` with `button` pressed this frame: set if `prev` didn't hold it,
@@ -437,12 +319,7 @@ impl Dash {
         };
         let p = [b.pos[0] + r * a.sin(), b.pos[1] + dy, b.pos[2] + r * a.cos()];
         let boost = (var == Variant::Boost).then(|| Boost::new(b, s));
-        Dash { mv, p, zone: b.zone(), var, boost, aim: false }
-    }
-
-    /// Aimed at the route goal `p` (plain variant).
-    pub fn aimed(b: &St, mv: Move, p: [f32; 3]) -> Dash {
-        Dash { mv, p, zone: b.zone(), var: Variant::Plain, boost: None, aim: true }
+        Dash { mv, p, zone: b.zone(), var, boost }
     }
 
     /// The variant from `b`: half the time the plain one, else one of those
@@ -522,9 +399,6 @@ impl Objective for Dash {
         if let Some(bo) = &self.boost {
             return bo.key(self.mv.kind(), self.zone);
         }
-        if self.aim {
-            return aim_key(self.mv.kind(), self.zone, self.p);
-        }
         let c = |v: f32| (v / 400.0).round() as i32;
         let tag = match self.var {
             Variant::Plain | Variant::Boost => "",
@@ -534,7 +408,7 @@ impl Objective for Dash {
         format!("{}{} {:?} {},{},{}", self.mv.kind(), tag, self.zone, c(self.p[0]), c(self.p[1]), c(self.p[2]))
     }
     fn obj_weight(&self, _b: &St) -> f64 {
-        if self.aim { aim_weight() } else { move_weight(0.5) }
+        move_weight(0.5)
     }
     fn base_criteria(&self, s: &St) -> bool {
         if let Some(bo) = &self.boost {
@@ -566,7 +440,7 @@ impl Objective for Dash {
             (Move::LongJumpChain, _) => StartKind::LongJump,
             _ => StartKind::Other,
         });
-        timed_eta_with(s, mem, self.zone, self.p, limit, self.aim, self.needed(), |prev, s| self.started(prev, s), free)
+        timed_eta_with(s, mem, self.zone, self.p, limit, self.needed(), |prev, s| self.started(prev, s), free)
     }
     fn start_bias(&self, s: &St) -> f64 {
         // v1: a running start ranks ahead (not for boosts, ranked by their own).

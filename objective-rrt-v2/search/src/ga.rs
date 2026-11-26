@@ -2013,7 +2013,7 @@ fn tail_on() -> bool {
 }
 
 /// The GA budget of objectives without [`Objective::ga_budget`]:
-/// `OBRRT_GA_POP` (16), 5 generations, horizon 150 (v1's most common budget).
+/// 16 individuals, 5 generations, horizon 150 (v1's most common budget).
 /// OBRRT_REACH_PRIOR=<file>: a JSON object, objective kind -> the start ETA
 /// (frames) beyond which attempts of that kind have not succeeded in past
 /// runs (backbone/attempts/reach.py, from every attempt logged). An attempt
@@ -2062,8 +2062,7 @@ pub fn beyond_reach(o: &dyn Objective, start: &St) -> bool {
 fn default_budget() -> GaBudget {
     static B: OnceLock<GaBudget> = OnceLock::new();
     *B.get_or_init(|| {
-        let env = |k: &str, d: usize| obrrt_core::sys::env::var(k).ok().and_then(|v| v.parse().ok()).unwrap_or(d);
-        GaBudget { population: env("OBRRT_GA_POP", 16).max(1), generations: 5, horizon: 150 }
+        GaBudget { population: 16, generations: 5, horizon: 150 }
     })
 }
 

@@ -101,7 +101,6 @@ pub fn generate_level(b: &St, out: &mut Vec<Arc<dyn Objective>>) {
     if enabled("bobopener") { openers::generate_level(b, openers::Which::Bob, out); }
     if enabled("slidekick") && kicks::KickRun::applies(b) { out.push(Arc::new(kicks::KickRun::new(b, kicks::Kick::Slide))); }
     if enabled("jumpkick") && kicks::KickRun::applies(b) { out.push(Arc::new(kicks::KickRun::new(b, kicks::Kick::Jump))); }
-    if travel::aim_on() { travel::generate_aim(b, out); }
     waterwarp::generate(b, out); // OBRRT_WATERWARP=1 only
 }
 

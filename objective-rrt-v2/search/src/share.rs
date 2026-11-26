@@ -121,7 +121,7 @@ fn donor_sample() -> Option<usize> {
     static M: OnceLock<Option<usize>> = OnceLock::new();
     *M.get_or_init(|| {
         (obrrt_core::config::current().zone.donor_sample)
-            .then(|| obrrt_core::sys::env::var("OBRRT_ZONE_SHARE_M").ok().and_then(|v| v.parse().ok()).unwrap_or(4))
+            .then(|| 4)
     })
 }
 

@@ -57,7 +57,7 @@
 use obrrt_core::layout::{ACT_FLAG_AIR, ACT_FLAG_MOVING};
 use obrrt_core::{Eta, GamePad, Mem, Objective, PadOverlay, St, buttons, frames_for};
 
-use super::travel::{ACT_CROUCH_SLIDE, ACT_DIVE, ACT_DIVE_SLIDE, ACT_FORWARD_ROLLOUT, ACT_FREEFALL, ACT_LONG_JUMP, StartKind, aim_key, aim_weight, can_start, timed_eta_with, unit};
+use super::travel::{ACT_CROUCH_SLIDE, ACT_DIVE, ACT_DIVE_SLIDE, ACT_FORWARD_ROLLOUT, ACT_FREEFALL, ACT_LONG_JUMP, StartKind, can_start, timed_eta_with, unit};
 
 /// The objective weight of a movement technique (diverollout, ljchain and
 /// their variants, jumpkick, slidekick, flipheight, the wall-kick modes)
@@ -339,8 +339,6 @@ pub struct KickRun {
     zone: (u16, u8),
     /// The slope-boost variant (`boost`), half the time from a b on a slope.
     boost: Option<Boost>,
-    /// Aimed at a route goal `p` (`OBRRT_TRAVEL_AIM`, travel.rs `generate_aim`).
-    aim: bool,
 }
 
 impl KickRun {
@@ -364,23 +362,11 @@ impl KickRun {
         };
         let p = [b.pos[0] + r * a.sin(), b.pos[1] + dy, b.pos[2] + r * a.cos()];
         let boost = (kick == Kick::Slide && Boost::eligible(b) && unit(b, s, 5) < 0.5).then(|| Boost::new(b, s));
-        KickRun { kick, p, speed, downhill, zone: b.zone(), boost, aim: false }
+        KickRun { kick, p, speed, downhill, zone: b.zone(), boost }
     }
 
     pub fn applies(b: &St) -> bool {
         can_start(b)
-    }
-
-    /// Aimed at the route goal `p`: a slide kick at 40 when `p` is 250+
-    /// below b (and the start must stay above it), else 27; a jump kick 28.
-    pub fn aimed(b: &St, kick: Kick, p: [f32; 3]) -> KickRun {
-        let downhill = kick == Kick::Slide && p[1] < b.pos[1] - 250.0;
-        let speed = match kick {
-            Kick::Slide if downhill => 40.0,
-            Kick::Slide => 27.0,
-            Kick::Jump => 28.0,
-        };
-        KickRun { kick, p, speed, downhill, zone: b.zone(), boost: None, aim: true }
     }
 
     /// Frames a start at distance `d` has to arrive in.
@@ -401,14 +387,11 @@ impl Objective for KickRun {
         if let Some(bo) = &self.boost {
             return bo.key(self.kick.kind(), self.zone);
         }
-        if self.aim {
-            return aim_key(if self.downhill { "Tech::SlideKick down" } else { self.kick.kind() }, self.zone, self.p);
-        }
         let c = |v: f32| (v / 400.0).round() as i32;
         format!("{} {:?} {},{},{}", self.kick.kind(), self.zone, c(self.p[0]), c(self.p[1]), c(self.p[2]))
     }
     fn obj_weight(&self, _b: &St) -> f64 {
-        if self.aim { aim_weight() } else { move_weight(0.5) }
+        move_weight(0.5)
     }
     fn base_criteria(&self, s: &St) -> bool {
         if let Some(bo) = &self.boost {
@@ -435,7 +418,7 @@ impl Objective for KickRun {
             Kick::Slide => StartKind::SlideKick,
             Kick::Jump => StartKind::JumpKick,
         });
-        timed_eta_with(s, mem, self.zone, self.p, limit, self.aim, 1, |prev, s| self.kick.started(prev, s), free)
+        timed_eta_with(s, mem, self.zone, self.p, limit, 1, |prev, s| self.kick.started(prev, s), free)
     }
     fn start_bias(&self, s: &St) -> f64 {
         // v1: a running start ranks ahead (not for boosts).
