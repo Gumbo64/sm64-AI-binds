@@ -37,3 +37,4 @@ backbone/run/rlv2/
 objective-rrt-v2/agent/sessions/
 backbone/rlv2/dataset_v2
 backbone/rlv2/lib/*.so
+.claude/
