@@ -12,7 +12,7 @@
 
 use rand::Rng;
 use rand::rngs::SmallRng;
-use sm64_ai::noise::Slot;
+use crate::noise::Slot;
 use sm64_binds::GamePad;
 
 use crate::archive::Archive;

@@ -19,7 +19,7 @@ use rand::prelude::*;
 use rand::rngs::SmallRng;
 use rayon::prelude::*;
 use serde_json::{Value, json};
-use sm64_ai::util::skip_menu_pads;
+use objective_scattershot::util::skip_menu_pads;
 use sm64_binds::{GamePad, SM64Game, SM64GameGenerator};
 
 use crate::archive::{Archive, Found, Merged, Rollout};

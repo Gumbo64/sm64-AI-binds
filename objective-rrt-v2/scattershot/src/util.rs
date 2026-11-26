@@ -15,3 +15,21 @@ pub fn parse_m64(bytes: &[u8]) -> Vec<GamePad> {
         .map(|c| GamePad::new(u16::from_be_bytes([c[0], c[1]]), c[2] as i8, c[3] as i8))
         .collect()
 }
+
+/// Power-on to Mario: 1680 frames, A on even frames, START at 150..160 and 200..300
+/// (moved here from the retired curiosity-GA crate, unchanged).
+pub fn skip_menu_pads() -> Vec<sm64_binds::GamePad> {
+    use sm64_binds::buttons;
+    (0..1680)
+        .map(|i| {
+            let mut button = 0;
+            if (150..160).contains(&i) || (200..300).contains(&i) {
+                button = buttons::START_BUTTON;
+            }
+            if i % 2 == 0 {
+                button = buttons::A_BUTTON;
+            }
+            sm64_binds::GamePad::new(button, 0, 0)
+        })
+        .collect()
+}

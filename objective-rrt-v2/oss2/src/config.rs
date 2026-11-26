@@ -7,7 +7,7 @@
 //! (read as obrrt2 and goalbench read them, same defaults).
 
 use obrrt_search::ga::{Fitness, GaParams};
-use sm64_ai::noise::Variant;
+use objective_scattershot::noise::Variant;
 
 /// Which states of a GA expansion are offered to the archive.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

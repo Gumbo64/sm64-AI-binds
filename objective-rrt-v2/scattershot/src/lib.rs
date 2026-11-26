@@ -15,6 +15,7 @@
 pub mod archive;
 pub mod config;
 pub mod inputs;
+pub mod noise;
 pub mod objective;
 pub mod objectives;
 pub mod run;

@@ -1,1 +1,0 @@
-Ukikipedia fetch/convert scripts (Wayback Machine): get.sh fetches a page, conv.py converts HTML to the ref/ukikipedia markdown format; extract/hist/kw/route/index are star-strategy helpers (ref/tas/star_strategies.md).

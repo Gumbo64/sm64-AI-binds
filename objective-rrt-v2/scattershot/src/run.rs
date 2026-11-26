@@ -10,8 +10,8 @@
 use obrrt_core::sys::Instant;
 
 use anyhow::{Context, Result, bail};
-use sm64_ai::noise::Variant;
-use sm64_ai::util::skip_menu_pads;
+use crate::noise::Variant;
+use crate::util::skip_menu_pads;
 use sm64_binds::SM64GameGenerator;
 
 use crate::config::Config;

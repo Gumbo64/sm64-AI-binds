@@ -2,7 +2,7 @@
 //! variables (kept from the earlier version, so scripts still work):
 //! `OSS_REPLAY_MAX`, `OSS_FIT`, `OSS_SELECT=flat`, `OSS_K`.
 
-use sm64_ai::noise::Variant;
+use crate::noise::Variant;
 
 #[derive(Clone, Copy)]
 pub struct Config {

@@ -30,7 +30,6 @@ obrrt-spec.workspace = true
 # The schema tree and the objective kinds (key writers): the vendored copy of
 # objective-scattershot that obrrt-search already uses, so they aren't duplicated.
 objective-scattershot = { path = "../scattershot" }
-sm64_ai = { path = "../../rust" }
 
 # Native: sm64-binds' default backend (wasmer sys); the browser (wasm32): wasmer's JS backend.
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
