@@ -90,7 +90,8 @@ pub fn from_env_with(base: SearchConfig, get: Lookup) -> Result<SearchConfig> {
     // sampler
     match e.get("OBRRT_SAMPLER").as_deref() {
         Some("rate") => sampler.rate_sampler = true,
-        Some("decay") | None => {}
+        Some("decay") => sampler.rate_sampler = false,
+        None => {}
         Some(v) => bail!("OBRRT_SAMPLER: rate or decay, not {v}"),
     }
     let r = &mut sampler.rate;
@@ -116,16 +117,17 @@ pub fn from_env_with(base: SearchConfig, get: Lookup) -> Result<SearchConfig> {
     // chain
     match e.get("OBRRT_CHAIN").as_deref() {
         Some("route") => chain.route = true,
-        Some("stack") | None => {}
+        Some("stack") => chain.route = false,
+        None => {}
         Some(v) => bail!("OBRRT_CHAIN: route or stack, not {v}"),
     }
 
     // dedup
-    e.on("OBRRT_SOFT_DEDUP", &mut dedup.soft_dedup);
-    e.on("OBRRT_STARSET_KEY", &mut dedup.starset_key);
+    e.eq1("OBRRT_SOFT_DEDUP", &mut dedup.soft_dedup);
+    e.eq1("OBRRT_STARSET_KEY", &mut dedup.starset_key);
     // (a value that does not parse is ignored, as the tree's setting always did)
     e.lenient_opt("OBRRT_STAR_WINDOW", &mut dedup.star_window);
-    e.on("OBRRT_KEEP_WIP", &mut dedup.keep_wip);
+    e.eq1("OBRRT_KEEP_WIP", &mut dedup.keep_wip);
     e.on("OBRRT_CELL_MOTION", &mut dedup.cell_motion);
     match e.get("OBRRT_REPLAY_MAX").as_deref() {
         Some("off") => dedup.replay_max = ReplayMax::Off,
@@ -134,7 +136,9 @@ pub fn from_env_with(base: SearchConfig, get: Lookup) -> Result<SearchConfig> {
     }
     e.strict("OBRRT_SPARSE_CHECK", &mut dedup.sparse_check)?;
     let d = &mut dedup.dense;
-    e.string("OBRRT_ADD", &mut d.add);
+    if let Some(a) = e.get("OBRRT_ADD") {
+        d.add = (!a.is_empty() && a != "none").then_some(a);
+    }
     e.strict("OBRRT_DENSE_GRID", &mut d.grid)?;
     e.strict_opt("OBRRT_DENSE_CAP", &mut d.cap)?;
     if let Some(v) = e.get("OBRRT_DENSE_NE") {

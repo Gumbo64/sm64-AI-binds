@@ -111,10 +111,10 @@ pub struct Sampler {
 impl Default for Sampler {
     fn default() -> Self {
         Sampler {
-            rate_sampler: false,
+            rate_sampler: true,
             rate: Rate::default(),
-            pick_by_b: true,
-            new_eligible: false,
+            pick_by_b: false,
+            new_eligible: true,
             rrt_star: false,
             arrival: Arrival::default(),
         }
@@ -131,7 +131,7 @@ pub struct Chain {
 
 impl Default for Chain {
     fn default() -> Self {
-        Chain { route: false }
+        Chain { route: true }
     }
 }
 
@@ -166,7 +166,7 @@ pub struct Dense {
 
 impl Default for Dense {
     fn default() -> Self {
-        Dense { add: None, grid: 64, cap: None, ne: true, every: 1, per_obj: false, air: true }
+        Dense { add: Some("last_gen".into()), grid: 64, cap: None, ne: true, every: 1, per_obj: false, air: true }
     }
 }
 
@@ -209,10 +209,10 @@ pub struct Dedup {
 impl Default for Dedup {
     fn default() -> Self {
         Dedup {
-            soft_dedup: false,
-            starset_key: false,
+            soft_dedup: true,
+            starset_key: true,
             star_window: None,
-            keep_wip: false,
+            keep_wip: true,
             cell_motion: false,
             replay_max: ReplayMax::Auto,
             sparse_check: 0,
@@ -328,7 +328,7 @@ pub struct Kin {
 
 impl Default for Kin {
     fn default() -> Self {
-        Kin { mult: 1.0, unit: KinUnit::Node, frames: None, soft: None, cap: None }
+        Kin { mult: 10.0, unit: KinUnit::Node, frames: None, soft: None, cap: None }
     }
 }
 
@@ -382,9 +382,9 @@ impl Default for Ga {
             cbuttons: 0.0,
             keep_seed: false,
             tail: false,
-            calm: false,
-            move_ga: false,
-            move_ga_extra: false,
+            calm: true,
+            move_ga: true,
+            move_ga_extra: true,
         }
     }
 }
@@ -510,18 +510,18 @@ impl Default for ObjectiveConfig {
         ObjectiveConfig {
             tech: "all".into(),
             fast_modal: None,
-            moves: false,
+            moves: true,
             moves_extra: false,
             moves_modes: false,
             moves_uphill: Uphill::Kick,
-            swim_hold: false,
+            swim_hold: true,
             swim_targets: false,
-            gp_catch: false,
-            lakitu_arc: false,
+            gp_catch: true,
+            lakitu_arc: true,
             lakitu_through_door: false,
-            painting_fast: false,
+            painting_fast: true,
             grounds_fix: false,
-            move_weight: None,
+            move_weight: Some(0.75),
             talk_nil: false,
             king_landing: false,
             blj_detector: None,

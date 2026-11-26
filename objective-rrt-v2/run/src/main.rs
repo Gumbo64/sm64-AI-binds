@@ -93,7 +93,7 @@ fn main() -> Result<()> {
     // OBRRT_BOOT_NOWAIT=1 (tests from a TAS cut): start where `<start.m64>`
     // ends if Mario is in control there, mid-air or moving, instead of
     // idling until he stands still.
-    let nowait = std::env::var("OBRRT_BOOT_NOWAIT").is_ok_and(|v| v == "1") && args.len() > 5;
+    let nowait = std::env::var("OBRRT_BOOT_NOWAIT").is_ok_and(|v| v != "0") && args.len() > 5;
     let mut still = if (nowait || tas_boot) && st.controllable() { 10 } else { 0 };
     // The wait limit counts frames after `<start.m64>`, so long TAS cuts boot.
     let prefix_len = boot.len();

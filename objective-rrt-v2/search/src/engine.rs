@@ -220,16 +220,16 @@ impl Default for Config {
             route_share: 0.0,
             round_plans: 64,
             max_frames: None,
-            soft_dedup: false,
+            soft_dedup: true,
             mem_budget: 3_000_000_000,
-            pick_by_b: true,
+            pick_by_b: false,
             rewire_share: 0.3,
             // 40% of "a frame is worth 30 units": at full weight the start is
             // almost always the single earliest state (1.9 effective starts in
             // a test) and the search stops spreading out.
             time_cost: 0.4,
             rewire_margin: 10,
-            new_eligible: obrrt_core::config::current().sampler.new_eligible,
+            new_eligible: true,
             report_every: Duration::from_secs(30),
             tune_frames: 10_000_000,
             reroute: false,
@@ -243,13 +243,13 @@ impl Default for Config {
             zone_share_share: 0.2,
             zone_share_bg: 2,
             replay_budget: None,
-            chain_route: false,
+            chain_route: true,
             chain_follow: 0.5,
-            sampler_rate: false,
+            sampler_rate: true,
             rate: crate::pool::RateParams { floor: 0.15, cap: 4.0, tau: 50_000_000.0, prior_frames: 200_000.0, nostart_frames: 5_000.0, hier: false, kind_scale: 10.0, nostart_skip: false, skip_budget: 2_000_000, route: 0.0, novel: 1.0 },
             node_prior: 300_000.0,
             node_cap: 2.0,
-            kinship_mult: 1.0,
+            kinship_mult: 10.0,
             rebuild_check: 0,
         }
     }
