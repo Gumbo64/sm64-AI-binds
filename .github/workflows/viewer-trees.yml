@@ -35,7 +35,8 @@ jobs:
           path: src
           sparse-checkout: ${{ inputs.path }}
       - name: Headers (CORS for the viewer, one day of caching)
-        run: printf '/*\n  Access-Control-Allow-Origin: *\n  Cache-Control: public, max-age=86400\n' > "$TREES/_headers"
+        run: |
+          printf '/*\n  Access-Control-Allow-Origin: *\n  Cache-Control: public, max-age=86400\n' > "$TREES/_headers"
       - name: Limits (25 MiB per file, 20,000 files)
         run: |
           n=$(find "$TREES" -type f | wc -l); echo "$n files"
