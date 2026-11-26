@@ -76,11 +76,11 @@ fn settings() -> Settings {
     *S.get_or_init(|| {
         let f = |k: &str, d: f64| obrrt_core::sys::env::var(k).ok().and_then(|v| v.parse().ok()).unwrap_or(d);
         Settings {
-            cell: f("OBRRT_ROAD_CELL", 256.0) as f32,
+            cell: 256.0,
             climb: f("OBRRT_ROAD_CLIMB", 2.0),
             jump: f("OBRRT_ROAD_JUMP", 250.0) as f32,
-            max_edge: f("OBRRT_ROAD_MAX_EDGE", 400.0) as u32,
-            refresh: f("OBRRT_ROAD_REFRESH", 20.0) as u64,
+            max_edge: 400,
+            refresh: 20,
             builds: f("OBRRT_ROAD_BUILDS", 32.0) as u64,
         }
     })

@@ -84,90 +84,6 @@ pub struct ReplayBudget {
     pub fraction: f64,
     pub stats: BudgetStats,
     pub curve: Vec<RoundRec>,
-    /// `OBRRT_GRAFT_BIAS`: the rotation's offset, one step per wave.
-    rot: usize,
-}
-
-/// `OBRRT_GRAFT_BIAS=<list>` (unset: the old order, see the module doc).
-/// Set, the cold jobs (every kind: reroute grafts of each kind, zone-share
-/// jobs) are grouped by (kind, destination zone) and taken round-robin over
-/// the groups, the starting group rotating each wave, so no group (the
-/// castle hub's many legs) starves the rest. Within a group: near the route
-/// first, then by the product of the listed weights, then newest start:
-///
-/// * `none`: no weights (plain rotation);
-/// * `len`: 1 + ln(1 + frames) of the job (longer paths cost the search
-///   more to find again);
-/// * `prec`: ×3 when the edge's objective is `Precision::Precise`;
-/// * `branch`: 1 + ln(1 + children) of the donor edge's node (a hub);
-/// * `star`: ×4 when the donor lies on a path that reached more stars;
-/// * `retry`: 1 + ln(1 + attempts per state added) at the donor's parent
-///   (`as_start / (added + 1)`: how hard edges from there were to find);
-/// * `useful`: 1 + (added + successes) / (as_start + 1) of the donor (its
-///   yield as a start) + 1 when it or a near ancestor is a route node;
-/// * `all`: every weight.
-///
-/// Comma lists combine (`len,prec`).
-#[derive(Default, Clone, Copy, Debug)]
-pub struct Bias {
-    pub len: bool,
-    pub prec: bool,
-    pub branch: bool,
-    pub star: bool,
-    pub retry: bool,
-    pub useful: bool,
-}
-
-pub fn graft_bias() -> Option<&'static Bias> {
-    static B: std::sync::OnceLock<Option<Bias>> = std::sync::OnceLock::new();
-    B.get_or_init(|| {
-        let v = obrrt_core::sys::env::var("OBRRT_GRAFT_BIAS").ok().filter(|v| !v.is_empty())?;
-        let mut b = Bias::default();
-        for w in v.split(',') {
-            match w.trim() {
-                "none" => {}
-                "len" => b.len = true,
-                "prec" => b.prec = true,
-                "branch" => b.branch = true,
-                "star" => b.star = true,
-                "retry" => b.retry = true,
-                "useful" => b.useful = true,
-                "all" => b = Bias { len: true, prec: true, branch: true, star: true, retry: true, useful: true },
-                x => panic!("OBRRT_GRAFT_BIAS: unknown {x:?} (none, len, prec, branch, star, retry, useful, all)"),
-            }
-        }
-        Some(b)
-    })
-    .as_ref()
-}
-
-/// The bias weight of a job replaying `donor`'s edge(s) (`frames` long).
-fn weight(b: &Bias, tree: &Tree, rr: Option<&Reroute>, hot: &HashSet<u32>, donor: u32, frames: u64) -> f64 {
-    let n = &tree.nodes[donor as usize];
-    let mut w = 1.0;
-    if b.len {
-        w *= 1.0 + (1.0 + frames as f64).ln();
-    }
-    if b.prec && n.made_by.as_ref().is_some_and(|o| o.precision() == obrrt_core::Precision::Precise) {
-        w *= 3.0;
-    }
-    if b.branch {
-        w *= 1.0 + (1.0 + tree.children[donor as usize].len() as f64).ln();
-    }
-    if b.star && rr.is_some_and(|r| r.star_path.contains(&donor)) {
-        w *= 4.0;
-    }
-    if b.retry {
-        if let Some(p) = n.parent {
-            let ps = &tree.nodes[p as usize].stats;
-            w *= 1.0 + (1.0 + ps.as_start as f64 / (ps.added as f64 + 1.0)).ln();
-        }
-    }
-    if b.useful {
-        let s = &n.stats;
-        w *= 1.0 + (s.added + s.successes) as f64 / (s.as_start as f64 + 1.0) + near(tree, hot, donor) as u8 as f64;
-    }
-    w
 }
 
 /// Whether `from` can be loaded: Some(retired) when it can (a retired start
@@ -207,7 +123,7 @@ fn share_cost(tree: &Tree, zs: &ZoneShare, j: &ShareJob) -> u64 {
 
 impl ReplayBudget {
     pub fn new(fraction: f64) -> ReplayBudget {
-        ReplayBudget { fraction, stats: BudgetStats::default(), curve: Vec::new(), rot: 0 }
+        ReplayBudget { fraction, stats: BudgetStats::default(), curve: Vec::new() }
     }
 
     /// Jobs for one wave, their estimated frames at least `budget` (the
@@ -277,9 +193,6 @@ impl ReplayBudget {
             cands.extend(zs.cold.iter().enumerate().map(|(i, j)| (near(tree, hot, j.from), j.from, true, i)));
         }
         cands.sort_unstable_by(|a, b| b.0.cmp(&a.0).then(b.1.cmp(&a.1)).then(a.2.cmp(&b.2)).then(b.3.cmp(&a.3)));
-        if let Some(b) = graft_bias() {
-            cands = self.rotate(b, cands, rr.as_deref(), zs.as_deref(), tree, hot);
-        }
         let st = &mut self.stats;
         let (mut gone_g, mut gone_s) = (Vec::new(), Vec::new());
         for &(is_near, _, is_share, i) in &cands {
@@ -311,52 +224,6 @@ impl ReplayBudget {
             remove_at(&mut zs.cold, gone_s);
         }
         (grafts, shares)
-    }
-
-    /// `OBRRT_GRAFT_BIAS`: `cands` (in the old order) regrouped by (kind,
-    /// destination zone), each group by near, weight, the old order; then
-    /// round-robin over the groups from a rotating start.
-    fn rotate(
-        &mut self,
-        b: &Bias,
-        cands: Vec<(bool, u32, bool, usize)>,
-        rr: Option<&Reroute>,
-        zs: Option<&ZoneShare>,
-        tree: &Tree,
-        hot: &HashSet<u32>,
-    ) -> Vec<(bool, u32, bool, usize)> {
-        let mut groups: std::collections::BTreeMap<(u8, u16, u8), Vec<(bool, f64, usize, (bool, u32, bool, usize))>> = Default::default();
-        for (rank, &c) in cands.iter().enumerate() {
-            let (is_near, _, is_share, i) = c;
-            let (kind, donor, frames) = if is_share {
-                let j = zs.unwrap().cold[i];
-                (crate::reroute::KINDS as u8, j.donor, share_cost(tree, zs.unwrap(), &j))
-            } else {
-                let g = rr.unwrap().cold[i];
-                (g.kind, g.child, graft_cost(tree, &g))
-            };
-            let z = tree.nodes[donor as usize].st.zone();
-            let w = weight(b, tree, rr, hot, donor, frames);
-            groups.entry((kind, z.0, z.1)).or_default().push((is_near, w, rank, c));
-        }
-        let mut gs: Vec<Vec<(bool, f64, usize, (bool, u32, bool, usize))>> = groups.into_values().collect();
-        for g in &mut gs {
-            g.sort_by(|a, b| b.0.cmp(&a.0).then(b.1.total_cmp(&a.1)).then(a.2.cmp(&b.2)));
-        }
-        let n = gs.len();
-        let off = if n > 0 { self.rot % n } else { 0 };
-        self.rot = self.rot.wrapping_add(1);
-        let mut out = Vec::with_capacity(cands.len());
-        let mut r = 0;
-        while out.len() < cands.len() {
-            for k in 0..n {
-                if let Some(e) = gs[(off + k) % n].get(r) {
-                    out.push(e.3);
-                }
-            }
-            r += 1;
-        }
-        out
     }
 
     /// Records a finished round.

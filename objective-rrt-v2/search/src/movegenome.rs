@@ -100,38 +100,14 @@ pub fn extra() -> bool {
     obrrt_core::config::current().ga.move_ga_extra
 }
 
-/// `OBRRT_MOVE_GA_SLOTS`: which first-generation slots policy rollouts
-/// take without [`extra`]: `random` (the odd slots: random genomes),
-/// `seeded` (even slots from 2: the controller rollouts with a noise
-/// prefix, which policy rollouts most resemble), `mixed` (slots 4j+1 and
-/// 4j+2), `auto` (default: `random` for a target to pass, `seeded` for
-/// one to stop at or a door). In the lab, taking the random genomes' slots
-/// cost door targets 20-40 frames (the random genomes' descendants find
-/// the plain walk-in) and taking the seeded ones didn't; a BoB slope run
-/// was the other way round (118 vs 150).
-fn slots_mode() -> u8 {
-    static M: OnceLock<u8> = OnceLock::new();
-    *M.get_or_init(|| match obrrt_core::sys::env::var("OBRRT_MOVE_GA_SLOTS").as_deref() {
-        Ok("random") => 0,
-        Ok("seeded") => 1,
-        Ok("mixed") => 2,
-        _ => 3,
-    })
-}
-
 /// The plan index first-generation slot `i` plays, if it is a policy slot
 /// (`pass`: the target is reached by passing it).
 pub fn slot(i: usize, pass: bool) -> Option<usize> {
-    let mode = match slots_mode() {
-        3 if pass => 0,
-        3 => 1,
-        m => m,
-    };
-    match mode {
-        0 => (i % 2 == 1).then_some(i / 2),
-        1 => (i % 2 == 0 && i >= 2).then_some(i / 2 - 1),
-        _ => matches!(i % 4, 1 | 2).then_some(i / 4 * 2 + (i % 4 - 1)),
-    }
+    // The odd slots (random genomes') for a target to pass, the even ones from 2 (the controller
+    // rollouts with a noise prefix, which policy rollouts most resemble) for one to stop at or a door:
+    // in the lab, taking the random genomes' slots cost door targets 20-40 frames; a BoB slope run
+    // was the other way round (118 vs 150).
+    if pass { (i % 2 == 1).then_some(i / 2) } else { (i % 2 == 0 && i >= 2).then_some(i / 2 - 1) }
 }
 
 /// How many policy slots a population of `n` has.
@@ -139,17 +115,9 @@ pub fn slots_in(n: usize, pass: bool) -> usize {
     (0..n).filter(|&i| slot(i, pass).is_some()).count()
 }
 
-/// `OBRRT_MOVE_GA_REPOLICY` (default 0.15): share of children made by the
-/// `repolicy` mutation.
+/// Share of children made by the `repolicy` mutation (0.15).
 pub fn repolicy_p() -> f64 {
-    static P: OnceLock<f64> = OnceLock::new();
-    *P.get_or_init(|| obrrt_core::sys::env::var("OBRRT_MOVE_GA_REPOLICY").ok().and_then(|v| v.parse().ok()).unwrap_or(0.15))
-}
-
-/// `OBRRT_MOVE_GA_PRUNE` (default 1): the mover's plausibility filter.
-fn prune() -> bool {
-    static P: OnceLock<bool> = OnceLock::new();
-    *P.get_or_init(|| !obrrt_core::sys::env::var("OBRRT_MOVE_GA_PRUNE").is_ok_and(|v| v == "0"))
+    0.15
 }
 
 /// Policies the mover offers (0 without one).
@@ -247,7 +215,7 @@ pub fn plausible(obj: &dyn Objective, start: &St) -> Vec<usize> {
         }
         let e = s.policy.entry(m.policy_name(p).to_string()).or_default();
         e.considered += 1;
-        if !prune() || m.policy_plausible(p, start, target, obj.arrival(start)) {
+        if m.policy_plausible(p, start, target, obj.arrival(start)) {
             out.push(p);
         } else {
             e.pruned += 1;

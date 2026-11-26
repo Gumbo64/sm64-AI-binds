@@ -217,7 +217,6 @@ pub struct Reroute {
     /// `OBRRT_LEG_REUSE` (see `legs`).
     pub(crate) legs: Option<crate::legs::Legs>,
     /// `OBRRT_GRAFT_BIAS=star`: nodes on a path that ended in more stars.
-    pub(crate) star_path: HashSet<u32>,
     /// OBRRT_POLISH without OBRRT_REROUTE: only route grafts, no duplicate
     /// grafts.
     pub route_only: bool,
@@ -246,7 +245,7 @@ pub fn schema_hash(t: &objective_scattershot::objective::Tree, st: &St) -> u64 {
 
 impl Reroute {
     pub fn new(key: RerouteKey) -> Reroute {
-        Reroute { key, keys: Vec::new(), index: HashMap::new(), hot: VecDeque::new(), cold: VecDeque::new(), seen: HashSet::new(), stats: RerouteStats::default(), lifo: false, mkeys: Vec::new(), mindex: HashMap::new(), accepted: None, legs: crate::legs::Legs::from_env(), star_path: HashSet::new(), route_only: false }
+        Reroute { key, keys: Vec::new(), index: HashMap::new(), hot: VecDeque::new(), cold: VecDeque::new(), seen: HashSet::new(), stats: RerouteStats::default(), lifo: false, mkeys: Vec::new(), mindex: HashMap::new(), accepted: None, legs: crate::legs::Legs::from_env(), route_only: false }
     }
 
     /// `st`'s key; `cell` is the engine's duplicate cell for it.
@@ -310,20 +309,6 @@ impl Reroute {
         self.index.entry(k).or_default().push(id);
         if self.legs.is_some() {
             self.legs_note(id, st, tree, hot, margin, depth);
-        }
-        if crate::replay::graft_bias().is_some_and(|b| b.star) {
-            if let Some(p) = tree.nodes[id as usize].parent {
-                if st.stars > tree.nodes[p as usize].st.stars {
-                    let mut at = Some(id);
-                    for _ in 0..400 {
-                        let Some(a) = at else { break };
-                        if !self.star_path.insert(a) {
-                            break;
-                        }
-                        at = tree.nodes[a as usize].parent;
-                    }
-                }
-            }
         }
     }
 
@@ -561,10 +546,10 @@ impl Reroute {
         let ix: usize = self.index.values().map(|v| v.capacity() * 4).sum::<usize>() + self.index.capacity() * 33;
         let mx: usize = self.mindex.values().map(|v| v.capacity() * 4).sum::<usize>() + self.mindex.capacity() * 33;
         format!(
-            "rr seen {} (cap {}, {} MB) index {} keys ({} MB) mindex {} MB keys {} MB hot {}/{} cold {}/{} ({} MB) star_path {}",
+            "rr seen {} (cap {}, {} MB) index {} keys ({} MB) mindex {} MB keys {} MB hot {}/{} cold {}/{} ({} MB)",
             self.seen.len(), self.seen.capacity(), self.seen.capacity() * 9 / 1_000_000, self.index.len(), ix / 1_000_000, mx / 1_000_000,
             (self.keys.capacity() + self.mkeys.capacity()) * 8 / 1_000_000, self.hot.len(), self.hot.capacity(), self.cold.len(), self.cold.capacity(),
-            (self.hot.capacity() + self.cold.capacity()) * g / 1_000_000, self.star_path.len()
+            (self.hot.capacity() + self.cold.capacity()) * g / 1_000_000
         )
     }
 

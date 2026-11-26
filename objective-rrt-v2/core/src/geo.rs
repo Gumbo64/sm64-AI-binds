@@ -73,18 +73,6 @@ pub fn enabled() -> bool {
     ENABLED.load(Ordering::Relaxed)
 }
 
-static STEER: AtomicBool = AtomicBool::new(false);
-
-/// Whether ground steering heads for the next waypoint along the field
-/// (`OBRRT_GEO_STEER`).
-pub fn set_steer(on: bool) {
-    STEER.store(on, Ordering::Relaxed);
-}
-
-pub fn steer_enabled() -> bool {
-    enabled() && STEER.load(Ordering::Relaxed)
-}
-
 #[derive(Clone, Copy)]
 struct Node {
     pos: [f32; 3],
@@ -804,18 +792,7 @@ pub fn observe(m: &[u8], st: &St) {
     }
     let (tris, seen) = read_floors(m);
     if seen.contains(&floor) {
-        let t0 = crate::sys::Instant::now();
         let mesh = Mesh::build_rooms(&tris, zone.0 as u32 == crate::layout::LEVEL_BBH);
-        if crate::sys::env::var("OBRRT_GEO_LOG").is_ok() {
-            eprintln!(
-                "geo: zone {:?}: {} floors, {} nodes, {} edges, built in {:.1} ms",
-                zone,
-                tris.len(),
-                mesh.len(),
-                mesh.edges(),
-                t0.elapsed().as_secs_f64() * 1e3
-            );
-        }
         insert(zone, mesh);
         if zone.0 as u32 == crate::layout::LEVEL_BBH {
             insert(climb_zone(zone), Mesh::build_rooms_jump(&tris, true, LEDGE_JUMP));

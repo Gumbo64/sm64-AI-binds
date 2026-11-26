@@ -46,16 +46,14 @@ pub fn on() -> bool {
     obrrt_core::config::current().objectives.blj_scan
 }
 
-/// OBRRT_BLJ_SCAN_R (2500): the scan radius around b (3D).
+/// The scan radius around b (3D; the detector's `scan_r`, 2500).
 pub fn scan_r() -> f32 {
-    static R: OnceLock<f32> = OnceLock::new();
-    *R.get_or_init(|| obrrt_core::sys::env::var("OBRRT_BLJ_SCAN_R").ok().and_then(|v| v.parse().ok()).unwrap_or(super::params::get().scan_r))
+    super::params::get().scan_r
 }
 
-/// OBRRT_BLJ_SCAN_N (3): candidates per base state.
+/// Candidates per base state (the detector's `scan_n`, 3).
 pub fn scan_n() -> usize {
-    static N: OnceLock<usize> = OnceLock::new();
-    *N.get_or_init(|| obrrt_core::sys::env::var("OBRRT_BLJ_SCAN_N").ok().and_then(|v| v.parse().ok()).unwrap_or(super::params::get().scan_n as usize))
+    super::params::get().scan_n as usize
 }
 
 /// Smallest slope triangle (projected area): room for the walk and the

@@ -41,29 +41,6 @@ fn stars_needed(name: &str) -> i16 {
     }
 }
 
-/// The room in front of a painting behind a star door, from its centre
-/// along its facing and across it: (depth of the room plus the door's
-/// approach, depth of the room past the door, half width, top y). WF: the 1-star
-/// door at (235, 0, -960) (Mario unlocks it at z -905..-960), 3545 in
-/// front of the painting; the room runs x ~ -500..1000 to the painting,
-/// beside a corridor at x ~ -766..-886 (1022+ across) that ends at its wall,
-/// with its floor at y -306..0, under the stair landing (y 512) and the
-/// hallway past the PSS 1-star door (y 614) above it.
-fn room(name: &str) -> Option<(f32, f32, f32, f32)> {
-    match name {
-        "wf" => Some((3900.0, 3300.0, 900.0, 450.0)),
-        _ => None,
-    }
-}
-
-/// (Distance in front of the painting's plane, distance across it) of `p`.
-fn facing(painting: &Painting, centre: [f32; 3], p: [f32; 3]) -> (f32, f32) {
-    let yaw = painting.yaw.to_radians();
-    let (nx, nz) = (yaw.sin(), yaw.cos());
-    let (rx, rz) = (p[0] - centre[0], p[2] - centre[2]);
-    (rx * nx + rz * nz, (rx * nz - rz * nx).abs())
-}
-
 /// OBRRT_PAINTING_FAST=1 (off by default): faster painting (re-)entries.
 /// - Staged castle navigation: a painting behind a door ([`gate`]) is
 ///   steered to in two stages, the door first (as `Door::Enter` would:
