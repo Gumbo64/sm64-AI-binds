@@ -31,14 +31,6 @@ path = "src/nodepath.rs"
 name = "obrrt-route"
 path = "src/route.rs"
 
-[[bin]]
-name = "steertest"
-path = "src/steertest.rs"
-
-
-[[bin]]
-name = "modalbench"
-path = "src/modalbench.rs"
 
 [[bin]]
 name = "tasplay"
@@ -51,10 +43,6 @@ path = "src/ilsync.rs"
 [[bin]]
 name = "dataset"
 path = "src/dataset.rs"
-
-[[bin]]
-name = "goalbench"
-path = "src/goalbench.rs"
 
 [[bin]]
 name = "funnel"
