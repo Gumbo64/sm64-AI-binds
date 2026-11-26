@@ -1,0 +1,49 @@
+# Publish search-tree snapshots to https://sm64-trees.pages.dev (a Cloudflare Pages project the
+# sm64-viewer reads from). Self-contained on purpose so it can move.
+#
+# The trees are produced here (objective-rrt-v2 runs + tools/export_tree.py). Needs the repository
+# secrets CLOUDFLARE_API_TOKEN (Account > Cloudflare Pages > Edit) and CLOUDFLARE_ACCOUNT_ID.
+# Self-contained: to move it, copy this file and add those two secrets in the other repo.
+name: Viewer trees
+
+on:
+  workflow_dispatch:
+    inputs:
+      repository:
+        description: Repo holding the snapshots
+        default: Gumbo64/sm64-viewer
+      ref:
+        description: Tag or commit in that repo
+        default: trees-2026-11-26
+      path:
+        description: Folder of snapshots in that repo (one subfolder per run)
+        default: frontend/public/trees
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      TREES: src/${{ inputs.path }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          repository: ${{ inputs.repository }}
+          ref: ${{ inputs.ref }}
+          path: src
+          sparse-checkout: ${{ inputs.path }}
+      - name: Headers (CORS for the viewer, one day of caching)
+        run: printf '/*\n  Access-Control-Allow-Origin: *\n  Cache-Control: public, max-age=86400\n' > "$TREES/_headers"
+      - name: Limits (25 MiB per file, 20,000 files)
+        run: |
+          n=$(find "$TREES" -type f | wc -l); echo "$n files"
+          [ "$n" -lt 20000 ] || exit 1
+          [ -z "$(find "$TREES" -type f -size +25M)" ] || { echo "a file is over 25 MiB"; exit 1; }
+      - name: Deploy to Cloudflare Pages
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy ${{ env.TREES }} --project-name=sm64-trees --branch=main --commit-dirty=true
