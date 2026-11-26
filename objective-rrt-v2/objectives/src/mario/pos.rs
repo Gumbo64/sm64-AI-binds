@@ -19,7 +19,7 @@ const RADIUS: f32 = 150.0;
 pub fn swim_targets() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ON.get_or_init(|| {
-        let on = obrrt_core::sys::env::var("OBRRT_SWIM_TARGETS").is_ok_and(|v| v == "1");
+        let on = obrrt_core::config::current().objectives.swim_targets;
         if on {
             // The floor under a point bounds its depth (geo::floor_below).
             obrrt_core::geo::want_static_floors();

@@ -65,29 +65,26 @@ pub struct Rh {
 /// `OBRRT_RH=1`: attempts use the rolling-horizon controller instead of
 /// v1's open-loop GA (the default; see [`Worker::attempt_open`]).
 pub fn rh_on() -> bool {
-    static ON: OnceLock<bool> = OnceLock::new();
-    *ON.get_or_init(|| obrrt_core::sys::env::var("OBRRT_RH").is_ok_and(|v| v == "1"))
+    obrrt_core::config::current().research.rh.on
 }
 
 /// [`Rh`] from the environment.
 pub fn rh() -> &'static Rh {
     static R: OnceLock<Rh> = OnceLock::new();
     R.get_or_init(|| {
-        fn env<T: std::str::FromStr>(k: &str, d: T) -> T {
-            obrrt_core::sys::env::var(k).ok().and_then(|v| v.parse().ok()).unwrap_or(d)
-        }
+        let c = &obrrt_core::config::current().research.rh;
         Rh {
-            pop: env("OBRRT_RH_POP", 32usize).max(2),
-            h: env("OBRRT_RH_H", 240usize).max(1),
-            k: env("OBRRT_RH_K", 15usize).max(1),
-            g: env("OBRRT_RH_G", 1usize).max(1),
-            g_precise: env("OBRRT_RH_G_PRECISE", 3usize).max(1),
-            gamma: env("OBRRT_RH_GAMMA", 0.99f64),
-            bonus: env("OBRRT_RH_BONUS", 300.0f64),
-            death: env("OBRRT_RH_DEATH", 600.0f64),
-            stall: env("OBRRT_RH_STALL", 6usize).max(1),
-            hot: env("OBRRT_RH_HOT", 3usize).max(1),
-            maxlen: env("OBRRT_RH_MAXLEN", 900usize).max(60),
+            pop: c.pop.max(2),
+            h: c.h.max(1),
+            k: c.k.max(1),
+            g: c.g.max(1),
+            g_precise: c.g_precise.max(1),
+            gamma: c.gamma,
+            bonus: c.bonus,
+            death: c.death,
+            stall: c.stall.max(1),
+            hot: c.hot.max(1),
+            maxlen: c.maxlen.max(60),
             through: false,
             press: false,
             flat: 0,
@@ -1291,8 +1288,7 @@ pub fn makeup_line() -> String {
 /// jump starts as a tiebreak, is dropped: v2's fitness is a real-valued
 /// discounted sum and practically never ties.
 fn calm() -> bool {
-    static ON: OnceLock<bool> = OnceLock::new();
-    *ON.get_or_init(|| obrrt_core::sys::env::var("OBRRT_CALM").is_ok_and(|v| v == "1"))
+    obrrt_core::config::current().ga.calm
 }
 
 fn a_mult() -> f64 {
@@ -1339,8 +1335,7 @@ pub(crate) fn random_segment_v2(rng: &mut SmallRng, out: &mut Vec<GamePad>, len:
 /// frame), so a fixed stick then steers along a turning line, and
 /// directions between the 8-bit stick's become reachable.
 fn c_buttons_p() -> f64 {
-    static P: OnceLock<f64> = OnceLock::new();
-    *P.get_or_init(|| obrrt_core::sys::env::var("OBRRT_GA_CBUTTONS").ok().and_then(|v| v.parse().ok()).unwrap_or(0.0))
+    obrrt_core::config::current().ga.cbuttons
 }
 
 fn c_turn(rng: &mut SmallRng, out: &mut [GamePad], at: usize, len: usize) {
@@ -1964,8 +1959,7 @@ fn random_inputs_v1(rng: &mut SmallRng, n: usize, new: bool) -> Vec<GamePad> {
 /// `OBRRT_GA_REGRET=N` (frames; unset or 0: off): a prefix whose ETA rises
 /// within the next N frames loses the discounted rise (see [`regret_best`]).
 fn ga_regret() -> usize {
-    static N: OnceLock<usize> = OnceLock::new();
-    *N.get_or_init(|| obrrt_core::sys::env::var("OBRRT_GA_REGRET").ok().and_then(|v| v.parse().ok()).unwrap_or(0))
+    obrrt_core::config::current().ga.regret
 }
 
 /// The open fitness with regret: per step k (state k + 1) the discounted sum
@@ -2008,16 +2002,14 @@ fn ga_gamma() -> f64 {
     if let Some(i) = crate::gammaset::current() {
         return crate::gammaset::gamma(i);
     }
-    static G: OnceLock<f64> = OnceLock::new();
-    *G.get_or_init(|| obrrt_core::sys::env::var("OBRRT_GA_GAMMA").ok().and_then(|v| v.parse().ok()).unwrap_or(0.99))
+    obrrt_core::config::current().ga.gamma
 }
 
 /// `OBRRT_TAIL=1`: winners' inputs after their cut are kept on the node
 /// made of it ([`Segment::tail`]) and seed attempts from there. Off by
 /// default (v1 plus the ETA fitness).
 fn tail_on() -> bool {
-    static ON: OnceLock<bool> = OnceLock::new();
-    *ON.get_or_init(|| obrrt_core::sys::env::var("OBRRT_TAIL").is_ok_and(|v| v == "1"))
+    obrrt_core::config::current().ga.tail
 }
 
 /// The GA budget of objectives without [`Objective::ga_budget`]:
@@ -2032,7 +2024,7 @@ fn tail_on() -> bool {
 fn reach_prior() -> &'static std::collections::HashMap<String, f64> {
     static R: OnceLock<std::collections::HashMap<String, f64>> = OnceLock::new();
     R.get_or_init(|| {
-        let Ok(path) = obrrt_core::sys::env::var("OBRRT_REACH_PRIOR") else { return Default::default() };
+        let Some(path) = obrrt_core::config::current().priors.reach_prior.clone() else { return Default::default() };
         let text = obrrt_core::sys::fs::read_to_string(&path).unwrap_or_else(|e| panic!("OBRRT_REACH_PRIOR {path}: {e}"));
         serde_json::from_str(&text).unwrap_or_else(|e| panic!("OBRRT_REACH_PRIOR {path}: {e}"))
     })
@@ -2061,7 +2053,7 @@ fn reach_budget() -> GaBudget {
 fn gen0_gate(o: &dyn Objective) -> Option<usize> {
     static R: OnceLock<(std::collections::HashMap<String, f64>, f64, usize)> = OnceLock::new();
     let (prior, min, gens) = R.get_or_init(|| {
-        let Ok(path) = obrrt_core::sys::env::var("OBRRT_RESCUE_PRIOR") else { return Default::default() };
+        let Some(path) = obrrt_core::config::current().priors.rescue_prior.clone() else { return Default::default() };
         let text = obrrt_core::sys::fs::read_to_string(&path).unwrap_or_else(|e| panic!("OBRRT_RESCUE_PRIOR {path}: {e}"));
         let f = |k: &str, d: f64| obrrt_core::sys::env::var(k).ok().and_then(|v| v.parse().ok()).unwrap_or(d);
         (serde_json::from_str(&text).unwrap_or_else(|e| panic!("OBRRT_RESCUE_PRIOR {path}: {e}")), f("OBRRT_RESCUE_MIN", 0.05), f("OBRRT_GATE_GENS", 2.0) as usize)
@@ -2689,7 +2681,7 @@ impl Worker {
             }
             // OBRRT_GA_KEEP_SEED: the seed as given (slot 0's rollout) stays
             // in the elite every generation, so the reference can't be bred out.
-            let pinned = if seed.is_some() && obrrt_core::sys::env::var("OBRRT_GA_KEEP_SEED").is_ok_and(|v| v == "1") {
+            let pinned = if seed.is_some() && obrrt_core::config::current().ga.keep_seed {
                 pop.iter().find(|r| r.origin == ORIGIN_SEED).cloned()
             } else {
                 None

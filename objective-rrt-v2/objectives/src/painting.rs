@@ -96,8 +96,7 @@ fn facing(painting: &Painting, centre: [f32; 3], p: [f32; 3]) -> (f32, f32) {
 ///   failures at earlier levels don't decay it.
 /// - Mario::GoToCastle loses its post-star boost (mario/exit.rs).
 pub fn painting_fast() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| obrrt_core::sys::env::var("OBRRT_PAINTING_FAST").is_ok_and(|v| v == "1"))
+    obrrt_core::config::current().objectives.painting_fast
 }
 
 /// A door between the lobby and a painting's room (levels/castle_inside/

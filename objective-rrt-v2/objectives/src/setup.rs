@@ -8,24 +8,31 @@
 
 /// Installs it all; returns the OBRRT_TECH value and the enabled technique names.
 pub fn from_env() -> Result<(String, Vec<&'static str>), String> {
+    // The environment's switches become the process's config (the search's `envconfig::from_env`
+    // does the same; both read the one environment).
+    let cfg = obrrt_core::config::from_env(obrrt_core::config::SearchConfig::default()).map_err(|e| format!("{e:#}"))?;
+    from_config(obrrt_core::config::install(cfg))
+}
+
+/// The same set-up from a config (`cfg` is the installed one).
+pub fn from_config(cfg: &obrrt_core::config::SearchConfig) -> Result<(String, Vec<&'static str>), String> {
+    let o = &cfg.objectives;
     crate::moves::install_controller();
     // OBRRT_FAST_MODAL=0: the old dialog/menu macros (A every 4th frame)
     // instead of the frame-optimal policies (menu.rs).
-    if let Ok(v) = obrrt_core::sys::env::var("OBRRT_FAST_MODAL") {
-        crate::set_fast_modal(v != "0");
+    if let Some(on) = o.fast_modal {
+        crate::set_fast_modal(on);
     }
-    let on = |k: &str| obrrt_core::sys::env::var(k).is_ok_and(|v| v == "1");
     // OBRRT_MOVES=1: steering's ground/air mode through the movement library.
-    if on("OBRRT_MOVES") {
+    if o.moves {
         crate::moves::install();
     }
     // OBRRT_MOVE_GA=1 without OBRRT_MOVES: the library offers only its
     // policies (search/src/movegenome.rs), the default steering stays generic.
-    if on("OBRRT_MOVE_GA") && !on("OBRRT_MOVES") {
+    if cfg.ga.move_ga && !o.moves {
         crate::moves::install_policies();
     }
     // OBRRT_TECH: which speedrun-technique objectives are on (extra/tech/mod.rs).
-    let tech = obrrt_core::sys::env::var("OBRRT_TECH").unwrap_or_else(|_| "all".into());
-    crate::extra::tech::configure(&tech)?;
-    Ok((tech, crate::extra::tech::enabled_names()))
+    crate::extra::tech::configure(&o.tech)?;
+    Ok((o.tech.clone(), crate::extra::tech::enabled_names()))
 }

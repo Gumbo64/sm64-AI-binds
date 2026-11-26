@@ -49,12 +49,12 @@ pub struct Settings {
 pub fn settings() -> &'static Settings {
     static S: OnceLock<Settings> = OnceLock::new();
     S.get_or_init(|| {
-        let on = |k: &str| obrrt_core::sys::env::var(k).is_ok_and(|v| v == "1");
+        let sp = &obrrt_core::config::current().research.speed;
         let num = |k: &str, d: f64| obrrt_core::sys::env::var(k).ok().and_then(|v| v.parse().ok()).unwrap_or(d);
         Settings {
-            faster_only: on("OBRRT_FASTER_ONLY"),
-            beat: on("OBRRT_BEAT"),
-            bnb: on("OBRRT_BNB"),
+            faster_only: sp.faster_only,
+            beat: sp.beat,
+            bnb: sp.bnb,
             opt: num("OBRRT_BEAT_OPT", 0.7),
             beat_w: num("OBRRT_BEAT_W", 0.5),
             bucket: (num("OBRRT_BEAT_BUCKET", 10.0) as u32).max(1),

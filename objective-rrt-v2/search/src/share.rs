@@ -120,14 +120,14 @@ pub struct ZoneShare {
 fn donor_sample() -> Option<usize> {
     static M: OnceLock<Option<usize>> = OnceLock::new();
     *M.get_or_init(|| {
-        (obrrt_core::sys::env::var("OBRRT_ZONE_SHARE_DONOR").is_ok_and(|v| v == "sample"))
+        (obrrt_core::config::current().zone.donor_sample)
             .then(|| obrrt_core::sys::env::var("OBRRT_ZONE_SHARE_M").ok().and_then(|v| v.parse().ok()).unwrap_or(4))
     })
 }
 
 fn extra_stats() -> bool {
     static ON: OnceLock<bool> = OnceLock::new();
-    *ON.get_or_init(|| donor_sample().is_some() || obrrt_core::sys::env::var("OBRRT_ZONE_SHARE_STATS").is_ok_and(|v| v == "1"))
+    *ON.get_or_init(|| donor_sample().is_some() || obrrt_core::config::current().zone.share_stats)
 }
 
 /// Upper edges of the queued-path frames histogram (last bucket: above).

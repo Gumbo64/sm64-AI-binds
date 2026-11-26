@@ -166,8 +166,7 @@ const ACT_HOLD_FLUTTER_KICK: u32 = 0x300024D5;
 
 /// `OBRRT_SWIM_HOLD=1`: stroke with the TAS's held-A cadence ([`hold_a`]).
 fn swim_hold() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| obrrt_core::sys::env::var("OBRRT_SWIM_HOLD").is_ok_and(|v| v == "1"))
+    obrrt_core::config::current().objectives.swim_hold
 }
 
 /// A for the 20-frame stroke at the 28 cap (13 BREASTSTROKE + 7

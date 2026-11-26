@@ -31,7 +31,7 @@
 //! Findability: see run/examples/moatwarp_lab.rs and the report in
 //! ref/tas/slope_techniques.md's moat-warp section.
 
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 
 use obrrt_core::{Eta, Mem, Objective, PadOverlay, Precision, St};
 
@@ -64,8 +64,7 @@ pub const FAST: f32 = 1000.0;
 const WALK_FRAMES: f64 = 12.0;
 
 pub fn on() -> bool {
-    static ON: OnceLock<bool> = OnceLock::new();
-    *ON.get_or_init(|| obrrt_core::sys::env::var("OBRRT_MOATWARP").is_ok_and(|v| v == "1")) && enabled("moatwarp")
+    obrrt_core::config::current().objectives.moatwarp && enabled("moatwarp")
 }
 
 fn hd(a: [f32; 3], b: [f32; 3]) -> f32 {

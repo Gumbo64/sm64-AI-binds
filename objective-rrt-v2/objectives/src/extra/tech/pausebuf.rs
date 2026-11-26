@@ -35,8 +35,7 @@ const ACT_LONG_JUMP_LAND: u32 = 0x0000_0479;
 pub const TAIL: [u16; 3] = [Z_TRIG, Z_TRIG | START_BUTTON, Z_TRIG];
 
 pub fn on() -> bool {
-    static ON: OnceLock<bool> = OnceLock::new();
-    *ON.get_or_init(|| obrrt_core::sys::env::var("OBRRT_PAUSE_BUF").is_ok_and(|v| v == "1"))
+    obrrt_core::config::current().objectives.pause_buf
 }
 
 /// Position in an open pause sequence: `Some(k)` if the next pad is TAIL[k].

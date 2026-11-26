@@ -242,8 +242,7 @@ fn read_state_from(m: Mem, frame: u32, objects: bool) -> St {
 }
 
 fn static_id() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| crate::sys::env::var("OBRRT_STATIC_ID").is_ok_and(|v| v == "1"))
+    crate::config::current().objectives.static_id
 }
 
 /// Behaviours without SET_HOME whose objects stay where the level put them.

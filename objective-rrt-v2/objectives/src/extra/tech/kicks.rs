@@ -88,10 +88,7 @@ pub(super) fn fix(name: &str) -> bool {
 /// the 0.5 ones weigh `x` (at 1 or more, their progress-only attempts are
 /// kept as nodes); unset, `w` is unchanged.
 pub(super) fn move_weight(w: f64) -> f64 {
-    static SCALE: OnceLock<f64> = OnceLock::new();
-    w * SCALE.get_or_init(|| {
-        obrrt_core::sys::env::var("OBRRT_MOVE_WEIGHT").map_or(1.0, |v| v.parse::<f64>().expect("OBRRT_MOVE_WEIGHT: a number") / 0.5)
-    })
+    w * obrrt_core::config::current().objectives.move_weight.map_or(1.0, |x| x / 0.5)
 }
 
 /// Actions (include/sm64.h).

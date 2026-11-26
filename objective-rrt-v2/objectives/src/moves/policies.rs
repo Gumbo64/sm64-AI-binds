@@ -430,8 +430,7 @@ const JUMPY: [MoveKind; 7] = [
 
 /// `OBRRT_CALM=1`: fewer pointless jumps (module docs of mod.rs).
 pub fn calm() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| obrrt_core::sys::env::var("OBRRT_CALM").is_ok_and(|v| v == "1"))
+    obrrt_core::config::current().ga.calm
 }
 
 const ACT_STEEP_JUMP: u32 = 0x0300_0885;
@@ -556,8 +555,7 @@ impl Policy {
 /// policies are offered. Unset, they are never plausible and never play:
 /// the GA's plans are exactly what they were before them.
 pub fn modes_on() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| obrrt_core::sys::env::var("OBRRT_MOVES_MODES").is_ok_and(|v| v == "1"))
+    obrrt_core::config::current().objectives.moves_modes
 }
 
 fn mode_pad(p: Policy, st: &St, target: [f32; 3], arrival: Arrival, frame: usize) -> Option<GamePad> {

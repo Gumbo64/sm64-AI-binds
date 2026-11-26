@@ -43,8 +43,7 @@ use serde_json::{Value, json};
 use super::objscan::Frame;
 
 pub fn on() -> bool {
-    static ON: OnceLock<bool> = OnceLock::new();
-    *ON.get_or_init(|| obrrt_core::sys::env::var("OBRRT_BLJ_SPOTS").is_ok_and(|v| v == "1"))
+    obrrt_core::config::current().objectives.blj_spots
 }
 
 pub const MERGE_DIST: f32 = 100.0;
@@ -139,8 +138,8 @@ pub fn install() {
             let i = note(zone, "static", if riser { "Riser" } else { "Preset" }, start, yaw.unwrap_or(0), start, "preset", 0, None, false);
             reg().lock().unwrap().spots[i].runs.push(format!("preset:{name}"));
         }
-        if let Ok(path) = obrrt_core::sys::env::var("OBRRT_BLJ_SPOTS_CATALOG") {
-            load_catalog(&path);
+        if let Some(path) = &obrrt_core::config::current().objectives.blj_spots_catalog {
+            load_catalog(path);
         }
     });
 }

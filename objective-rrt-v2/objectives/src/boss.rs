@@ -53,8 +53,7 @@ const HIT_CYCLE_FRAMES: f64 = REGRAB_FRAMES + GRAB_FRAMES + THROW_FRAMES + LAND_
 /// frame and last, kept in `mem`), or already off it, costs his way back and
 /// another throw: no better than not throwing, so the GA aims at the summit.
 pub fn king_landing() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| obrrt_core::sys::env::var("OBRRT_KING_LANDING").is_ok_and(|v| v == "1"))
+    obrrt_core::config::current().objectives.king_landing
 }
 /// Off the hill to home: his landing animation (act 4's sub-action 1), the
 /// jump back (act 5: oVelY 100 up to home height, then a 100-up / -4 arc,

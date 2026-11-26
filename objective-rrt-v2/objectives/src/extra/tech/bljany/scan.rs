@@ -43,8 +43,7 @@ use super::{Kind, RMode};
 
 /// OBRRT_BLJ_SCAN=1.
 pub fn on() -> bool {
-    static ON: OnceLock<bool> = OnceLock::new();
-    *ON.get_or_init(|| obrrt_core::sys::env::var("OBRRT_BLJ_SCAN").is_ok_and(|v| v == "1"))
+    obrrt_core::config::current().objectives.blj_scan
 }
 
 /// OBRRT_BLJ_SCAN_R (2500): the scan radius around b (3D).

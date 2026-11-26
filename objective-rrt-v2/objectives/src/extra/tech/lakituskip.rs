@@ -102,8 +102,7 @@ pub enum Mode {
 /// `OBRRT_LAKITU_ARC=1`: the Arc mode, and the Edge / Air modes' direct
 /// approach and door aim (see [`arc`]). Off by default (byte-identical).
 pub fn arc_on() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| obrrt_core::sys::env::var("OBRRT_LAKITU_ARC").is_ok_and(|v| v == "1"))
+    obrrt_core::config::current().objectives.lakitu_arc
 }
 
 pub struct LakituSkip {
@@ -135,8 +134,7 @@ fn arrived(s: &St) -> bool {
 /// it (doors open only to ACT_WALKING / ACT_DECELERATING, interaction.c); as
 /// one objective, the arrival is judged by whether the door opens.
 fn through_door() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| obrrt_core::sys::env::var("OBRRT_LAKITU_THROUGH_DOOR").is_ok_and(|v| v == "1"))
+    obrrt_core::config::current().objectives.lakitu_through_door
 }
 
 /// Frames of the door's opening animation, until the warp (door pull ~30).

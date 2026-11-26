@@ -49,8 +49,7 @@ pub fn enabled() -> bool {
     if FORCED_OFF.load(std::sync::atomic::Ordering::Relaxed) {
         return false;
     }
-    static ON: OnceLock<bool> = OnceLock::new();
-    *ON.get_or_init(|| obrrt_core::sys::env::var("OBRRT_MOVE_GA").is_ok_and(|v| v == "1"))
+    obrrt_core::config::current().ga.move_ga
 }
 
 /// `OBRRT_MOVE_GA_N` (default 8): most policy-seeded rollouts in a first
@@ -98,8 +97,7 @@ pub fn with_seed() -> bool {
 /// of the first generation's population (no random genome is replaced;
 /// more frames per attempt). Default off: they take the odd (random) slots.
 pub fn extra() -> bool {
-    static ON: OnceLock<bool> = OnceLock::new();
-    *ON.get_or_init(|| obrrt_core::sys::env::var("OBRRT_MOVE_GA_EXTRA").is_ok_and(|v| v == "1"))
+    obrrt_core::config::current().ga.move_ga_extra
 }
 
 /// `OBRRT_MOVE_GA_SLOTS`: which first-generation slots policy rollouts

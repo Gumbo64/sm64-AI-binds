@@ -62,11 +62,11 @@ pub struct Settings {
 /// `OBRRT_ROAD`: None when off; Some(directory) to load and save.
 pub fn setting() -> Option<Option<String>> {
     static S: OnceLock<Option<Option<String>>> = OnceLock::new();
-    S.get_or_init(|| match obrrt_core::sys::env::var("OBRRT_ROAD") {
-        Ok(v) if v.is_empty() || v == "0" => None,
-        Ok(v) if v == "1" => Some(None),
-        Ok(v) => Some(Some(v)),
-        Err(_) => None,
+    S.get_or_init(|| match obrrt_core::config::current().priors.road.clone() {
+        Some(v) if v.is_empty() || v == "0" => None,
+        Some(v) if v == "1" => Some(None),
+        Some(v) => Some(Some(v)),
+        None => None,
     })
     .clone()
 }

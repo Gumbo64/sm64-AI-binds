@@ -96,8 +96,7 @@ pub enum Extra {
 /// `OBRRT_MOVES_EXTRA=1`: the policies are offered (`legs` sets it unless
 /// told otherwise).
 pub fn extra_on() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| obrrt_core::sys::env::var("OBRRT_MOVES_EXTRA").is_ok_and(|v| v == "1"))
+    obrrt_core::config::current().objectives.moves_extra
 }
 
 /// Landing lag, in frames (`LandingAction.numFrames`).

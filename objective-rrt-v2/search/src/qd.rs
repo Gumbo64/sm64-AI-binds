@@ -46,13 +46,14 @@ pub struct Qd {
 pub fn settings() -> Option<&'static Qd> {
     static S: OnceLock<Option<Qd>> = OnceLock::new();
     S.get_or_init(|| {
-        if !obrrt_core::sys::env::var("OBRRT_GA_QD").is_ok_and(|v| v == "1") {
+        let cfg = obrrt_core::config::current();
+        if !cfg.research.qd {
             return None;
         }
         let f = |k: &str, d: f64| obrrt_core::sys::env::var(k).ok().and_then(|v| v.parse().ok()).unwrap_or(d);
-        let primary = f("OBRRT_GA_GAMMA", 0.99);
+        let primary = cfg.ga.gamma;
         let mut gammas = vec![primary];
-        if let Ok(v) = obrrt_core::sys::env::var("OBRRT_GA_GAMMAS") {
+        if let Some(v) = &cfg.research.qd_gammas {
             for g in v.split(',').filter_map(|x| x.trim().parse::<f64>().ok()) {
                 if !gammas.iter().any(|x| (x - g).abs() < 1e-12) {
                     gammas.push(g);

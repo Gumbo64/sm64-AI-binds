@@ -70,21 +70,22 @@ pub struct Settings {
 pub fn settings() -> Option<&'static Settings> {
     static S: OnceLock<Option<Settings>> = OnceLock::new();
     S.get_or_init(|| {
-        let socket = obrrt_core::sys::env::var("OBRRT_MODEL").ok().filter(|s| !s.is_empty())?;
+        let pc = &obrrt_core::config::current().priors;
+        let socket = pc.model.clone().filter(|s| !s.is_empty())?;
         let num = |k: &str, d: f64| obrrt_core::sys::env::var(k).ok().and_then(|v| v.parse::<f64>().ok()).unwrap_or(d);
         let mut s = Settings {
             socket,
-            start_t: num("OBRRT_MODEL_START_T", 300.0),
+            start_t: pc.model_start_t,
             dense: obrrt_core::sys::env::var("OBRRT_MODEL_DENSE").is_ok_and(|v| v == "1"),
             policy: num("OBRRT_MODEL_POLICY", 0.0) as usize,
             repair: num("OBRRT_MODEL_REPAIR", 0.0) as usize,
             learned: num("OBRRT_MODEL_LEARNED", 0.0) as u32,
             learned_max: num("OBRRT_MODEL_LEARNED_MAX", 20000.0) as usize,
             d: 256,
-            servers: (num("OBRRT_MODEL_SERVERS", 1.0) as usize).max(1),
+            servers: pc.model_servers.max(1),
         };
         // Zone tables the model was trained with (backbone/data/*/zones).
-        if let Ok(dirs) = obrrt_core::sys::env::var("OBRRT_MODEL_ZONES") {
+        if let Some(dirs) = &pc.model_zones {
             let dirs: Vec<&str> = dirs.split(':').collect();
             let n = features::preload_zones(&dirs);
             eprintln!("model: {n} zone tables preloaded");
@@ -105,7 +106,7 @@ pub fn settings() -> Option<&'static Settings> {
 /// Server count, read straight from the environment (`call` runs while
 /// `settings` is still being built, for the INFO request).
 fn settings_servers() -> usize {
-    obrrt_core::sys::env::var("OBRRT_MODEL_SERVERS").ok().and_then(|v| v.parse().ok()).unwrap_or(1usize).max(1)
+    obrrt_core::config::current().priors.model_servers.max(1)
 }
 
 #[cfg(unix)]

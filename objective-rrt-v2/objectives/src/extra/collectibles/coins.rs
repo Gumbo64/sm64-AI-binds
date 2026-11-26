@@ -199,8 +199,7 @@ impl Objective for RedNext {
         // (engine `index_frontier`, OBRRT_GOAL_WIP_W). No red-coin star had
         // been found by any tree before 2026-11-09: states with 2 of 8 were a
         // few hundred among tens of thousands and almost never a start.
-        static W: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-        if *W.get_or_init(|| obrrt_core::sys::env::var("OBRRT_GOAL_WIDE").is_ok_and(|v| v == "1")) { 25.0 } else { 5.0 }
+        if obrrt_core::config::current().goal_focus.wide { 25.0 } else { 5.0 }
     }
     fn base_criteria(&self, s: &St) -> bool {
         self.nearest(s).is_some() && self.star.is_none_or(|(c, i)| !s.has_star(c, i))

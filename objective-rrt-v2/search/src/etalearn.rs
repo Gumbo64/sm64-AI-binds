@@ -59,8 +59,8 @@ impl EtaLearn {
     pub fn from_env() -> EtaLearn {
         let num = |k: &str, d: f64| obrrt_core::sys::env::var(k).ok().and_then(|v| v.parse().ok()).unwrap_or(d);
         EtaLearn {
-            on: obrrt_core::sys::env::var("OBRRT_ETA_LEARN").is_ok_and(|v| v == "1"),
-            n0: num("OBRRT_ETA_LEARN_N0", 20.0).max(0.0),
+            on: obrrt_core::config::current().priors.eta_learn,
+            n0: obrrt_core::config::current().priors.eta_learn_n0.max(0.0),
             window: (num("OBRRT_ETA_LEARN_WINDOW", 256.0) as usize).max(1),
             kinds: BTreeMap::new(),
             snap: HashMap::new(),

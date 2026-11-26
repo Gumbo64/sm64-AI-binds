@@ -31,7 +31,7 @@ use std::collections::HashMap;
 use std::sync::Arc as Rc;
 use obrrt_core::sys::Instant;
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Result, bail};
 use obrrt_core::{Objective, St};
 use rand::Rng;
 use rand::rngs::SmallRng;
@@ -94,23 +94,21 @@ pub struct SchemaPick {
 
 /// `OBRRT_PICK` and its settings; None when unset (the kinship softmax).
 pub fn from_env() -> Result<Option<SchemaPick>> {
-    let mode = match obrrt_core::sys::env::var("OBRRT_PICK").ok().as_deref() {
+    let rc = &obrrt_core::config::current().research;
+    let mode = match rc.pick.as_deref() {
         None | Some("") | Some("kin") => return Ok(None),
         Some("schema") => Mode::Schema,
         Some("schema_kin") => Mode::SchemaKin,
         Some(v) => bail!("OBRRT_PICK={v}: expected schema or schema_kin"),
     };
-    let path = obrrt_core::sys::env::var("OBRRT_PICK_SCHEMA").unwrap_or_else(|_| "../objective-scattershot/schemas/reroute.json".into());
+    let path = rc.pick_schema.clone().unwrap_or_else(|| "../objective-scattershot/schemas/reroute.json".into());
     let schema = crate::reroute::load_schema(&path)?;
-    let f = |k: &str, d: f64| -> Result<f64> {
-        obrrt_core::sys::env::var(k).ok().map_or(Ok(d), |v| v.parse::<f64>().with_context(|| format!("{k}={v}")))
-    };
     Ok(Some(SchemaPick {
         mode,
         path,
         schema,
-        rand_p: f("OBRRT_PICK_RAND", 0.1)?,
-        kin_w: f("OBRRT_PICK_KIN_W", 4.0)?,
+        rand_p: rc.pick_rand,
+        kin_w: rc.pick_kin_w,
         node_cell: Vec::new(),
         index: HashMap::new(),
         cells: Vec::new(),

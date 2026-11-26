@@ -827,12 +827,12 @@ enum UphillStyle {
 }
 
 fn uphill_style() -> UphillStyle {
-    static S: std::sync::OnceLock<UphillStyle> = std::sync::OnceLock::new();
-    *S.get_or_init(|| match obrrt_core::sys::env::var("OBRRT_MOVES_UPHILL").as_deref() {
-        Ok("jump") => UphillStyle::Jump,
-        Ok("airkick") => UphillStyle::AirKick,
-        _ => UphillStyle::Kick,
-    })
+    use obrrt_core::config::Uphill;
+    match obrrt_core::config::current().objectives.moves_uphill {
+        Uphill::Jump => UphillStyle::Jump,
+        Uphill::AirKick => UphillStyle::AirKick,
+        Uphill::Kick => UphillStyle::Kick,
+    }
 }
 
 /// The pad for `kind` this frame, for a target to stop at.

@@ -33,8 +33,7 @@ use obrrt_core::{Eta, Mem, Objective, St, course_of_level, dist, frames_for};
 
 /// `OBRRT_TWOSTAR=1`.
 pub fn on() -> bool {
-    static ON: OnceLock<bool> = OnceLock::new();
-    *ON.get_or_init(|| obrrt_core::sys::env::var("OBRRT_TWOSTAR").is_ok_and(|v| v == "1"))
+    obrrt_core::config::current().objectives.twostar
 }
 
 /// Installs `wip_coins` as the core's wip extra (with the switch on; once).

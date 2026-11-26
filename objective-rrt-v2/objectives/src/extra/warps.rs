@@ -339,7 +339,10 @@ fn dest_worth(s: &St, dest: u32) -> f64 {
 fn zone_path() -> &'static [((u16, u8), (u16, u8), [f32; 3])] {
     static P: std::sync::OnceLock<Vec<((u16, u8), (u16, u8), [f32; 3])>> = std::sync::OnceLock::new();
     P.get_or_init(|| {
-        let Ok(v) = obrrt_core::sys::env::var("OBRRT_ZONE_PATH") else { return Vec::new() };
+        let v = &obrrt_core::config::current().zone.path;
+        if v.is_empty() {
+            return Vec::new();
+        }
         let zone = |t: &str| -> Option<(u16, u8)> {
             let (l, a) = t.split_once('.')?;
             Some((l.trim().parse().ok()?, a.trim().parse().ok()?))
@@ -450,8 +453,7 @@ fn req_met(req: Req, s: &St) -> bool {
 
 /// OBRRT_GOAL_WIDE=1 (see objectives/src/lib.rs).
 pub(crate) fn goal_wide() -> bool {
-    static W: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *W.get_or_init(|| obrrt_core::sys::env::var("OBRRT_GOAL_WIDE").is_ok_and(|v| v == "1"))
+    obrrt_core::config::current().goal_focus.wide
 }
 
 // ---------------------------------------------------------- warp objects
@@ -892,8 +894,7 @@ impl Objective for KeyDoor {
 /// grounds' trees weigh a quarter (switches.rs). Off by default: it changes
 /// runs.
 pub fn grounds_fix() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| obrrt_core::sys::env::var("OBRRT_GROUNDS_FIX").is_ok_and(|v| v == "1"))
+    obrrt_core::config::current().objectives.grounds_fix
 }
 
 /// Whether this zone's cannon is covered (`OBRRT_GROUNDS_FIX=1` only). The

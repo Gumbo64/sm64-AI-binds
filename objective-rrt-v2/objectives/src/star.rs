@@ -33,8 +33,7 @@ const ACT_GROUND_POUND: u32 = 0x0080_08A9;
 /// -65, apply_gravity in mario_step.c), and the star dance starts on
 /// landing: the frame that matters is that landing, not the touch.
 fn gp_catch() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| obrrt_core::sys::env::var("OBRRT_GP_CATCH").is_ok_and(|v| v == "1"))
+    obrrt_core::config::current().objectives.gp_catch
 }
 
 /// Frames from an airborne star grab at `s` to the landing that starts the

@@ -744,8 +744,5 @@ mod restored_tests {
 
 /// The campaign's moat step is on: OBRRT_STOP_FLAG includes SAVE_FLAG_MOAT_DRAINED (0x200).
 fn moat_step() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| {
-        obrrt_core::sys::env::var("OBRRT_STOP_FLAG").ok().and_then(|v| u32::from_str_radix(v.trim_start_matches("0x"), 16).ok()).is_some_and(|f| f & 0x200 != 0)
-    })
+    obrrt_core::config::current().stop.flag & 0x200 != 0
 }

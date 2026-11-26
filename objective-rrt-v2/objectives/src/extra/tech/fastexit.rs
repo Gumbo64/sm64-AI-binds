@@ -50,7 +50,7 @@
 //! at a known spot, distance to the drop region only). Success is the star
 //! with a doomed state before the grab; a plain grab is no success.
 
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 
 use obrrt_core::layout::{ACT_GROUP_CUTSCENE, ACT_GROUP_MASK};
 use obrrt_core::{Eta, Mem, Obj, ObjId, Objective, St, dist, frames_for};
@@ -81,8 +81,7 @@ const DOOMED: u32 = 1;
 
 /// On with `OBRRT_FASTEXIT=1` (and `fastexit` in `OBRRT_TECH`).
 pub fn on() -> bool {
-    static ON: OnceLock<bool> = OnceLock::new();
-    *ON.get_or_init(|| obrrt_core::sys::env::var("OBRRT_FASTEXIT").is_ok_and(|v| v == "1"))
+    obrrt_core::config::current().objectives.fastexit
 }
 
 /// A rough drop region for one star: from about `drop`, fall past the death
