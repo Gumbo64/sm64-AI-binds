@@ -168,7 +168,7 @@ impl PosTime {
         let c = obrrt_core::records::ctx(b);
         let record = obrrt_core::records::earliest_near(b.zone(), c, p, RADIUS).unwrap_or_else(|| b.frame + (2.0 * frames_for(b.dist(p))) as u32 + 90);
         let mut o = PosTime::near(b, p, record, c);
-        o.gw = env_f32("OBRRT_POSGOAL_WEIGHT", 10.0) as f64;
+        o.gw = obrrt_core::posgoal::weight();
         o.goal = true;
         o
     }
@@ -191,7 +191,8 @@ impl Objective for PosTime {
         obrrt_core::DenseKeep::Every { n: 30, air: false }
     }
     fn kind(&self) -> &'static str {
-        "Mario::PosTime"
+        // The user's position goal is a kind of its own (its own mean weight and learned multiplier in the kind draw).
+        if self.goal { "Mario::UserGoal" } else { "Mario::PosTime" }
     }
     fn key(&self) -> String {
         let c = |v: f32| (v / 400.0).round() as i32;

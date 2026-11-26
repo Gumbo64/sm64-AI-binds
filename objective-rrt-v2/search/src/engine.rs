@@ -2296,6 +2296,9 @@ impl Engine {
                 return Some(p);
             }
         }
+        if let Some(p) = self.plan_user_goal() {
+            return Some(p);
+        }
         // Step 1: b from the frontier: a zone uniformly, then an occupied
         // 512-unit cell uniformly, then a state in it (see index_frontier).
         if self.b_index.is_empty() {

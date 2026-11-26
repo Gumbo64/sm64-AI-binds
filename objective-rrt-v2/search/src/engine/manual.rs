@@ -20,6 +20,8 @@ use super::*;
 pub(super) struct Manual {
     boost: HashMap<u32, f64>,
     seen: HashSet<u64>,
+    /// Times a state was the goal plans' start (the next-nearest take over a state that led nowhere).
+    goal_wear: HashMap<u32, u32>,
 }
 
 /// What [`Engine::insert_manual`] did.
@@ -208,10 +210,63 @@ impl Engine {
     /// The position goal's objectives in the pool: (entries, attempts, successes), from the `Mario::PosTime` entries made for the goal.
     pub fn pos_goal_stats(&self) -> (usize, u64, u64) {
         let mut t = (0usize, 0u64, 0u64);
-        for e in self.pool.entries.iter().filter(|e| e.obj.kind() == "Mario::PosTime" && e.obj.key().contains(" goal")) {
+        for e in self.pool.entries.iter().filter(|e| e.obj.kind() == "Mario::UserGoal") {
             t = (t.0 + 1, t.1 + e.attempts as u64, t.2 + e.successes as u64);
         }
         t
+    }
+
+    /// How strongly the goal pulls: the pool weight of its objective (a regular objective weighs 1) and the share of plans
+    /// that start from the tree's state nearest the goal and run it (see `plan_user_goal`).
+    pub fn set_pos_goal_strength(&mut self, weight: f64, share: f64) {
+        obrrt_core::posgoal::set_weight(weight);
+        obrrt_core::posgoal::set_share(share);
+    }
+
+    /// OBRRT_POSGOAL_SHARE (the web miner's goal strength): this share of plans starts from a state of the goal's zone
+    /// nearest the goal (a few of the nearest, each worn by `WEAR` units per use so a state under a wall gives way) and runs
+    /// the goal's objective from it, whatever the b draw and kind draw would have been.
+    pub(super) fn plan_user_goal(&mut self) -> Option<Plan> {
+        let share = obrrt_core::posgoal::share();
+        if share <= 0.0 {
+            return None;
+        }
+        let g = obrrt_core::posgoal::get()?;
+        if !self.rng.random_bool(share) {
+            return None;
+        }
+        const WEAR: f32 = 120.0;
+        let wear = &self.manual.goal_wear;
+        let mut top: Vec<(f32, u32)> = Vec::with_capacity(4);
+        for (i, n) in self.tree.nodes.iter().enumerate() {
+            if n.st.zone() != g.zone || n.retired || n.st.modal() || !n.st.alive() {
+                continue;
+            }
+            let sc = obrrt_core::dist(n.st.pos, g.pos) + WEAR * wear.get(&(i as u32)).copied().unwrap_or(0) as f32;
+            if top.len() < 3 || sc < top[top.len() - 1].0 {
+                top.push((sc, i as u32));
+                top.sort_by(|a, b| a.0.total_cmp(&b.0));
+                top.truncate(3);
+            }
+        }
+        if top.is_empty() {
+            return None;
+        }
+        let b = top[self.rng.random_range(0..top.len())].1;
+        *self.manual.goal_wear.entry(b).or_default() += 1;
+        let st = self.tree.nodes[b as usize].st.clone();
+        let obj: Arc<dyn Objective> = Arc::new(obrrt_objectives::mario::PosTime::goal(&st, g.pos));
+        self.pool.insert(obj.clone(), &st);
+        let entry = self.pool.find(&obj.key())?;
+        let start = self.pick_start(entry, obj.as_ref(), b)?;
+        self.tree.nodes[b as usize].stats.as_b += 1;
+        Some(Plan { stages: vec![(entry, obj)], start, b, rewire: None, seed: None, polish: None, targets: None, window_b: None, window: Vec::new(), mv: None })
+    }
+
+    /// The tree's state in the goal's zone nearest the goal: (distance, node id), or None without a goal or a state there.
+    pub fn pos_goal_nearest(&self) -> Option<(f32, u32)> {
+        let g = obrrt_core::posgoal::get()?;
+        self.tree.nodes.iter().enumerate().filter(|(_, n)| n.st.zone() == g.zone && !n.retired).map(|(i, n)| (obrrt_core::dist(n.st.pos, g.pos), i as u32)).min_by(|a, b| a.0.total_cmp(&b.0))
     }
 
     /// A position goal for the objective generator: from the states of `zone` (level, area) it draws
