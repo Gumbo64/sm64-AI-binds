@@ -113,6 +113,11 @@ fn floats(o: &obrrt_core::Obj) -> bool {
 /// floors (`OBRRT_TWOSTAR` asks for them; they come once a state is seen in control) the old rule holds.
 /// Cached per formation.
 fn needs_wings(s: &St, o: &obrrt_core::Obj) -> bool {
+    // RR: a formation over a carpet's track is had by the ride, not with wings (rides/rr.rs `coin_ride_frames`).
+    needs_wings_static(s, o) && super::super::rides::rr::coin_ride_frames(s, s.pos, o.pos).is_none()
+}
+
+fn needs_wings_static(s: &St, o: &obrrt_core::Obj) -> bool {
     if !floats(o) {
         return false;
     }
@@ -150,6 +155,31 @@ fn winged(s: &St) -> bool {
 /// coins) and three wing cap boxes left (the user: "pretty sure you need wing
 /// cap for the last coin rings", 2026-11-10).
 fn coin_sources(s: &St) -> Vec<([f32; 3], f32)> {
+    let mut out = coin_sources_here(s);
+    // The coins of the course's other areas: at the way there (a warp or a warp floor), so the coin plan walks to it
+    // when this area is used up ([`other_areas`]).
+    let seen: f32 = out.iter().map(|x| x.1).sum();
+    // Only once this area is nearly used up (fewer than `STAY_LEFT` coins seen in it): SSL's pyramid has no way back, and
+    // its 59 at the entrance would draw Mario in with the outside's coins still left (lost once he is in).
+    for (_, left, pos) in if seen < STAY_LEFT { other_areas(s, seen) } else { Vec::new() } {
+        out.push((pos, left));
+    }
+    out
+}
+
+/// Fewer coins than this seen in the area: it is used up and the plan moves on to the next area.
+const STAY_LEFT: f32 = 10.0;
+
+/// SSL's outside (area 1) used up for the 100-coin plan (fewer than [`STAY_LEFT`] coins in sight there, enemies'
+/// loot included) with the 100-coin star missing: the pyramid's top hole (pyramid.rs `TopHole`) is the next step, and
+/// only now: the pyramid has no way back out (c100 agent: 72 outside, 59 inside, so at least 41 must come from
+/// outside before going in; the legs went in at 33).
+pub fn outside_used_up(s: &St) -> bool {
+    s.level as u32 == LEVEL_SSL && s.area == 1 && goal_on(s) && s.objects.is_some() && coin_sources_here(s).iter().map(|x| x.1).sum::<f32>() < STAY_LEFT
+}
+
+/// Coin sources of `s`'s own area (see [`coin_sources`]).
+fn coin_sources_here(s: &St) -> Vec<([f32; 3], f32)> {
     let objs = s.objects();
     let air: f32 = objs.iter().filter(|o| o.bhv_name() == "bhvCoinFormation" && o.action == 0 && needs_wings(s, o)).map(|o| o.value.max(0) as f32).sum();
     let want_cap = air > 0.0 && !winged(s) && s.save_flags & 0x2 != 0;
@@ -168,6 +198,12 @@ fn coin_sources(s: &St) -> Vec<([f32; 3], f32)> {
                 }
             }
             "bhvCoinFormation" => {}
+            // A Pokey's head drops a blue coin (5) when killed (pokey.inc.c: the head's oNumLootCoins is set to -1 once
+            // attacked; the bhvPokey itself has numLootCoins 0 and its body parts spawn only near Mario, so `loot_coins`
+            // never showed them): SSL's outside has four, 20 of its 72 coins (coin_inventory.json), none of which
+            // `coin_sources` saw (probe: "sources 22 worth 49" at the entry). Action 0 / 1: not unloaded yet.
+            "bhvPokey" if o.action <= 1 => out.push((o.pos, 5.0)),
+            "bhvPokeyBodyPart" => {}
             "bhvHiddenBlueCoin" if o.action < 2 => {
                 if let Some(i) = (0..switches.len()).min_by(|&i, &j| dist(switches[i].pos, o.pos).total_cmp(&dist(switches[j].pos, o.pos))) {
                     pending[i] += 5.0;
@@ -191,14 +227,6 @@ fn coin_sources(s: &St) -> Vec<([f32; 3], f32)> {
         if n > 0.0 {
             out.push((sw.pos, n));
         }
-    }
-    // The coins of the course's other areas: at the way there (a warp or a warp floor), so the coin plan walks to it
-    // when this area is used up ([`other_areas`]).
-    let seen: f32 = out.iter().map(|x| x.1).sum();
-    // Only once this area is nearly used up (fewer than 10 coins seen in it): SSL's pyramid has no way back, and
-    // its 59 at the entrance would draw Mario in with the outside's coins still left (lost once he is in).
-    for (_, left, pos) in if seen < 10.0 { other_areas(s, seen) } else { Vec::new() } {
-        out.push((pos, left));
     }
     out
 }
@@ -233,6 +261,10 @@ fn other_areas(s: &St, seen: f32) -> Vec<(u8, f32, [f32; 3])> {
             continue;
         }
         if let Some(pos) = super::super::warps::area_exits(l, s.area as u8).into_iter().find(|e| e.0 == area).map(|e| e.1) {
+            // SSL's way into the pyramid is the top hole (pyramid.rs `TopHole`: the four pillars, the cap, the pit): the
+            // drop lands on the elevator at y 5500, from where the high coins are on the way down; the door at the
+            // bottom leads up the spiral through poles and moving walls (the legs stopped at 71-72 there).
+            let pos = if l == LEVEL_SSL && s.area == 1 { super::super::pyramid::entry_target(s) } else { pos };
             out.push((area, left, pos));
         }
     }
@@ -243,6 +275,28 @@ fn other_areas(s: &St, seen: f32) -> Vec<(u8, f32, [f32; 3])> {
 const UNSEEN_COIN_FRAMES: f64 = 150.0;
 /// Most stops a [`plan`] counts one by one; the rest is `FRAMES_PER_COIN` each.
 const PLAN_STOPS: usize = 14;
+
+/// The distance a coin source costs in [`plan`]'s choice: the straight line, or, in RR, what riding a carpet to it
+/// costs (frames at the walking pace) when a carpet's track passes it: the walk there is not a line (RR's coins hang
+/// over the gaps between its islands).
+fn cost_d(s: &St, at: [f32; 3], c: [f32; 3]) -> f32 {
+    match super::super::rides::rr::coin_ride_frames(s, at, c) {
+        Some(f) => (f * obrrt_core::PACE) as f32,
+        None => dist(at, c),
+    }
+}
+
+/// SSL's pyramid (area 2), a coin above y 1500: the cost over the climb chain (pyramid.rs `reach`), where a straight
+/// line (or the floor graph's "unreachable") priced a coin 3000 up as near. `None` for everything else (other courses
+/// and floors pay nothing) and where the floor graph is off.
+fn high_reach(s: &St, at: [f32; 3], c: [f32; 3]) -> Option<f32> {
+    if super::super::pyramid::prices_high(s, c) { super::super::pyramid::reach(s, at, c) } else { None }
+}
+
+/// [`cost_d`], or the pyramid's chain cost for a high coin ([`high_reach`]).
+fn cost_c(s: &St, at: [f32; 3], c: [f32; 3]) -> f32 {
+    high_reach(s, at, c).unwrap_or_else(|| cost_d(s, at, c))
+}
 
 /// The coin route from `s` for `need` more coins: greedily the source with the best coins over (walk + 300
 /// units), until the coins are had; the frames of the walk (the first leg by walking distance when the mesh is
@@ -265,14 +319,20 @@ fn plan(s: &St, need: i16, star: Option<[f32; 3]>) -> (f64, Option<[f32; 3]>) {
         let Some((i, _)) = src
             .iter()
             .enumerate()
-            .map(|(i, &(c, v))| (i, v.min(need) / (dist(at, c) + along(c) + 300.0)))
+            .map(|(i, &(c, v))| (i, v.min(need) / (cost_c(s, at, c) + along(c) + 300.0)))
             .max_by(|a, b| a.1.total_cmp(&b.1))
         else {
             break;
         };
         let (c, v) = src.swap_remove(i);
-        let d = if stop == 0 { s.path_dist(c) } else { dist(at, c) };
-        frames += frames_for(d);
+        frames += match super::super::rides::rr::coin_ride_frames(s, at, c) {
+            Some(f) => f,
+            None => frames_for(match high_reach(s, at, c) {
+                Some(d) => d,
+                None if stop == 0 => s.path_dist(c),
+                None => dist(at, c),
+            }),
+        };
         if stop == 0 {
             first = Some(c);
         }

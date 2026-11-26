@@ -43,7 +43,7 @@ mod chest;
 mod common;
 mod platform;
 mod ring;
-mod rr;
+pub(crate) mod rr;
 mod shell;
 pub mod water;
 
@@ -67,6 +67,8 @@ pub fn generate_level(b: &St, out: &mut Vec<Arc<dyn Objective>>) {
     water::Raise::generate(b, out);
     water::Slab::generate(b, out);
     water::Quick::generate(b, out);
+    water::RedBreak::generate(b, out);
+    water::RedTake::generate(b, out);
     rr::generate_level(b, out);
     rr::generate_route(b, out);
 }

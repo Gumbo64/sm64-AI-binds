@@ -695,7 +695,19 @@ impl Objective for Race {
             }
             // On the slide: the length left along the penguin's own path (the walkable mesh doesn't
             // cover the steep slide floors, so the walking distance gave 54 frames of progress).
-            if self.both(s).is_some_and(|(r, _)| self.racing(r)) {
+            if let Some((r, _)) = self.both(s).filter(|(r, _)| self.racing(r)) {
+                // Behind the penguin counts: once he is at the bottom unbeaten the race is lost, and every unit Mario
+                // trails him is paid (t1 step 838: 0 wins in 213; its best 'ETA 15' state had the penguin 47 past
+                // the finish line, MarioWon 0, and the tree kept building on lost races).
+                let pp = super::slides::ccm().progress(r.pos);
+                let pr = super::slides::ccm().progress(s.pos);
+                if pp.remaining < PENGUIN_WIN_RADIUS && !penguin_won(r) {
+                    return Eta::Lost;
+                }
+                let behind = (pr.remaining - pp.remaining).max(0.0);
+                return Eta::Frames((((pr.remaining - PENGUIN_WIN_RADIUS).max(0.0) + 2.0 * pr.off + behind) / PENGUIN_SLIDE_SPEED) as f64);
+            }
+            if false {
                 // Always the path, never the walking distance: at the top plateau farther than
                 // 1500 units (the old reach) from the path's start (x -6298) the geodesic gave ETA 423 against 1000 a few
                 // steps east (and 580 for a state halfway down the slide), so the best-ETA bases were idle states at

@@ -82,7 +82,7 @@ const TOP: f32 = 20.0;
 /// A carpet is only an ETA reference while Mario is within this of the track.
 const OFF_TRACK: f32 = 400.0;
 
-fn path_of(n: u32) -> Option<&'static [[f32; 3]]> {
+pub(crate) fn path_of(n: u32) -> Option<&'static [[f32; 3]]> {
     Some(match n {
         0 => &PATH0,
         1 => &PATH1,
@@ -145,12 +145,72 @@ pub fn generate_level(b: &St, out: &mut Vec<Arc<dyn Objective>>) {
         if path == 8 && std::env::var("OBRRT_RR_NO8").is_ok_and(|v| v == "1") {
             continue;
         }
-        if path_of(path).is_none() || !leads(path).0.iter().any(|&i| !b.has_star(15, i)) {
+        if path_of(path).is_none() || !(leads(path).0.iter().any(|&i| !b.has_star(15, i)) || coin_rides(b)) {
             continue;
         }
         out.push(Arc::new(Ride { zone: b.zone(), path, slot: o.slot }));
     }
 }
+
+/// A carpet is also a goal while the 100-coin macro (OBRRT_TWOSTAR) is on and RR's 100-coin star (index 6) is missing:
+/// coins hang over the carpets' tracks (see [`coin_ride_frames`]). Before this, coin legs from a state with the other
+/// stars had (t1 step 643, 72 coins) had no carpet objective at all.
+fn coin_rides(s: &St) -> bool {
+    super::super::missions::twostar::on() && !s.has_star(15, 6)
+}
+
+/// A coin at `c` that a carpet flies past (within `COIN_REACH` of its track, level with the carpet's top within
+/// `COIN_ABOVE`..`COIN_BELOW`): the frames to get there riding it from where Mario is at `from`: the way to the carpet,
+/// the 20-frame wait, and the track's arc up to the coin at 10 a frame (platform_on_track.inc.c). None if no loaded
+/// carpet's track passes it, or every such carpet is already past it. RR's coin lines and rings over its gaps are
+/// not reachable otherwise: path 8 passes within 60 of the flying line at (-6057, 4676, -5242) and within 650 of
+/// (-7771, 4352, -3871) (plan 2026-11-23, agent rr100); the walking-distance coin plan counted those as wing-cap
+/// air coins or as straight-line walks.
+pub(crate) fn coin_ride_frames(s: &St, from: [f32; 3], c: [f32; 3]) -> Option<f64> {
+    if s.level as u32 != LEVEL_RR {
+        return None;
+    }
+    let mut best: Option<f64> = None;
+    for o in s.objects() {
+        let Some(path) = carpet_path(o) else { continue };
+        let Some(pts) = path_of(path) else { continue };
+        let (arc_c, d_c, _) = project(pts, c);
+        let dy = c[1] - pts_y_at(pts, arc_c);
+        if d_c > COIN_REACH || !(-COIN_BELOW..=COIN_ABOVE).contains(&dy) {
+            continue;
+        }
+        // Where the carpet is on its track (not yet started or reset: at the start).
+        let (arc_o, d_o, _) = project(pts, o.pos);
+        let arc_o = if o.action == 4 || d_o > OFF_TRACK { 0.0 } else { arc_o };
+        if arc_c + 100.0 < arc_o {
+            continue;
+        }
+        let top = [o.pos[0], o.pos[1] + TOP, o.pos[2]];
+        let wait = if o.action == 1 { WAIT } else { 0.0 };
+        let f = frames_for(dist(from, top)) + BOARD_FRAMES + wait + ((arc_c - arc_o).max(0.0) / 10.0) as f64;
+        best = Some(best.map_or(f, |b| b.min(f)));
+    }
+    best
+}
+
+/// The track's height at arc length `a`.
+fn pts_y_at(pts: &[[f32; 3]], a: f32) -> f32 {
+    let mut acc = 0.0;
+    for w in pts.windows(2) {
+        let l = dist(w[0], w[1]);
+        if acc + l >= a {
+            return w[0][1] + (w[1][1] - w[0][1]) * ((a - acc) / l.max(1.0)).clamp(0.0, 1.0);
+        }
+        acc += l;
+    }
+    pts[pts.len() - 1][1]
+}
+
+/// How far from its track a coin can be and still be had riding (the carpet is ~300 wide; a jump from it).
+const COIN_REACH: f32 = 350.0;
+/// A coin this far above / below the track point: Mario's jump from the carpet / a drop onto it.
+const COIN_ABOVE: f32 = 250.0;
+const COIN_BELOW: f32 = 600.0;
 
 pub struct Ride {
     zone: (u16, u8),
@@ -167,7 +227,7 @@ impl Ride {
     }
 
     fn open(&self, s: &St) -> bool {
-        leads(self.path).0.iter().any(|&i| !s.has_star(15, i))
+        leads(self.path).0.iter().any(|&i| !s.has_star(15, i)) || coin_rides(s)
     }
 
     fn on(s: &St, p: &Obj) -> bool {

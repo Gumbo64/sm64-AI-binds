@@ -184,7 +184,8 @@ def cannon_cp(out, root):
 # checkpoint goals don't rank them (a done step has no ETA left). t1 step 812: HMC pressed the grill switch 174 times
 # in 400 M frames, checkpoint 1 went to a 3-red-coin state; the earliest switch state, put in by hand, gave the
 # metal-head star in 28.8 M frames (step 813). Eyerok (step 790) and RR's cannon (step 756) were the same story.
-STAGE_KINDS = ('Hmc::MetalSwitch', 'Pyramid::TopHole', 'WarpFloor::Enter', 'PenguinRace::Win', 'Snowman::LeadBody', 'WdwWater::Slab', 'MrI::Box', 'MrI::Climb', 'MrI::Gate')
+# Not WarpFloor::Enter: t1 step 877's checkpoint 1 was WDW's town arrival (0 red coins) over states with 5 of 8.
+STAGE_KINDS = ('Hmc::MetalSwitch', 'Pyramid::TopHole', 'PenguinRace::Win', 'Snowman::LeadBody', 'WdwWater::Slab', 'MrI::Box', 'MrI::Climb', 'MrI::Gate')
 
 
 def stage_cp(out, root, zone, avoid=(), used=()):
@@ -218,6 +219,29 @@ def stage_cp(out, root, zone, avoid=(), used=()):
                 pos=pos, eta=0.0, eta0=None, wip=0, wip0=0, weight=0.0)
 
 
+def climb_cp(out, root, zone, avoid=()):
+    '''The final mode's fallback: the highest healthy grounded (or swimming) state of a BitS / Bowser 3 tree, any in the
+    arena first, if it climbed at least 200 above the root. t1 steps 916-917: two 400 M BitS trees reached y 4455 and
+    4542 standing, the goal checkpoints went to a Tech::HyperWalk state at y -1187 and then to none, and the course
+    was skipped back to the castle, the only course left (the pipe is at the top, y 6652).'''
+    if int(root['level']) == ARENA[BITS]: return None   # in the arena the fight's own checkpoints (boss wip) decide
+    best = None
+    for r in csv.DictReader(open(out + '/nodes.csv')):
+        lv = int(r['level'])
+        if lv not in (BITS, ARENA[BITS]) or int(r['frame']) <= int(root['frame']): continue
+        a = int(r['action'], 16)
+        if a & 0x1C0 not in (0x000, 0x040, 0x0C0) or a & 0x20000 or int(r.get('health') or '0x880', 16) < 0x500: continue
+        pos = [float(r['x']), float(r['y']), float(r['z'])]
+        if any(lv == l and sum((x - y) ** 2 for x, y in zip(pos, q)) < 300 ** 2 for l, q in avoid): continue
+        k = (lv == ARENA[BITS], pos[1], -int(r['frame']))
+        if best is None or k > best[0]: best = (k, r, pos)
+    if best is None: return None
+    _, r, pos = best
+    if int(r['level']) != ARENA[BITS] and pos[1] < float(root['y']) + 200: return None
+    return dict(node=int(r['id']), kind='Final::Climb', key=None, how='climb', frame=int(r['frame']), level=int(r['level']),
+                pos=pos, eta=0.0, eta0=None, wip=0, wip0=0, weight=0.0)
+
+
 def flags_raw(t):
     o = {}
     for p in t.split():
@@ -246,7 +270,7 @@ def checkpoint(out, root, zone, n, prefer=None, avoid=(), keys=0, end=False):
         # Movement-only goals (Tech::*) may lead the first checkpoint, not later ones: t1 BBH checkpoints 1 and 3
         # (steps 589-592) and CCM checkpoints 2 and 3 (steps 604-605) went for Tech::HyperWalk, 300 units apart,
         # 800 M frames each, no star.
-        if n >= 1 and str(g.get('kind', '')).startswith('Tech::'): continue
+        if (n >= 1 or end) and str(g.get('kind', '')).startswith('Tech::'): continue
         cps = g.get('cps') or [g]   # builds before v3j: one state per goal
         cps = [c for c in cps if c['frame'] > int(root['frame'])]
         # Not where an earlier checkpoint of this course already led nowhere (within 300 units): WDW's star 4
@@ -531,8 +555,13 @@ def run_tree(s, budget, grace, star=None, coins=False, moat=None):
     if coins:
         # A coin leg: the 100-coin macro on (coins as work in progress), stopping on the star (it doesn't end the visit).
         env['OBRRT_TWOSTAR'] = '1'; env['OBRRT_STOP_PROGRESS'] = '1'; env['OBRRT_EXIT_NOSTOP'] = '1'
-    if s.get('coin_got'):
-        # The 100-coin star is had inside the course: any way out is good.
+    c100 = COURSE.get(s['level'] or 0, 0)
+    if s.get('coin_got') and flags(s.get('held_flags', s['flags'])).get(c100, 0) & 0x3F == 0x3F:
+        # The 100-coin star is had inside the course and its other stars too: any way out is good. With one of
+        # them still missing the tree goes for it as usual: the 100-coin star doesn't end the visit
+        # (sparkle_spawn_star.inc.c bhv_spawn_star_no_level_exit sets INT_SUBTYPE_NO_EXIT) and every other star
+        # does, so the 100 comes first and the course's red coins or other star in the same visit (the user,
+        # 2026-11-23: "you have to collect the 100 coin one first"). No exit found: the pause menu, as before.
         env['OBRRT_ANY_EXIT'] = '1'
     cmd = ['nice', '-n', '5', A.bin, '../baserom.us.z64', out, str(s['step'] + 1), '600'] + ([s['route']] if s['route'] else [])
     with open(f'{D}/step-{s["step"]:04d}.log', 'w') as f:
@@ -593,17 +622,31 @@ def main():
             # a TTM leg (t1 step 219) had no live grounded state in 1196 nodes and the legs ended.
             # Not hurt: no knockback (ACT_FLAG_INVULNERABLE 0x20000) and 3 or more health segments (t1 step 398:
             # LLL at 93 coins from a hard knockback at 1 segment, every attempt dead at once, 7.6 hours stuck).
-            inside = [r for r in rows[1:] if int(r['level']) in (zone, ARENA.get(zone, zone)) and int(r['action'], 16) & 0x1C0 in (0x000, 0x040)
+            # Underwater (0x0C0) too: DDD's last coins are at the pool's bottom, and t1 steps 903-906 got the 100-coin
+            # star there in all four legs (Mario in ACT_WATER_IDLE, 0x380022C0), which only grounded states could pass.
+            inside = [r for r in rows[1:] if int(r['level']) in (zone, ARENA.get(zone, zone)) and int(r['action'], 16) & 0x1C0 in (0x000, 0x040, 0x0C0)
                       and not int(r['action'], 16) & 0x20000 and int(r.get('health') or '0x880', 16) >= 0x300
                       # Not mid-slide (butt/stomach slide 0x40000, dive slide 0x80000): CCM's legs went on from Mario
                       # sliding down the slide at 53 coins; trees from there were a few thousand nodes, nothing gained.
-                      and not int(r['action'], 16) & 0xC0000]
+                      and not int(r['action'], 16) & 0xC0000
+                      # Not sunk in SSL's quicksand (y below the desert floor, -5): a leg started from Mario sinking at
+                      # y -194 or -230 made 1-node trees (t1 steps 777-778; the ssl100 agent's chain, leg 6).
+                      and not (int(r['level']) == 8 and int(r['area']) == 1 and float(r['y']) < -5)]
             # Not near a leg start that was a dead end (a tree of 1-2 nodes: t1 steps 777-778, SSL at 32 coins with
             # Mario sinking in quicksand at y -194; every attempt died, the legs restarted from it twice).
             dead = cm.get('dead', [])
             inside = [r for r in inside if not any(sum((float(r[k]) - q[i]) ** 2 for i, k in enumerate('xyz')) < 300 ** 2 for q in dead)]
             got = [r for r in inside if flags(r['star_flags']).get(c, 0) & 0x40]
             best = pick_feasible(out, inside, zone in SINGLE_AREA)
+            # Another star had without leaving the course (t1 steps 903-905, DDD at 98 coins: every leg stopped at
+            # 9-10 M frames on a 119-star state inside the zone, OBRRT_STOP_PROGRESS, and the leg went on from the
+            # 98-coin root, the star thrown away): kept, and the legs go on from it; the exit later counts it.
+            more = [r for r in inside if int(r['stars']) > int(root['stars'])] if not got else []
+            if more:
+                best = max(more, key=lambda r: (int(r['coins']), -int(r['frame'])))
+                new = new_stars(s['flags'], best['star_flags'])
+                s['held_flags'] = best['star_flags']; s['held_got'] = [list(g) for g in new]
+                log(f'step {s["step"]}: coin leg in {LV.get(zone, zone)}: star {new} had without leaving, at {best["coins"]} coins; the legs go on from it')
             # Into another area (one the course may not let Mario leave, like LLL's volcano): only with enough coins
             # there for 100, else the best state in the leg's own area. The user: LLL's legs went into the volcano at
             # 88 coins (leg 4) with about 15 left in it (103 at most); it got to 100 only after 2 weak legs.
@@ -800,7 +843,7 @@ def main():
             s['held_flags'] = pick_h['star_flags']; s['held_got'] = [list(g) for g in new_stars(s['flags'], pick_h['star_flags'])]; s['held'] = True
             rec.update(held=new_stars(s['flags'], pick_h['star_flags']), frame=int(pick_h['frame']))
             log(f'step {s["step"]}: {rec["zone"]} star {rec["held"]} had at frame {pick_h["frame"]} without leaving ({rec["used"]} M frames); next: out of the course')
-        elif zone not in HUB and s.get('cp_n', 0) < A.checkpoints and (cp := (cannon_cp(out, root) or stage_cp(out, root, zone, dead_ends(s, zone), s.get('cp_seen', {}).get(str(zone), {}).get('stages', [])) or checkpoint(out, root, zone, s.get('cp_n', 0), s.get('cp_goal') if s.get('cp_n', 0) else None,
+        elif zone not in HUB and (s.get('cp_n', 0) < A.checkpoints or final(s)) and (cp := ((climb_cp(out, root, zone, dead_ends(s, zone)) if final(s) else None) or cannon_cp(out, root) or stage_cp(out, root, zone, dead_ends(s, zone), s.get('cp_seen', {}).get(str(zone), {}).get('stages', [])) or checkpoint(out, root, zone, s.get('cp_n', 0), s.get('cp_goal') if s.get('cp_n', 0) else None,
                                                                                       dead_ends(s, zone), s['keys'], final(s)))) is not None:
             # No exit, but further along a goal: a fresh tree goes on from there.
             route = f'{D}/cp-{s["step"]:04d}.m64'
@@ -818,6 +861,12 @@ def main():
                 f'{LV.get(cp["level"], cp["level"])} {[round(x) for x in cp["pos"]]}: {cp["kind"]} ({cp["how"]}) ETA {e0} -> {cp["eta"]:.0f}, wip {cp["wip0"]} -> {cp["wip"]}')
         else:
             if s.get('coin_got') and leave_by_pause(s, 'no exit found'):
+                continue
+            if final(s) and zone in (BITS, ARENA[BITS]):
+                # The final mode has nowhere else to go: a fresh tree from the same start (a new seed), not a skip
+                # back to the castle (t1 step 917 skipped BitS, the only course left, after 800 M frames of climb).
+                log(f'step {s["step"]}: {rec["zone"]} no exit and no checkpoint in {rec["used"]} M frames ({len(rows)} nodes); the final search again from the same start')
+                s['history'].append(dict(rec, after=dict(stars=s['stars'], keys=s['keys'], caps=s.get('caps', 0)))); s['step'] += 1; save(s)
                 continue
             # The course gave nothing: back to the castle state before it, and skip it for now.
             zone = s['level'] if s['level'] not in HUB else zone; s['cp_n'] = 0; s['coin_got'] = False

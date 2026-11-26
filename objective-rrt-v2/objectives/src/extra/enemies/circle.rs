@@ -110,6 +110,13 @@ impl Circle {
 /// The cap time a capped Mario must have beyond the walk to the gate (factor, frames): the real walk is slower
 /// than `gate_frames` (agent mri's tests: ~230 frames across the third floor where the graph says 98).
 const MARGIN: (f64, f64) = (1.3, 30.0);
+/// The same on the third floor itself, where `gate_frames` is the walk alone (98 frames by the graph, ~230 real):
+/// t1 step 881 banked 142 MrI::Climb successes at 1.3x and got 0 of 143 MrI::Gate (the cap ran out on the way).
+const MARGIN_3F: (f64, f64) = (2.4, 30.0);
+
+fn margin_at(p: [f32; 3]) -> (f64, f64) {
+    if p[1] >= 1700.0 { MARGIN_3F } else { MARGIN }
+}
 
 /// Frames from Mario (outside the chamber) to its west gate with the vanish cap: the vanish cap first (a vanish `!` box,
 /// broken, then its cap), then the wall-kick column to the third floor and across it (`mansion.rs`).
@@ -121,6 +128,7 @@ fn secret_to_gate(s: &St, margin: (f64, f64)) -> f64 {
         // no way up to the third floor. `gate_frames` goes by the wall-kick column, ~300 frames from the
         // second-floor box.)
         let g = gate_frames(s, s.pos);
+        let margin = if s.pos[1] >= 1700.0 { MARGIN_3F } else { margin };
         if s.cap_timer as f64 >= margin.0 * g + margin.1 {
             return g;
         }
@@ -167,7 +175,8 @@ impl Climb {
             // At the west wall (or already inside) with a few frames of cap to cross the two walls.
             return in_secret_room(s.pos) || (hdist(s.pos, SECRET_GATE_WEST) < 150.0 && s.cap_timer >= 20);
         }
-        s.cap_timer as f64 >= MARGIN.0 * gate_frames(s, s.pos) + MARGIN.1
+        let m = margin_at(s.pos);
+        s.cap_timer as f64 >= m.0 * gate_frames(s, s.pos) + m.1
     }
 }
 

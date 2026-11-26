@@ -182,6 +182,121 @@ impl Pole {
     }
 }
 
+/// One pole's whole motion cycle (positions of its state machine from the canonical state off 0, vel +, oTimer 0, until
+/// it returns there), shared per pole configuration. A pole's state at any frame is a phase on this cycle, so
+/// its track is an index into it instead of a fresh 2100-entry `track` on every ETA call (that was most of the
+/// ETA's time: ~21k frames/s in DDD area 2 against 80-100k elsewhere).
+struct Cycle {
+    pos: Vec<[f32; 2]>,
+    /// (off, vel, timer) at each index, to find a pole's phase.
+    states: Vec<(f32, f32, u32)>,
+    samples: Vec<[f32; 2]>,
+    /// state -> index (offset, speed sign, timer capped at 21)
+    index: std::collections::HashMap<(u32, bool, u32), usize>,
+}
+
+/// A pole's positions and platforms on the STEP grid from one phase.
+struct Grid {
+    p: Vec<[f32; 2]>,
+    pl: Vec<Option<usize>>,
+}
+
+type CycKey = [u32; 5];
+
+fn cyc_key(p: &Pole) -> CycKey {
+    [p.home[0].to_bits(), p.home[2].to_bits(), p.dir[0].to_bits(), p.dir[1].to_bits(), p.max.to_bits()]
+}
+
+fn build_cycle(p: &Pole) -> Cycle {
+    let (mut off, mut vel, mut tm) = (0.0f32, 10.0f32, 0u32);
+    let mut pos = Vec::new();
+    let mut states = Vec::new();
+    loop {
+        pos.push([p.home[0] + off * p.dir[0], p.home[2] + off * p.dir[1]]);
+        states.push((off, vel, tm));
+        if tm <= 20 {
+            tm += 1;
+        } else {
+            off += vel;
+            if off < 0.0 || off > p.max {
+                off = off.clamp(0.0, p.max);
+                vel = -vel;
+                tm = 0;
+            }
+        }
+        if (off, vel, tm) == (0.0, 10.0, 0) || pos.len() > 20000 {
+            break;
+        }
+    }
+    let samples = (0..=8).map(|k| [p.home[0] + p.max * p.dir[0] * k as f32 / 8.0, p.home[2] + p.max * p.dir[1] * k as f32 / 8.0]).collect();
+    let mut index = std::collections::HashMap::new();
+    for (i, st) in states.iter().enumerate() {
+        index.entry((st.0.to_bits(), st.1 > 0.0, st.2)).or_insert(i);
+    }
+    Cycle { pos, states, samples, index }
+}
+
+thread_local! {
+    static CYCLES: std::cell::RefCell<std::collections::HashMap<CycKey, std::rc::Rc<Cycle>>> = Default::default();
+    static GRIDS: std::cell::RefCell<std::collections::HashMap<(CycKey, usize), std::rc::Rc<Grid>>> = Default::default();
+    static ADJ: std::cell::RefCell<std::collections::HashMap<(CycKey, CycKey), bool>> = Default::default();
+}
+
+fn cycle_of(p: &Pole) -> std::rc::Rc<Cycle> {
+    CYCLES.with(|c| c.borrow_mut().entry(cyc_key(p)).or_insert_with(|| std::rc::Rc::new(build_cycle(p))).clone())
+}
+
+/// A pole's track from its current phase: `get(t)` = `Pole::track(..)[t]`.
+struct Phased {
+    cyc: std::rc::Rc<Cycle>,
+    /// Phase index into the cycle, or None (a state off the cycle: use `own`).
+    idx: Option<usize>,
+    own: Vec<[f32; 2]>,
+    span: usize,
+    g8: std::rc::Rc<Grid>,
+}
+
+impl Phased {
+    fn new(p: &Pole, span: usize) -> Phased {
+        let cyc = cycle_of(p);
+        let idx = cyc.index.get(&(p.off.to_bits(), p.vel > 0.0, p.timer.min(21))).copied().filter(|&i| cyc.states[i] == (p.off, p.vel, p.timer.min(21)));
+        let own = if idx.is_none() { p.track(span) } else { Vec::new() };
+        let mut ph = Phased { cyc, idx, own, span, g8: std::rc::Rc::new(Grid { p: Vec::new(), pl: Vec::new() }) };
+        let mk = |ph: &Phased| {
+            let p: Vec<[f32; 2]> = (0..=(HORIZON / STEP) as usize).map(|k| ph.get(k * STEP as usize)).collect();
+            let pl = p.iter().map(|q| plat_of(*q)).collect();
+            std::rc::Rc::new(Grid { p, pl })
+        };
+        ph.g8 = match idx {
+            Some(i) => {
+                let key = (cyc_key(p), i);
+                match GRIDS.with(|g| g.borrow().get(&key).cloned()) {
+                    Some(g) => g,
+                    None => {
+                        let g = mk(&ph);
+                        GRIDS.with(|m| m.borrow_mut().insert(key, g.clone()));
+                        g
+                    }
+                }
+            }
+            None => mk(&ph),
+        };
+        ph
+    }
+    #[inline]
+    fn get(&self, t: usize) -> [f32; 2] {
+        let t = t.min(self.span);
+        match self.idx {
+            Some(i) => {
+                let n = self.cyc.pos.len();
+                let j = i + t;
+                self.cyc.pos[if j >= n { j % n } else { j }]
+            }
+            None => self.own[t],
+        }
+    }
+}
+
 fn hd(a: [f32; 2], b: [f32; 2]) -> f32 {
     ((a[0] - b[0]).powi(2) + (a[1] - b[1]).powi(2)).sqrt()
 }
@@ -330,17 +445,23 @@ impl Hop {
         let airborne = s.action_has(ACT_FLAG_AIR);
         // Every pole's position at every frame up to the horizon and a hop beyond it (one closed-form walk each).
         let span = HORIZON as usize + 120;
-        let tbl: Vec<Vec<[f32; 2]>> = poles.iter().map(|p| p.track(span)).collect();
+        let tbl: Vec<Phased> = poles.iter().map(|p| Phased::new(p, span)).collect();
         // Which poles can lead to which: tracks within a hop's reach of each other or over the same platform
         // (9 samples along each track; the poles' tracks are fixed, only their timing moves).
-        let samples: Vec<Vec<[f32; 2]>> = poles
-            .iter()
-            .map(|p| (0..=8).map(|k| [p.home[0] + p.max * p.dir[0] * k as f32 / 8.0, p.home[2] + p.max * p.dir[1] * k as f32 / 8.0]).collect())
-            .collect();
         let adj = |a: usize, b: usize| {
-            samples[a].iter().any(|x| samples[b].iter().any(|y| hd(*x, *y) <= HOP_MAX + 60.0 || (plat_of(*x).is_some() && plat_of(*x) == plat_of(*y))))
+            let key = (cyc_key(&poles[a]), cyc_key(&poles[b]));
+            if let Some(v) = ADJ.with(|m| m.borrow().get(&key).copied()) {
+                return v;
+            }
+            let (sa, sb) = (&tbl[a].cyc.samples, &tbl[b].cyc.samples);
+            let v = sa.iter().any(|x| sb.iter().any(|y| hd(*x, *y) <= HOP_MAX + 60.0 || (plat_of(*x).is_some() && plat_of(*x) == plat_of(*y))));
+            ADJ.with(|m| m.borrow_mut().insert(key, v));
+            v
         };
-        let at = |i: usize, t: f32| tbl[i][(t.max(0.0) as usize).min(span)];
+        let at = |i: usize, t: f32| tbl[i].get(t.max(0.0) as usize);
+        // Each pole's position and platform at the STEP grid (every use below but the hop/walk fixed points).
+        let p8: Vec<&[[f32; 2]]> = tbl.iter().map(|t| t.g8.p.as_slice()).collect();
+        let pl8: Vec<&[Option<usize>]> = tbl.iter().map(|t| t.g8.pl.as_slice()).collect();
         // T[p]: earliest time Mario is on pole p (from where he is, jumping into it).
         let mut t_on = vec![f32::INFINITY; n];
         let mut first = vec![[0.0f32; 3]; n];
@@ -354,7 +475,7 @@ impl Hop {
             let high = s.pos[1] >= HIGH_Y;
             for k in 0..=steps {
                 let t = (k as u32 * STEP) as f32;
-                let q = at(i, t);
+                let q = p8[i][k];
                 let g = [q[0], p.grab_y(s.pos[1]), q[1]];
                 let d = hd(sp, q);
                 // From up on the platforms Mario can only walk to a pole over the same platform, or dive to
@@ -394,9 +515,13 @@ impl Hop {
                     let mut tp = (t_on[pi] / STEP as f32).ceil() as u32;
                     while tp <= steps as u32 {
                         let t0 = (tp * STEP) as f32;
-                        let from = at(pi, t0);
+                        // arrive >= t0 + LEAVE + GRAB, so no later tp can improve t_on[qi] either (exact prune).
+                        if t0 + LEAVE_FRAMES + GRAB_FRAMES + 1.0 >= t_on[qi] {
+                            break;
+                        }
+                        let from = p8[pi][tp as usize];
                         // (a) a hop through the air: fixed point over the arrival time
-                        let mut h = hd(from, at(qi, t0)) / HOP_PACE;
+                        let mut h = hd(from, p8[qi][tp as usize]) / HOP_PACE;
                         for _ in 0..2 {
                             h = hd(from, at(qi, t0 + LEAVE_FRAMES + h)) / HOP_PACE;
                         }
@@ -405,8 +530,8 @@ impl Hop {
                             arrive = t0 + LEAVE_FRAMES + h + GRAB_FRAMES;
                         }
                         // (b) over the same platform: let go, walk to where q is
-                        if let Some(k) = plat_of(from) {
-                            let mut w = hd(from, at(qi, t0)) / WALK_PACE;
+                        if let Some(k) = pl8[pi][tp as usize] {
+                            let mut w = hd(from, p8[qi][tp as usize]) / WALK_PACE;
                             for _ in 0..2 {
                                 w = hd(from, at(qi, t0 + LEAVE_FRAMES + w)) / WALK_PACE;
                             }
@@ -452,6 +577,7 @@ impl Hop {
                     best = (f, *c);
                 }
             }
+            let cpl = plat_of(cp);
             for (i, p) in poles.iter().enumerate() {
                 if !t_on[i].is_finite() {
                     continue;
@@ -460,9 +586,13 @@ impl Hop {
                 let mut k = (t_on[i] / STEP as f32).ceil() as u32;
                 while k <= steps as u32 {
                     let t = (k * STEP) as f32;
-                    let reach = (hd(at(i, t), cp) - COIN_REACH).max(0.0);
+                    // total >= t, so once t reaches the best so far nothing later is better (exact prune).
+                    if (t as f64) >= best.0 {
+                        break;
+                    }
+                    let reach = (hd(p8[i][k as usize], cp) - COIN_REACH).max(0.0);
                     // beyond the pole's own reach: a hop (short) or a walk over the same platform
-                    if reach > HOP_MAX - COIN_REACH && !(plat_of(at(i, t)).is_some() && plat_of(at(i, t)) == plat_of(cp)) {
+                    if reach > HOP_MAX - COIN_REACH && !(pl8[i][k as usize].is_some() && pl8[i][k as usize] == cpl) {
                         k += 1;
                         continue;
                     }
@@ -547,9 +677,11 @@ mod tests {
         for (off, vel, timer, max) in [(0.0, 10.0, 0u32, 3000.0), (1130.0, -10.0, 30, 1300.0), (1295.0, 10.0, 25, 1300.0), (0.0, -10.0, 5, 700.0)] {
             let p = Pole { home: [3550.0, 1005.0, -2250.0], dir: [1.0, 0.0], max, off, vel, timer, y: 1005.0 };
             let tr = p.track(900);
+            let ph = Phased::new(&p, 900);
             for t in 0..=900u32 {
                 let a = p.at(t);
                 assert!((a[0] - tr[t as usize][0]).abs() < 0.01 && (a[1] - tr[t as usize][1]).abs() < 0.01, "t {t}: {a:?} vs {:?}", tr[t as usize]);
+                assert_eq!(ph.get(t as usize), tr[t as usize], "cycle t {t}");
             }
         }
     }

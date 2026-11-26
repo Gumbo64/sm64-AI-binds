@@ -448,3 +448,206 @@ impl Objective for Quick {
         Self::source(s).map(|x| x.0)
     }
 }
+
+// ---------------------------------------------------------------------------------------------------------------
+// WDW "Go to Town for Red Coins" (star index 4, course 11): `WdwRed::Break` and `WdwRed::Take`.
+//
+// Mechanism (levels/wdw/areas/2/macro.inc.c, src/game/behaviors/breakable_box.inc.c + switch_hidden_objects.inc.c,
+// interaction.c): 7 of the downtown's 8 red coins (macro_red_coin; the 8th, (-780, -1020, 3400), hangs free) sit
+// inside a `macro_breakable_box_giant` (bhvBreakableBox, 2nd param byte 3: scale 1.5, no loot coins) 20..150 above
+// the box's origin. The coin is a separate object, so the box has to go: `bhv_breakable_box_loop` explodes it when
+// `cur_obj_was_attacked_or_ground_pounded` (INT_STATUS_INTERACTED + WAS_ATTACKED set by `attack_object` from
+// `interact_breakable`, or Mario in ACT_GROUND_POUND_LAND with the box as his platform). `determine_interaction`
+// (interaction.c) gives an attack only to actions with ACT_FLAG_ATTACKING: ACT_PUNCHING / MOVE_PUNCHING (within 60
+// degrees of the box, MARIO_PUNCHING), ACT_JUMP_KICK (MARIO_KICKING), ground pound / twirl falling, slide kicks, any
+// action moving at 26+ units a frame; and hits from above/below in the air (INT_HIT_FROM_ABOVE only bounces: the
+// box needs INT_ATTACK_NOT_WEAK_FROM_ABOVE). A swimming Mario has none of them, so the water must be down first
+// ([`Lower`], -2450) and must stay down (the diamond at (-767, -127, 1792) refloods it). Dry, the boxes are broken
+// by `Break` (its ETA runs to the box and gives the explosion a small step of its own), the coins taken by `Take`
+// (the 8th one's red-coin star appears at (-770, -1600, 3600): hidden_star.inc.c, `Star::Collect` takes it).
+// Both exist only in the dry downtown: a state that refloods the water is Lost.
+
+/// Dry enough to break a box from the floor (a little over the drain's target [`low`] for area 2).
+const DRY: i32 = -2300;
+/// The step the explosion gives the ETA of `Break`, in frames (the attack's wind-up).
+const HIT_FRAMES: f64 = 20.0;
+
+/// The red coins' boxes: bhvBreakableBox near a red coin (the giant ones; the small boxes at y -300 are far).
+fn coin_box<'a>(s: &'a St, coin: &Obj) -> Option<&'a Obj> {
+    s.objects()
+        .iter()
+        .filter(|b| b.bhv_name() == "bhvBreakableBox")
+        .filter(|b| ((b.pos[0] - coin.pos[0]).powi(2) + (b.pos[2] - coin.pos[2]).powi(2)).sqrt() < 120.0 && coin.pos[1] - b.pos[1] > -50.0 && coin.pos[1] - b.pos[1] < 220.0)
+        .min_by(|a, b| s.dist(a.pos).total_cmp(&s.dist(b.pos)))
+}
+
+fn red_town(b: &St) -> bool {
+    b.level as u32 == LEVEL_WDW && b.area == 2 && !b.has_star(11, 4) && b.red_coins < 8 && b.objects.is_some()
+}
+
+fn walk(s: &St, p: [f32; 3]) -> f64 {
+    frames_for(obrrt_core::geo::path_dist(s.zone(), s.pos, p).unwrap_or_else(|| s.dist(p)))
+}
+
+/// `WdwRed::Break(id)`: break the box of a red coin, from dry ground.
+pub struct RedBreak {
+    id: obrrt_core::ObjId,
+    zone: (u16, u8),
+    home: [f32; 3],
+}
+
+/// The box's half width (collision +-100, scale 1.5) and height (200 * 1.5): Mario stands at its wall ~200 from its
+/// axis (wall radius 50), within the interaction hitbox (150 + his 37), and a ground pound from above lands on
+/// the top (the box is his platform: cur_obj_is_mario_ground_pounding_platform).
+const BOX_WALL: f32 = 150.0;
+const BOX_TOP: f32 = 300.0;
+/// The ground pound's frames (spin, fall, land) once over the box; the punch's wind-up is [`HIT_FRAMES`].
+const POUND_FRAMES: f64 = 30.0;
+/// A turn of a quarter circle to face a box, in frames (a punch hits within 60 degrees of the facing,
+/// determine_interaction).
+const TURN_FRAMES: f64 = 10.0;
+
+/// The frames to attack `b` from where `s` is: the cheaper of a punch at its wall (the walk to the wall, a turn to
+/// face it, the wind-up) and a ground pound from its top (the way to a point over the top, the pound).
+fn attack_frames(s: &St, b: &Obj) -> f64 {
+    let (dx, dz) = (b.pos[0] - s.pos[0], b.pos[2] - s.pos[2]);
+    let d = (dx * dx + dz * dz).sqrt();
+    // Side: the walking distance to the box, less its wall; facing it matters inside the wall's reach.
+    let walk_in = (obrrt_core::geo::path_dist(s.zone(), s.pos, b.pos).unwrap_or_else(|| s.dist(b.pos)) - BOX_WALL).max(0.0);
+    let to = (dx.atan2(dz) * 32768.0 / std::f32::consts::PI) as i32;
+    let off = (((to - s.yaw as i32) & 0xFFFF) as i16 as i32).unsigned_abs() as f64 / 16384.0;
+    let turn = if d < 400.0 { TURN_FRAMES * (off - 0.65).max(0.0).min(1.0) } else { 0.0 };
+    let side = frames_for(walk_in) + turn + HIT_FRAMES;
+    // Top: over it (within its half width) above the top, or the way up to a point just above it.
+    let top = [b.pos[0], b.pos[1] + BOX_TOP + 60.0, b.pos[2]];
+    let up = frames_for(s.dist(top)) + POUND_FRAMES;
+    side.min(up)
+}
+
+impl RedBreak {
+    pub fn generate(b: &St, out: &mut Vec<Arc<dyn Objective>>) {
+        if !red_town(b) || (b.water_level as i32) > DRY || b.water_level as i32 <= -10000 {
+            return;
+        }
+        for c in b.objects().iter().filter(|o| o.bhv_name() == "bhvRedCoin") {
+            if let Some(bx) = coin_box(b, c) {
+                out.push(Arc::new(RedBreak { id: bx.id, zone: b.zone(), home: bx.home }));
+            }
+        }
+    }
+}
+
+impl Objective for RedBreak {
+    fn dense_keep(&self) -> obrrt_core::DenseKeep {
+        obrrt_core::DenseKeep::Every { n: 15, air: false }
+    }
+    fn kind(&self) -> &'static str {
+        "WdwRed::Break"
+    }
+    fn key(&self) -> String {
+        format!("{} {:?} {} @{},{},{}", self.kind(), self.zone, self.id, self.home[0] as i32, self.home[1] as i32, self.home[2] as i32)
+    }
+    fn obj_weight(&self, _b: &St) -> f64 {
+        20.0
+    }
+    fn base_criteria(&self, s: &St) -> bool {
+        s.zone() == self.zone && s.alive() && (s.water_level as i32) <= DRY && s.find(self.id).is_some()
+    }
+    fn exists_in(&self, s: &St) -> bool {
+        s.zone() == self.zone && s.find(self.id).is_some()
+    }
+    fn ga_budget(&self) -> Option<obrrt_core::GaBudget> {
+        Some(obrrt_core::GaBudget { population: 20, generations: 5, horizon: 240 })
+    }
+    fn needs_objects(&self) -> bool {
+        true
+    }
+    fn eta(&self, s: &St, _start: &St, _mem: &mut Mem) -> Eta {
+        if s.zone() != self.zone || !s.alive() || s.objects.is_none() {
+            return Eta::Lost;
+        }
+        // Reflooded (or still wet): a swimming Mario can't break it.
+        if s.water_level as i32 > DRY {
+            return Eta::Lost;
+        }
+        match s.find(self.id) {
+            None => Eta::Done,
+            Some(b) => Eta::Frames(attack_frames(s, b)),
+        }
+    }
+    fn success_value(&self) -> f64 {
+        4.0
+    }
+    fn steer_target(&self, s: &St) -> Option<[f32; 3]> {
+        s.find(self.id).map(|b| b.pos)
+    }
+}
+
+/// `WdwRed::Take`: the nearest red coin that no box covers (broken, or the free one), dry. Done: a red coin taken.
+pub struct RedTake {
+    zone: (u16, u8),
+}
+
+impl RedTake {
+    pub fn generate(b: &St, out: &mut Vec<Arc<dyn Objective>>) {
+        if red_town(b) && (b.water_level as i32) <= DRY && b.water_level as i32 > -10000 && Self::nearest(b).is_some() {
+            out.push(Arc::new(RedTake { zone: b.zone() }));
+        }
+    }
+
+    fn nearest(s: &St) -> Option<[f32; 3]> {
+        s.objects()
+            .iter()
+            .filter(|o| o.bhv_name() == "bhvRedCoin" && coin_box(s, o).is_none())
+            .map(|o| o.pos)
+            .min_by(|a, b| walk(s, *a).total_cmp(&walk(s, *b)))
+    }
+}
+
+impl Objective for RedTake {
+    fn dense_keep(&self) -> obrrt_core::DenseKeep {
+        obrrt_core::DenseKeep::Every { n: 15, air: false }
+    }
+    fn kind(&self) -> &'static str {
+        "WdwRed::Take"
+    }
+    fn key(&self) -> String {
+        format!("{} {:?}", self.kind(), self.zone)
+    }
+    fn obj_weight(&self, _b: &St) -> f64 {
+        25.0
+    }
+    fn base_criteria(&self, s: &St) -> bool {
+        s.zone() == self.zone && s.alive() && (s.water_level as i32) <= DRY && !s.has_star(11, 4) && Self::nearest(s).is_some()
+    }
+    fn exists_in(&self, s: &St) -> bool {
+        s.zone() == self.zone
+    }
+    fn ga_budget(&self) -> Option<obrrt_core::GaBudget> {
+        Some(obrrt_core::GaBudget { population: 20, generations: 5, horizon: 300 })
+    }
+    fn needs_objects(&self) -> bool {
+        true
+    }
+    fn eta(&self, s: &St, start: &St, _mem: &mut Mem) -> Eta {
+        if s.zone() != self.zone || !s.alive() || s.objects.is_none() {
+            return Eta::Lost;
+        }
+        if s.red_coins > start.red_coins {
+            return Eta::Done;
+        }
+        if s.water_level as i32 > DRY {
+            return Eta::Lost;
+        }
+        match Self::nearest(s) {
+            Some(p) => Eta::Frames(walk(s, p)),
+            None => Eta::Lost,
+        }
+    }
+    fn success_value(&self) -> f64 {
+        6.0
+    }
+    fn steer_target(&self, s: &St) -> Option<[f32; 3]> {
+        Self::nearest(s)
+    }
+}

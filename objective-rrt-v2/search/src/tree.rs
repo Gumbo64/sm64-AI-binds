@@ -458,7 +458,10 @@ impl Tree {
         let progress = st.progress();
         // An exit is a state Mario can act from: the menus on the way out or in
         // (star select, the save prompt) stay inside, so they can be answered.
-        let outside = outside_lock(st.level) && st.controllable() && !st.modal() && !st.in_dialog();
+        // Or the ending (OBRRT_FINAL's goal): Peach's scene and the credits are never controllable, so the grand
+        // star's level-16 states never counted as the good exit and the final search ran its whole budget (t1 step
+        // 918: 1738 ending nodes, still searching at 213 M of 400 M frames).
+        let outside = outside_lock(st.level) && ((st.controllable() && !st.modal() && !st.in_dialog()) || st.ending());
         self.delta_bytes += save.bytes();
         let depth = self.nodes[parent as usize].depth + 1;
         obrrt_core::hooks::node_added(id, parent, &st);

@@ -119,6 +119,116 @@ pub fn to_slab(s: &St, a: [f32; 3], t: [f32; 3]) -> f32 {
     to_elevator(a) + ride(ELEV_TOP) + hop
 }
 
+/// Chain costs between the gates, and from each to the elevator's lip, in distance units: the floor graph's walks
+/// between fixed points, so computed once ([`reach`]). `chain[i][j]`: from gate i's start through gate j's end (j >= i);
+/// `pre[i][j]`: from gate i's start to gate j's start (j >= i); `suffix[i]`: from gate i's start to the lip.
+struct Fixed {
+    chain: [[f32; 5]; 5],
+    pre: [[f32; 5]; 5],
+    suffix: [f32; 5],
+}
+
+/// [`walk`], or `None` while the floor graph isn't loaded (so a straight-line stand-in is never cached).
+fn walk_known(a: [f32; 3], b: [f32; 3]) -> Option<f32> {
+    geo::path_dist(ZONE, a, b)
+}
+
+fn fixed() -> Option<&'static Fixed> {
+    static FIXED: std::sync::OnceLock<Fixed> = std::sync::OnceLock::new();
+    if let Some(f) = FIXED.get() {
+        return Some(f);
+    }
+    let n = GATES.len();
+    let mut f = Fixed { chain: [[0.0; 5]; 5], pre: [[0.0; 5]; 5], suffix: [0.0; 5] };
+    for i in 0..n {
+        f.chain[i][i] = GATES[i].cost;
+        for j in i + 1..n {
+            let hop = walk_known(GATES[j - 1].to, GATES[j].from)?;
+            f.pre[i][j] = f.chain[i][j - 1] + hop;
+            f.chain[i][j] = f.pre[i][j] + GATES[j].cost;
+        }
+        f.suffix[i] = f.chain[i][n - 1] + walk_known(GATES[n - 1].to, LIP)?;
+    }
+    let _ = FIXED.set(f);
+    FIXED.get()
+}
+
+/// Per coin (target) walks from the gates' ends and starts to it: `[to_0.., from_0..]`, cached per target position.
+fn tails(t: [f32; 3]) -> Option<[f32; 10]> {
+    thread_local! {
+        static CACHE: std::cell::RefCell<std::collections::HashMap<[i32; 3], [f32; 10]>> = Default::default();
+    }
+    let key = [t[0] as i32, t[1] as i32, t[2] as i32];
+    if let Some(v) = CACHE.with(|c| c.borrow().get(&key).copied()) {
+        return Some(v);
+    }
+    let mut v = [0.0f32; 10];
+    for (i, g) in GATES.iter().enumerate() {
+        v[i] = walk_known(g.to, t)?;
+        v[5 + i] = walk_known(g.from, t)?;
+    }
+    CACHE.with(|c| c.borrow_mut().insert(key, v));
+    Some(v)
+}
+
+/// The first gate Mario at `a` still has to take (by height; the gates' starts rise from y 640 to 4480).
+fn next_gate(a: [f32; 3]) -> Option<usize> {
+    GATES.iter().position(|g| g.from[1] > a[1] - 250.0)
+}
+
+/// Whether the 100-coin plan prices the coin `t` by [`reach`]: in the pyramid (SSL area 2) and above y 1500, so no
+/// other course or floor pays for it.
+pub fn prices_high(s: &St, t: [f32; 3]) -> bool {
+    t[1] > 1500.0 && s.zone() == ZONE
+}
+
+/// Distance units from `a` to a high coin `t` in the pyramid (`None` where the floor graph is off: the caller keeps
+/// its straight line): the plan's cost ([`prices_high`]), cheap by construction. [`GATES`]' walks between each other
+/// and to the lip are computed once ([`Fixed`]), those from the gates to a coin once per coin ([`tails`]), so a call
+/// costs ONE floor-graph lookup: Mario's walk to the next gate's start, or, when he is already as high as the coin
+/// (the way down is free: the walk takes drops) or past the last gate, straight to the coin. The best over the gates
+/// taken in a row from the next one: up the chain to gate j, then the walk from its end (or its start) to the coin.
+/// A slab's coin (a yellow coin on each trigger) is [`to_slab`]'s ride. Replaces the ssl100 agent's `reach`, which
+/// re-walked every leg on every call and cost half the frames a second.
+pub fn reach(s: &St, a: [f32; 3], t: [f32; 3]) -> Option<f32> {
+    let f = fixed()?;
+    let n = GATES.len();
+    let next = next_gate(a);
+    if is_slab_trigger([t[0], t[1] - 10.0, t[2]]) && (t[2] + 600.0).abs() < 30.0 {
+        let trig = [t[0], t[1] - 10.0, t[2]];
+        let top = elevator_top(s)?;
+        let hop = 205.0;
+        let ride = |from_top: f32| (from_top - trig[1]).max(0.0) / 10.0 * PACE as f32;
+        // On the elevator's platform: ridden down to the slab.
+        if a[0].abs() < 520.0 && a[2] > -260.0 && a[2] < 780.0 && a[1] > top - 80.0 && a[1] < top + 500.0 {
+            return Some(if top + 40.0 >= trig[1] { ride(top) + hop } else { dist(a, trig) + NO_WAY });
+        }
+        if let Some(k) = slab_of(a) {
+            return Some(if SLABS[k].0[1] > trig[1] + 100.0 { dist(a, trig) + 600.0 } else { dist(a, trig) + NO_WAY });
+        }
+        if top < ELEV_TOP - 50.0 {
+            return Some(dist(a, trig) + NO_WAY);
+        }
+        // The walk to the elevator, as [`to_elevator`] but with the one lookup.
+        let to_elev = match next {
+            Some(k) if a[1] < t[1] - 100.0 => walk_known(a, GATES[k].from)? + f.suffix[k],
+            _ => walk_known(a, LIP)?,
+        };
+        return Some(to_elev + dist(LIP, [450.0, ELEV_TOP, -200.0]) + ride(ELEV_TOP) + hop);
+    }
+    let k = match next {
+        Some(k) if a[1] < t[1] - 100.0 => k,
+        _ => return walk_known(a, t),
+    };
+    let tl = tails(t)?;
+    let up = walk_known(a, GATES[k].from)?;
+    let mut best = f32::INFINITY;
+    for j in k..n {
+        best = best.min(up + f.chain[k][j] + tl[j]).min(up + f.pre[k][j] + tl[5 + j]);
+    }
+    Some(best)
+}
+
 // ---------------------------------------------------------------------------
 // The way in from above: area 1's pyramid-top hole.
 
@@ -155,9 +265,18 @@ pub fn dropped_in(s: &St) -> bool {
 /// down ([`to_slab`]). `Lost` when Mario leaves area 1 any other way.
 pub struct TopHole;
 
+/// The coin plan's stop for the way into the pyramid (missions/twostar.rs `other_areas`): the nearest pillar still
+/// to touch, else the pit.
+pub fn entry_target(s: &St) -> [f32; 3] {
+    TopHole::pillars(s).into_iter().min_by(|a, b| TopHole::walk(s.pos, *a).total_cmp(&TopHole::walk(s.pos, *b))).unwrap_or(HOLE)
+}
+
 impl TopHole {
+    /// Also for the 100-coin star (SSL's index 6) once the outside's coins are used up
+    /// (`twostar::outside_used_up`): the pyramid holds the rest of the coins, and has no way back.
     pub fn new(b: &St) -> Option<TopHole> {
-        let ok = b.zone() == OUTSIDE && b.objects.is_some() && !b.has_star(8, 5) && b.objects().iter().any(|o| o.bhv_name() == "bhvPyramidTop" || o.bhv_name() == "bhvPyramidPillarTouchDetector");
+        let wanted = !b.has_star(8, 5) || super::missions::twostar::outside_used_up(b);
+        let ok = b.zone() == OUTSIDE && b.objects.is_some() && wanted && b.objects().iter().any(|o| o.bhv_name() == "bhvPyramidTop" || o.bhv_name() == "bhvPyramidPillarTouchDetector");
         ok.then_some(TopHole)
     }
 
@@ -234,7 +353,7 @@ impl obrrt_core::Objective for TopHole {
         10
     }
     fn exists_in(&self, s: &St) -> bool {
-        s.zone() == OUTSIDE && !s.has_star(8, 5)
+        s.zone() == OUTSIDE && (!s.has_star(8, 5) || super::missions::twostar::goal_on(s))
     }
 }
 
