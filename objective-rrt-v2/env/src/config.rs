@@ -1,0 +1,724 @@
+//! [`SearchConfig`]: every setting of the objective-RRT search as plain data.
+//!
+//! One value, built by an adapter (the environment, [`crate::from_env`]; a TOML file,
+//! [`crate::from_toml`]; or in code), handed to the search. The defaults are the search's
+//! defaults, so `SearchConfig::default()` is "no switch set". Field docs name the legacy
+//! `OBRRT_*` variable each field replaces.
+//!
+//! Grouping: what the search does ([`Budget`], [`Sampler`], [`Chain`], [`Dedup`], [`Zone`],
+//! [`GoalFocus`], [`Kin`], [`Ga`], [`Priors`], [`Stop`]), what the domain knowledge does
+//! ([`ObjectiveConfig`]) and the switches only research scripts set ([`Research`]).
+use serde::{Deserialize, Serialize};
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SearchConfig {
+    pub budget: Budget,
+    pub sampler: Sampler,
+    pub chain: Chain,
+    pub dedup: Dedup,
+    pub zone: Zone,
+    pub goal_focus: GoalFocus,
+    pub kin: Kin,
+    pub ga: Ga,
+    pub priors: Priors,
+    pub objectives: ObjectiveConfig,
+    pub stop: Stop,
+    pub research: Research,
+}
+
+/// How much the search may spend.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Budget {
+    /// OBRRT_GA_SCALE: multiplies the GA's generations.
+    pub ga_scale: f64,
+    /// OBRRT_MAX_FRAMES: stop after emulating this many frames.
+    pub max_frames: Option<u64>,
+    /// OBRRT_MEM_MB: memory budget of saves, in MB (None: the engine's 3 GB).
+    pub mem_mb: Option<usize>,
+    /// OBRRT_ROUND: attempts planned per round.
+    pub round_plans: usize,
+    /// OBRRT_TUNE_FRAMES: automatic tuning every this many emulated frames.
+    pub tune_frames: u64,
+}
+
+impl Default for Budget {
+    fn default() -> Self {
+        Budget { ga_scale: 3.0, max_frames: None, mem_mb: None, round_plans: 64, tune_frames: 10_000_000 }
+    }
+}
+
+/// The hierarchical rate sampler's parameters (OBRRT_RATE_*).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Rate {
+    pub floor: f64,
+    pub cap: f64,
+    pub tau: f64,
+    /// OBRRT_RATE_PRIOR
+    pub prior_frames: f64,
+    /// OBRRT_RATE_NOSTART
+    pub nostart_frames: f64,
+    /// OBRRT_RATE_NODE_PRIOR
+    pub node_prior: f64,
+    /// OBRRT_RATE_NODE_CAP
+    pub node_cap: f64,
+    pub kind_scale: f64,
+    pub route: f64,
+    pub novel: f64,
+    /// OBRRT_RATE_MODE=hier
+    pub hier: bool,
+    /// OBRRT_RATE_NOSTART_SKIP=1
+    pub nostart_skip: bool,
+    pub skip_budget: u64,
+}
+
+impl Default for Rate {
+    fn default() -> Self {
+        Rate {
+            floor: 0.15,
+            cap: 4.0,
+            tau: 50_000_000.0,
+            prior_frames: 200_000.0,
+            nostart_frames: 5_000.0,
+            node_prior: 300_000.0,
+            node_cap: 2.0,
+            kind_scale: 10.0,
+            route: 0.0,
+            novel: 1.0,
+            hier: false,
+            nostart_skip: false,
+            skip_budget: 2_000_000,
+        }
+    }
+}
+
+/// Arrival ranking (OBRRT_ARRIVAL*).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Arrival {
+    pub on: bool,
+    pub pace: f64,
+    pub t: f64,
+    pub band: Option<f64>,
+    /// OBRRT_ARRIVAL_DECAY=either (true) | arrival (false)
+    pub decay_either: bool,
+    pub mix: f64,
+}
+
+impl Default for Arrival {
+    fn default() -> Self {
+        Arrival { on: false, pace: 20.0, t: 1.0, band: None, decay_either: true, mix: 0.5 }
+    }
+}
+
+/// Earliest-arrival boost (OBRRT_EARLIEST*).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Earliest {
+    pub on: bool,
+    pub cap: u32,
+    pub share: f64,
+    pub cell: bool,
+}
+
+impl Default for Earliest {
+    fn default() -> Self {
+        Earliest { on: false, cap: 12, share: 0.15, cell: true }
+    }
+}
+
+/// Which objective, from which start: weights and who gets picked.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Sampler {
+    /// OBRRT_SAMPLER=rate (false: decay).
+    pub rate_sampler: bool,
+    pub rate: Rate,
+    /// OBRRT_KIND_CAP
+    pub kind_cap: f64,
+    pub kind_bandit: bool,
+    pub kind_gamma: f64,
+    pub entry_bandit: bool,
+    pub zone_bandit: bool,
+    pub value_zones: bool,
+    pub start_wear: bool,
+    pub decay_route: bool,
+    /// OBRRT_ROUTE: share of b drawn from the best routes.
+    pub route_share: f64,
+    /// OBRRT_PICK_BY_B
+    pub pick_by_b: bool,
+    /// OBRRT_NEW_ELIGIBLE
+    pub new_eligible: bool,
+    /// OBRRT_STAR: RRT* mode.
+    pub rrt_star: bool,
+    pub arrival: Arrival,
+    pub earliest: Earliest,
+}
+
+impl Default for Sampler {
+    fn default() -> Self {
+        Sampler {
+            rate_sampler: false,
+            rate: Rate::default(),
+            kind_cap: 0.0,
+            kind_bandit: false,
+            kind_gamma: 0.995,
+            entry_bandit: false,
+            zone_bandit: false,
+            value_zones: false,
+            start_wear: false,
+            decay_route: false,
+            route_share: 0.0,
+            pick_by_b: true,
+            new_eligible: false,
+            rrt_star: false,
+            arrival: Arrival::default(),
+            earliest: Earliest::default(),
+        }
+    }
+}
+
+/// How attempts chain objectives.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Chain {
+    /// OBRRT_CHAIN=route (false: stack).
+    pub route: bool,
+    /// OBRRT_CHAIN_FOLLOW
+    pub follow: f64,
+    /// OBRRT_CHAIN_PROB: fixes the extension probability instead of learning it.
+    pub fixed: Option<f64>,
+}
+
+impl Default for Chain {
+    fn default() -> Self {
+        Chain { route: false, follow: 0.5, fixed: None }
+    }
+}
+
+/// OBRRT_REPLAY_MAX: when a node keeps a save.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ReplayMax {
+    /// Unset: 150 with dense adds on, every node saved otherwise.
+    #[default]
+    Auto,
+    /// "off": every save kept.
+    Off,
+    /// A node keeps a save only beyond this many frames from its saved ancestor.
+    Frames(u32),
+}
+
+/// Dense adds (OBRRT_ADD, OBRRT_DENSE_*).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Dense {
+    /// OBRRT_ADD=winner|winner_all|last_gen|all (comma-separated); None: off.
+    pub add: Option<String>,
+    pub grid: u32,
+    /// OBRRT_DENSE_CAP (None: 256 with `all`, else 0).
+    pub cap: Option<usize>,
+    pub ne: bool,
+    pub mem_objects: bool,
+    pub every: u32,
+    /// OBRRT_DENSE_EVERY=obj[:n]
+    pub per_obj: bool,
+    pub air: bool,
+}
+
+impl Default for Dense {
+    fn default() -> Self {
+        Dense { add: None, grid: 64, cap: None, ne: true, mem_objects: true, every: 1, per_obj: false, air: true }
+    }
+}
+
+/// OBRRT_NEAR_SEED and its settings.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Near {
+    pub seed: bool,
+    pub radius: f32,
+    pub p: f64,
+    pub keep: usize,
+}
+
+impl Default for Near {
+    fn default() -> Self {
+        Near { seed: false, radius: 300.0, p: 0.5, keep: 32 }
+    }
+}
+
+/// What counts as the same state, and what the tree retires.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Dedup {
+    /// OBRRT_SOFT_DEDUP
+    pub soft_dedup: bool,
+    /// OBRRT_STARSET_KEY: dedupe and b cells by the collected set.
+    pub starset_key: bool,
+    /// OBRRT_STAR_WINDOW (None: 1, or 99 with the zone lock).
+    pub star_window: Option<i16>,
+    /// OBRRT_RETIRE_SUBSET / _CAP
+    pub retire_subset: bool,
+    pub retire_subset_cap: usize,
+    /// OBRRT_KEEP_WIP / _N / _FRAMES
+    pub keep_wip: bool,
+    pub keep_wip_n: usize,
+    pub keep_wip_frames: u32,
+    /// OBRRT_CELL_MOTION
+    pub cell_motion: bool,
+    /// OBRRT_SETTLE_RANK
+    pub settle_rank: bool,
+    /// OBRRT_FINGERPRINT=0 turns it off.
+    pub fingerprint: bool,
+    pub replay_max: ReplayMax,
+    /// OBRRT_SPARSE_CHECK
+    pub sparse_check: usize,
+    pub dense: Dense,
+    pub near: Near,
+}
+
+impl Default for Dedup {
+    fn default() -> Self {
+        Dedup {
+            soft_dedup: false,
+            starset_key: false,
+            star_window: None,
+            retire_subset: false,
+            retire_subset_cap: 6,
+            keep_wip: false,
+            keep_wip_n: 64,
+            keep_wip_frames: 3000,
+            cell_motion: false,
+            settle_rank: false,
+            fingerprint: true,
+            replay_max: ReplayMax::Auto,
+            sparse_check: 0,
+            dense: Dense::default(),
+            near: Near::default(),
+        }
+    }
+}
+
+/// Zones: the tree's level lock, replays between entries, grafts.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Zone {
+    /// OBRRT_ZONE_LOCK: the tree stays in the root's level.
+    pub lock: bool,
+    /// OBRRT_ZONE_PATH: castle hops, "l.a>l.a@x,y,z;..." (empty: none).
+    pub path: String,
+    /// OBRRT_ZONE_SHARE / _K / _CAP / _SHARE / _BG
+    pub share: bool,
+    pub share_k: usize,
+    pub share_cap: u32,
+    pub share_share: f64,
+    pub share_bg: usize,
+    /// OBRRT_ZONE_SHARE_DONOR=sample
+    pub donor_sample: bool,
+    /// OBRRT_ZONE_SHARE_STATS
+    pub share_stats: bool,
+    /// OBRRT_REROUTE / _SCHEMA / _SHARE / _MARGIN
+    pub reroute: bool,
+    pub reroute_schema: Option<String>,
+    pub reroute_share: f64,
+    pub reroute_margin: u32,
+    /// OBRRT_POLISH: share of a round's plans re-attempting the best route's milestones.
+    pub polish: f64,
+    /// OBRRT_REPLAY_BUDGET (None / 0: the slot shares).
+    pub replay_budget: Option<f64>,
+    /// OBRRT_BACKCHAIN and its settings.
+    pub backchain: Backchain,
+}
+
+impl Default for Zone {
+    fn default() -> Self {
+        Zone {
+            lock: false,
+            path: String::new(),
+            share: false,
+            share_k: 4,
+            share_cap: 3000,
+            share_share: 0.2,
+            share_bg: 2,
+            donor_sample: false,
+            share_stats: false,
+            reroute: false,
+            reroute_schema: None,
+            reroute_share: 0.25,
+            reroute_margin: 10,
+            polish: 0.0,
+            replay_budget: None,
+            backchain: Backchain::default(),
+        }
+    }
+}
+
+/// OBRRT_BACKCHAIN=1 and OBRRT_BACKCHAIN_*.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Backchain {
+    pub on: bool,
+    pub share: f64,
+    pub kmin: u32,
+    pub kmax: u32,
+    pub cap: usize,
+    pub per_target: u32,
+    pub min_weight: f64,
+}
+
+impl Default for Backchain {
+    fn default() -> Self {
+        Backchain { on: false, share: 0.1, kmin: 2, kmax: 6, cap: 900, per_target: 3, min_weight: 1.0 }
+    }
+}
+
+/// Parent windows (OBRRT_PARENT_WINDOW*).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ParentWindow {
+    /// OBRRT_PARENT_WINDOW: share of attempts (None / not positive: off).
+    pub share: Option<f64>,
+    pub max: usize,
+    pub frames: usize,
+    pub pop: f64,
+    pub horizons: f64,
+}
+
+impl Default for ParentWindow {
+    fn default() -> Self {
+        ParentWindow { share: None, max: 300, frames: 0, pop: 48.0, horizons: 0.0 }
+    }
+}
+
+/// Goal focus: plans drawn toward goals.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct GoalFocus {
+    /// OBRRT_GOAL_FOCUS: share of plans drawn toward a goal (clamped to 0..1 where used).
+    pub share: f64,
+    /// OBRRT_GOAL_EXPLORE
+    pub explore: bool,
+    /// OBRRT_GOAL_WIDE: far objects still give their goals.
+    pub wide: bool,
+    /// OBRRT_STALL_ETA (not positive: None).
+    pub stall_eta: Option<f64>,
+    pub parent_window: ParentWindow,
+}
+
+impl Default for GoalFocus {
+    fn default() -> Self {
+        GoalFocus { share: 0.0, explore: false, wide: false, stall_eta: None, parent_window: ParentWindow::default() }
+    }
+}
+
+/// OBRRT_KIN_UNIT.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum KinUnit {
+    #[default]
+    Node,
+    Attempt,
+    Frames,
+}
+
+/// Kinship generations.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Kin {
+    /// OBRRT_KINSHIP_MULT
+    pub mult: f64,
+    /// OBRRT_KIN_UNIT
+    pub unit: KinUnit,
+    /// OBRRT_KIN_FRAMES (None: the tree's 150).
+    pub frames: Option<u32>,
+    /// OBRRT_KIN_SOFT (None: the hard set).
+    pub soft: Option<f64>,
+    /// OBRRT_KIN_CAP (None: 0 = none).
+    pub cap: Option<usize>,
+}
+
+impl Default for Kin {
+    fn default() -> Self {
+        Kin { mult: 1.0, unit: KinUnit::Node, frames: None, soft: None, cap: None }
+    }
+}
+
+/// OBRRT_FITNESS.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum FitnessKind {
+    Met,
+    #[default]
+    Steps,
+}
+
+/// The GA that runs each attempt.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Ga {
+    /// OBRRT_FITNESS
+    pub fitness: FitnessKind,
+    /// OBRRT_GA_NEW
+    pub new_ops: bool,
+    /// OBRRT_PINK
+    pub pink: f64,
+    /// OBRRT_GA_BUDGET=1: per-objective GA budgets.
+    pub per_objective_budget: bool,
+    /// OBRRT_GA_GAMMA: the open GA's discount per frame.
+    pub gamma: f64,
+    /// OBRRT_GA_REGRET (frames; 0: off)
+    pub regret: usize,
+    /// OBRRT_GA_CBUTTONS
+    pub cbuttons: f64,
+    /// OBRRT_GA_KEEP_SEED
+    pub keep_seed: bool,
+    /// OBRRT_TAIL
+    pub tail: bool,
+    /// OBRRT_CALM
+    pub calm: bool,
+    /// OBRRT_MOVE_GA / OBRRT_MOVE_GA_EXTRA
+    pub move_ga: bool,
+    pub move_ga_extra: bool,
+}
+
+impl Default for Ga {
+    fn default() -> Self {
+        Ga {
+            fitness: FitnessKind::Steps,
+            new_ops: true,
+            pink: 0.0,
+            per_objective_budget: false,
+            gamma: 0.99,
+            regret: 0,
+            cbuttons: 0.0,
+            keep_seed: false,
+            tail: false,
+            calm: false,
+            move_ga: false,
+            move_ga_extra: false,
+        }
+    }
+}
+
+/// Learned and recorded priors the search reads from files or servers.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Priors {
+    /// OBRRT_REACH_PRIOR=<file>
+    pub reach_prior: Option<String>,
+    /// OBRRT_RESCUE_PRIOR=<file>
+    pub rescue_prior: Option<String>,
+    /// OBRRT_KIND_WEIGHTS=<file>
+    pub kind_weights: Option<String>,
+    /// OBRRT_ROAD: "" / "0": off, "1": on without a directory, else the directory.
+    pub road: Option<String>,
+    /// OBRRT_ETA_LEARN / _N0
+    pub eta_learn: bool,
+    pub eta_learn_n0: f64,
+    /// OBRRT_MODEL=<socket> (None / empty: off) and OBRRT_MODEL_START_T / _SERVERS / _ZONES.
+    pub model: Option<String>,
+    pub model_start_t: f64,
+    pub model_servers: usize,
+    pub model_zones: Option<String>,
+}
+
+impl Default for Priors {
+    fn default() -> Self {
+        Priors {
+            reach_prior: None,
+            rescue_prior: None,
+            kind_weights: None,
+            road: None,
+            eta_learn: false,
+            eta_learn_n0: 20.0,
+            model: None,
+            model_start_t: 300.0,
+            model_servers: 1,
+            model_zones: None,
+        }
+    }
+}
+
+/// When the run stops and what counts as a good exit.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Stop {
+    /// OBRRT_ANY_EXIT
+    pub any_exit: bool,
+    /// OBRRT_FINAL: the run's last search (only the grand star exits).
+    pub final_search: bool,
+    /// OBRRT_EXIT_NOSTOP
+    pub exit_nostop: bool,
+    /// OBRRT_EXIT_SKIP=<levels>
+    pub exit_skip: Vec<u32>,
+    /// OBRRT_STOP_FLAG=<hex save flags> (0: none)
+    pub flag: u32,
+    /// OBRRT_STOP_PROGRESS
+    pub progress: bool,
+    /// OBRRT_STOP_STALL=<frames>
+    pub stall: Option<u64>,
+    /// OBRRT_STOP_EXIT_GRACE=<frames>
+    pub exit_grace: Option<u64>,
+    /// OBRRT_GOOD_MAX_FRAME (None: no limit)
+    pub good_max_frame: Option<u32>,
+}
+
+/// OBRRT_MOVES_UPHILL.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Uphill {
+    #[default]
+    Kick,
+    Jump,
+    AirKick,
+}
+
+/// The domain knowledge's switches (the objectives and the movement library).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ObjectiveConfig {
+    /// OBRRT_TECH: technique objectives on ("all", or a list; see extra/tech/mod.rs).
+    pub tech: String,
+    /// OBRRT_FAST_MODAL (None: the library's default).
+    pub fast_modal: Option<bool>,
+    /// OBRRT_MOVES / OBRRT_MOVES_EXTRA / OBRRT_MOVES_MODES / OBRRT_MOVES_UPHILL
+    pub moves: bool,
+    pub moves_extra: bool,
+    pub moves_modes: bool,
+    pub moves_uphill: Uphill,
+    pub swim_hold: bool,
+    pub swim_targets: bool,
+    pub gp_catch: bool,
+    pub lakitu_arc: bool,
+    pub lakitu_through_door: bool,
+    pub painting_fast: bool,
+    pub grounds_fix: bool,
+    /// OBRRT_MOVE_WEIGHT=<x>: the 0.5-weight techniques weigh x (None: unchanged).
+    pub move_weight: Option<f64>,
+    pub talk_nil: bool,
+    pub king_landing: bool,
+    /// OBRRT_BLJ_*
+    pub blj_detector: Option<String>,
+    pub blj_fast: bool,
+    pub blj_risers: bool,
+    pub blj_scan: bool,
+    pub blj_spots: bool,
+    pub blj_spots_catalog: Option<String>,
+    pub blj_walls: bool,
+    pub fastexit: bool,
+    pub moatwarp: bool,
+    pub pause_buf: bool,
+    pub waterwarp: bool,
+    pub twostar: bool,
+    /// OBRRT_STATIC_ID (core): objects keyed by their static id.
+    pub static_id: bool,
+    /// OBRRT_GEO (core): walkable distances over the level's floors.
+    pub geo: bool,
+}
+
+impl Default for ObjectiveConfig {
+    fn default() -> Self {
+        ObjectiveConfig {
+            tech: "all".into(),
+            fast_modal: None,
+            moves: false,
+            moves_extra: false,
+            moves_modes: false,
+            moves_uphill: Uphill::Kick,
+            swim_hold: false,
+            swim_targets: false,
+            gp_catch: false,
+            lakitu_arc: false,
+            lakitu_through_door: false,
+            painting_fast: false,
+            grounds_fix: false,
+            move_weight: None,
+            talk_nil: false,
+            king_landing: false,
+            blj_detector: None,
+            blj_fast: false,
+            blj_risers: false,
+            blj_scan: false,
+            blj_spots: false,
+            blj_spots_catalog: None,
+            blj_walls: false,
+            fastexit: false,
+            moatwarp: false,
+            pause_buf: false,
+            waterwarp: false,
+            twostar: false,
+            static_id: false,
+            geo: false,
+        }
+    }
+}
+
+/// Faster-only, Beat and branch-and-bound bounds (OBRRT_FASTER_ONLY, _BEAT, _BNB).
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Speed {
+    pub faster_only: bool,
+    pub beat: bool,
+    pub bnb: bool,
+}
+
+/// The rolling-horizon controller (OBRRT_RH, OBRRT_RH_*).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Rh {
+    pub on: bool,
+    pub pop: usize,
+    pub h: usize,
+    pub k: usize,
+    pub g: usize,
+    pub g_precise: usize,
+    pub gamma: f64,
+    pub bonus: f64,
+    pub death: f64,
+    pub stall: usize,
+    pub hot: usize,
+    pub maxlen: usize,
+}
+
+impl Default for Rh {
+    fn default() -> Self {
+        Rh { on: false, pop: 32, h: 240, k: 15, g: 1, g_precise: 3, gamma: 0.99, bonus: 300.0, death: 600.0, stall: 6, hot: 3, maxlen: 900 }
+    }
+}
+
+/// Switches only research scripts set.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Research {
+    pub speed: Speed,
+    pub rh: Rh,
+    /// OBRRT_GA_QD=1 and OBRRT_GA_GAMMAS=<g,g,...>
+    pub qd: bool,
+    pub qd_gammas: Option<String>,
+    /// OBRRT_PICK=schema|schema_kin (None: the kinship softmax), OBRRT_PICK_SCHEMA, _RAND, _KIN_W.
+    pub pick: Option<String>,
+    pub pick_schema: Option<String>,
+    pub pick_rand: f64,
+    pub pick_kin_w: f64,
+    /// OBRRT_SAMPLE_CHECK
+    pub sample_check: bool,
+}
+
+impl Default for Research {
+    fn default() -> Self {
+        Research {
+            speed: Speed::default(),
+            rh: Rh::default(),
+            qd: false,
+            qd_gammas: None,
+            pick: None,
+            pick_schema: None,
+            pick_rand: 0.1,
+            pick_kin_w: 4.0,
+            sample_check: false,
+        }
+    }
+}

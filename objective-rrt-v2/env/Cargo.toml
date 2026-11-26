@@ -1,0 +1,10 @@
+[package]
+name = "obrrt-env"
+description = "The search's settings as one typed value (SearchConfig) and the adapters that fill it: OBRRT_* environment variables, a TOML file."
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+serde.workspace = true
+toml = "0.8"

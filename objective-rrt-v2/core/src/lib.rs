@@ -4,6 +4,7 @@
 //!
 //! Neither side depends on the other; both depend on this crate only.
 
+pub mod config;
 pub mod dyngeo;
 pub mod features;
 pub mod geo;

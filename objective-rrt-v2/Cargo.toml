@@ -1,11 +1,11 @@
 [workspace]
 resolver = "3"
-members = ["core", "search", "objectives", "run", "oss2", "spec", "gp", "policy", "agent"]
+members = ["env", "core", "search", "objectives", "run", "oss2", "spec", "gp", "policy", "agent"]
 # oss2 (scattershot v2) is built with `-p oss2`; plain `cargo build` leaves it out.
 # spec (declarative JSON objectives, OBRRT_SPEC; tools/spec/) is built with `-p obrrt-spec`.
 # agent (`ar`, agent-driven routes; agent/README.md) is built with `-p obrrt-agent`.
 # pyenv/ (the sm64env Python extension) is parked: not a member, not committed.
-default-members = ["core", "search", "objectives", "run"]
+default-members = ["env", "core", "search", "objectives", "run"]
 
 [workspace.package]
 version = "0.1.0"
@@ -19,6 +19,7 @@ serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1"
 sm64-binds = { version = "2.0.0", default-features = false }
 lz4_flex = "0.14.0"
+obrrt-env = { path = "env" }
 obrrt-core = { path = "core" }
 obrrt-search = { path = "search" }
 obrrt-objectives = { path = "objectives" }
