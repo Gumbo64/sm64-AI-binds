@@ -1,7 +1,7 @@
 //! The domain set-up obrrt2 does from its environment, shared with the other
 //! drivers (spec's `legs`): the steering controller, the movement library
 //! (`OBRRT_MOVES=1`) or only its policies (`OBRRT_MOVE_GA=1` without it),
-//! the dialog/menu policies (`OBRRT_FAST_MODAL`) and the technique set
+//! and the technique set
 //! (`OBRRT_TECH`, "all" by default). Switches read lazily where they are used
 //! (OBRRT_CALM, _LAKITU_ARC, _PAINTING_FAST, _GP_CATCH, _SWIM_HOLD, the
 //! search's OBRRT_MOVE_GA*) need nothing here.
@@ -18,11 +18,6 @@ pub fn from_env() -> Result<(String, Vec<&'static str>), String> {
 pub fn from_config(cfg: &obrrt_core::config::SearchConfig) -> Result<(String, Vec<&'static str>), String> {
     let o = &cfg.objectives;
     crate::moves::install_controller();
-    // OBRRT_FAST_MODAL=0: the old dialog/menu macros (A every 4th frame)
-    // instead of the frame-optimal policies (menu.rs).
-    if let Some(on) = o.fast_modal {
-        crate::set_fast_modal(on);
-    }
     // OBRRT_MOVES=1: steering's ground/air mode through the movement library.
     if o.moves {
         crate::moves::install();

@@ -390,10 +390,6 @@ pub struct WingRing {
 
 /// Coins a ring attempt is for.
 const RING_COINS: i16 = 5;
-/// With free flight (`OBRRT_FLY`) a ring's lane gives one coin ([`lane_target`]): an attempt is 4 coins.
-fn ring_coins() -> i16 {
-    if fly_on() { 4 } else { RING_COINS }
-}
 /// How far under its ring a `WingRing` start may be.
 const RING_BELOW: f32 = 800.0;
 
@@ -414,113 +410,12 @@ impl WingRing {
 /// the centre misses every coin; steering at the formation's own position (its lowest point) got WingRing 0-4%
 /// from free flight (zt-fly-s6/s7, zt-fly2-s6/s7).
 fn ring_target(s: &St) -> Option<[f32; 3]> {
-    if !fly_on() {
-        // v3x: the nearest ring's formation position (what cannon shots aimed at: 65 and 60 coins from 39).
-        return s
-            .objects()
-            .iter()
-            .filter(|o| o.bhv_name() == "bhvCoinFormation" && o.value > 0 && needs_wings(s, o))
-            .map(|o| o.pos)
-            .min_by(|a, b| s.dist(*a).total_cmp(&s.dist(*b)));
-    }
-    lane_target(s)
-}
-
-/// Mario's hitbox against a coin (interaction.c / detect_object_hitbox_overlap): horizontal distance under
-/// 100 (coin) + 37 (Mario), and vertically Mario's [y, y+160] against the coin's [y, y+64], so his feet within
-/// (coin - 160, coin + 64): aimed at the window's middle, 48 under the coin.
-const FEET_BELOW_COIN: f32 = 48.0;
-
-/// The coins of a vertical ring (type 3) that every approach can reach: spawn_coin_in_formation puts coin i at
-/// local (200 cos(45 i), 200 sin(45 i) + 200) turned by the formation's yaw (spawn_object_relative ->
-/// obj_translate_local), so i = 2 (top, +400 up) and i = 6 (bottom, the formation's own position) sit ON the
-/// ring's axis, horizontally 0 from it whichever way the ring faces; the other six are 141-200 to the side,
-/// beyond the 137 reach for a flight along the axis. (A flight through the ring's centre hits none of the
-/// eight: 200 from all. v4d steered at the nearest coin, one of the side ones as often as not: 0%.) BoB's
-/// rings (yaw 90: the ring plane is y-z, normal along x) lie on the line z = 1250, x = 3000, 2000, 1000, -300,
-/// -1506 (y 3400, 3400, 3400, 4000, 5317) in front of the cannon at (4352, 3072, 1229): one flight along -x
-/// threads their bottoms (or tops) in turn, 40 coins in all.
-///
-/// Targets, per ring with coins left: the best line through a ring in range (a pass at lateral offset L and feet
-/// height F hits every coin within 125 of L whose window holds F; see the candidates below: a side line takes 2
-/// coins, a lane 1), or for a ring with none spawned yet (farther than 2000) its two lane points. Of those, the
-/// nearest that Mario can reach on his energy and is ahead of his heading (within 90 degrees), else the nearest
-/// reachable one (a U-turn), else the nearest. Test (BoB, from the cannon at (4352, 3082, 1229) with 47 coins,
-/// cap on, 15 M frames, `OBRRT_FLY=1 OBRRT_TWOSTAR=1`): WingRing 20/26 and 28/33 successes (2-coin goal; 9/23 at
-/// the 4-coin goal now set; v3x targets 1/28 at 5 coins), best chain of flight-only steps 56 coins (v3x targets 53, lane targets 51-53); the replayed
-/// route fly-ring56.m64 takes 9 ring coins in one flight (shot at ring 1, rings 4, 5, then back through 1-3).
-fn lane_target(s: &St) -> Option<[f32; 3]> {
-    let objs = s.objects();
-    let mut pts: Vec<[f32; 3]> = Vec::new();
-    for f in objs.iter().filter(|o| o.bhv_name() == "bhvCoinFormation" && o.value > 0 && needs_wings(s, o)) {
-        let lanes: [[f32; 3]; 2] = [f.pos, [f.pos[0], f.pos[1] + 400.0, f.pos[2]]];
-        if (f.beh_params >> 16) & 7 != 3 {
-            // A vertical line (type 1): its coins stand in a column on the formation; any spawned one will do.
-            let col: Vec<[f32; 3]> = objs
-                .iter()
-                .filter(|o| o.bhv_name() == "bhvCoinFormationSpawn" && o.interact_type == INTERACT_COIN && (o.pos[0] - f.pos[0]).hypot(o.pos[2] - f.pos[2]) < 40.0)
-                .map(|o| o.pos)
-                .collect();
-            if col.is_empty() { pts.push([f.pos[0], f.pos[1] + 256.0, f.pos[2]]) } else { pts.extend(col) }
-            continue;
-        }
-        // The ring's coins out in the world (within 450 of its centre, 200 up).
-        let centre = [f.pos[0], f.pos[1] + 200.0, f.pos[2]];
-        let all: Vec<[f32; 3]> = objs
-            .iter()
-            .filter(|o| o.bhv_name() == "bhvCoinFormationSpawn" && o.interact_type == INTERACT_COIN && obrrt_core::dist(centre, o.pos) < 450.0)
-            .map(|o| o.pos)
-            .collect();
-        if all.is_empty() {
-            pts.extend(lanes);
-            continue;
-        }
-        // A pass through the ring's plane (normal n = the formation's local z turned by its yaw) at lateral offset
-        // L and feet height F hits the coins within 125 of L along the plane (137 less a little) whose window
-        // (coin - 160, coin + 64) holds F. The candidates are each coin's lateral offset with F just above that
-        // coin (also taking the diagonal coin above it) or 100 under it (the one below): the lane coins are 1
-        // coin per pass, a side line 2 (the side coin and a diagonal; BoB's ring: 200 out, the diagonals 141).
-        let a = f.yaw as f32 * std::f32::consts::TAU / 65536.0;
-        let t = [a.cos(), -a.sin()];
-        let lat = |p: &[f32; 3]| (p[0] - f.pos[0]) * t[0] + (p[2] - f.pos[2]) * t[1];
-        let mut best: Option<(usize, f32, f32)> = None;
-        for c in &all {
-            for fy in [c[1] + 10.0, c[1] - 100.0] {
-                let l = lat(c);
-                let hits = all.iter().filter(|q| (lat(q) - l).abs() < 125.0 && fy > q[1] - 150.0 && fy < q[1] + 54.0).count();
-                let better = best.is_none_or(|(n, bl, bf)| {
-                    let (d0, d1) = (s.dist([f.pos[0] + bl * t[0], bf, f.pos[2] + bl * t[1]]), s.dist([f.pos[0] + l * t[0], fy, f.pos[2] + l * t[1]]));
-                    hits > n || (hits == n && d1 < d0)
-                });
-                if better {
-                    best = Some((hits, l, fy));
-                }
-            }
-        }
-        if let Some((_, l, fy)) = best {
-            pts.push([f.pos[0] + l * t[0], fy + FEET_BELOW_COIN, f.pos[2] + l * t[1]]);
-        }
-    }
-    let ahead = |p: &[f32; 3]| {
-        if s.action != ACT_FLYING {
-            return true;
-        }
-        let (sy, cy) = (crate::moves::cannon::sins(s.yaw as i32), crate::moves::cannon::coss(s.yaw as i32));
-        (p[0] - s.pos[0]) * sy + (p[2] - s.pos[2]) * cy > 0.0
-    };
-    // Flight has no gravity, but a climb costs speed (update_flying: fv -= 2 sin(pitch) + 0.1 a frame, the
-    // nose drops under 32), so what Mario can reach is set by E = fv^2 / 4 + y (a height-equivalent; 2 dh per
-    // unit of fv^2 / 2 is the exchange rate, the 0.1 a frame a drag of ~0.05 E per unit flown): a coin needs
-    // E >= its height + ~300 (the 32 units/frame the nose holds at) + 0.05 x its distance. The flights from the
-    // ground (zt-fly-s6/s7) had E ~ 1500-2500 against the rings' 3400-5317; a cannon shot's E at the ring
-    // line is ~5700 (fv 89 at y 3685), enough for the four rings up to y 4000 but not for the fifth (5317) after
-    // them: its target is dropped so the flight turns back to the first three's other coins instead.
-    let e = |p: &[f32; 3]| if s.action == ACT_FLYING { Some(s.forward_vel * s.forward_vel / 4.0 + s.pos[1] - p[1] - 300.0 - 0.05 * s.dist(*p)) } else { None };
-    let ok = |p: &[f32; 3]| e(p).is_none_or(|v| v >= 0.0);
-    let best = pts.iter().copied().filter(|p| ok(p) && ahead(p)).min_by(|a, b| s.dist(*a).total_cmp(&s.dist(*b)))
-        .or_else(|| pts.iter().copied().filter(|p| ok(p)).min_by(|a, b| s.dist(*a).total_cmp(&s.dist(*b))))
-        .or_else(|| pts.iter().copied().min_by(|a, b| s.dist(*a).total_cmp(&s.dist(*b))))?;
-    Some([best[0], best[1] - FEET_BELOW_COIN, best[2]])
+    // The nearest ring's formation position (what cannon shots aimed at: 65 and 60 coins from 39).
+    s.objects()
+        .iter()
+        .filter(|o| o.bhv_name() == "bhvCoinFormation" && o.value > 0 && needs_wings(s, o))
+        .map(|o| o.pos)
+        .min_by(|a, b| s.dist(*a).total_cmp(&s.dist(*b)))
 }
 
 impl Objective for WingRing {
@@ -547,17 +442,17 @@ impl Objective for WingRing {
     /// ring's height in 2 x 50 M frames.
     fn base_criteria(&self, s: &St) -> bool {
         s.level == self.level && s.coins < 100 && !s.has_star(self.course, 6) && winged(s)
-            && (s.action == obrrt_core::layout::ACT_IN_CANNON || (fly_on() && s.action == ACT_FLYING) || ring_target(s).is_some_and(|t| s.pos[1] >= t[1] - RING_BELOW))
+            && (s.action == obrrt_core::layout::ACT_IN_CANNON || ring_target(s).is_some_and(|t| s.pos[1] >= t[1] - RING_BELOW))
     }
     fn ga_budget(&self) -> Option<obrrt_core::GaBudget> {
         Some(obrrt_core::GaBudget { population: 16, generations: 5, horizon: 600 })
     }
     /// The cap lost, the level left or Mario dead: `Lost`.
     fn eta(&self, s: &St, start: &St, _mem: &mut Mem) -> Eta {
-        if s.level != self.level || !s.alive() || (!winged(s) && s.coins < start.coins + ring_coins()) {
+        if s.level != self.level || !s.alive() || (!winged(s) && s.coins < start.coins + RING_COINS) {
             return Eta::Lost;
         }
-        let goal = (start.coins + ring_coins()).min(100);
+        let goal = (start.coins + RING_COINS).min(100);
         super::coins_eta(s.coins, goal, ring_target(s).map(|c| s.dist(c)))
     }
     fn success_value(&self) -> f64 {
@@ -572,92 +467,6 @@ impl Objective for WingRing {
     fn exists_in(&self, s: &St) -> bool {
         s.level == self.level && !s.has_star(self.course, 6)
     }
-}
-
-// sm64.h.
-const ACT_FLYING: u32 = 0x1088_0899;
-const ACT_FLYING_TRIPLE_JUMP: u32 = 0x0300_0894;
-const ACT_DOUBLE_JUMP_LAND: u32 = 0x0400_0472;
-const ACT_DOUBLE_JUMP: u32 = 0x0300_0881;
-const ACT_SHOT_FROM_CANNON: u32 = 0x0088_0898;
-
-/// `Fly::Start`: with the wing cap on, get into flight (ACT_FLYING). The game starts it two ways (the user asked
-/// for a general one): the triple jump, which with the wing cap needs no run-up (mario.c: a jump on landing from
-/// a double jump, or set_triple_jump_action, gives ACT_FLYING_TRIPLE_JUMP; once vel.y < 4 it turns into
-/// ACT_FLYING with forward speed raised to 32, mario_actions_airborne.c act_flying_triple_jump), and a cannon
-/// shot, which turns into flight as soon as Mario falls (act_shot_from_cannon). From flight the fly policies
-/// (moves/water_air.rs) and `TwoStar::WingRing` steer. BoB's coin legs had the wing cap 95% of the time and
-/// flew only from cannons (zt-ring3/4); none flew from the ground at the rings' height.
-pub struct FlyStart {
-    level: u16,
-    rings: bool,
-}
-
-impl FlyStart {
-    pub fn new(b: &St) -> Option<FlyStart> {
-        if !fly_on() || !winged(b) || b.action == ACT_FLYING {
-            return None;
-        }
-        // For the rings, only from high enough to dive onto them: flights from the ground could not climb to
-        // BoB's rings (zt-fly-s6/s7: Fly::Start 86-90%, ~1000 flying states, WingRing 4% and 0%, 48 and 40 coins).
-        let rings = on() && hundred_course(b).is_some() && b.coins < 100 && lowest_ring(b).is_some_and(|y| b.pos[1] >= y - 400.0);
-        Some(FlyStart { level: b.level, rings })
-    }
-}
-
-impl Objective for FlyStart {
-    fn kind(&self) -> &'static str {
-        "Fly::Start"
-    }
-    fn key(&self) -> String {
-        format!("Fly start {}", self.level)
-    }
-    /// A goal (over OBRRT_GOAL_MIN 20) while coin rings in the air are left for a missing 100-coin star.
-    fn obj_weight(&self, _b: &St) -> f64 {
-        if self.rings { 25.0 } else { 6.0 }
-    }
-    fn base_criteria(&self, s: &St) -> bool {
-        s.level == self.level && winged(s) && s.action != ACT_FLYING && s.alive()
-    }
-    fn exists_in(&self, s: &St) -> bool {
-        s.level == self.level && winged(s)
-    }
-    fn ga_budget(&self) -> Option<obrrt_core::GaBudget> {
-        Some(obrrt_core::GaBudget { population: 16, generations: 5, horizon: 120 })
-    }
-    fn eta(&self, s: &St, _start: &St, _mem: &mut Mem) -> Eta {
-        if s.level != self.level || !s.alive() || !winged(s) {
-            return Eta::Lost;
-        }
-        Eta::Frames(match s.action {
-            ACT_FLYING => return Eta::Done,
-            // Turns into flight once vel.y < 4 (triple jump) or < 0 (cannon shot).
-            ACT_FLYING_TRIPLE_JUMP | ACT_SHOT_FROM_CANNON => (s.vel[1].max(0.0) / 4.0 + 1.0) as f64,
-            // The third jump is an A press on landing.
-            ACT_DOUBLE_JUMP_LAND => 2.0,
-            ACT_DOUBLE_JUMP => 20.0,
-            _ => 45.0,
-        })
-    }
-    fn success_value(&self) -> f64 {
-        2.0
-    }
-}
-
-/// The lowest air coin ring with coins left (its y).
-fn lowest_ring(s: &St) -> Option<f32> {
-    s.objects().iter().filter(|o| o.bhv_name() == "bhvCoinFormation" && o.value > 0 && needs_wings(s, o)).map(|o| o.pos[1]).min_by(|a, b| a.total_cmp(b))
-}
-
-/// OBRRT_FLY=1: free flight for the air rings (`Fly::Start`, `WingRing` from any flying state, steering at the
-/// ring lines of [`lane_target`]). Off by default. The v4b-v4d tests (BoB at 39 coins) flew from the ground
-/// 83-90% of the time but WingRing got 0-4%: a flight has no gravity, but a climb costs speed (fv -= 2 sin(pitch)
-/// + 0.1, update_flying), so what it can reach is E = fv^2 / 4 + y, and a take-off from the ground (fv 32, y
-/// 200-2000) has E 450-2300 against the rings' 3400-5317 (it was never the steering). A cannon shot (fv 100)
-/// carries E ~5700 to the ring line: from the cannon the lines are hit (see `lane_target`).
-fn fly_on() -> bool {
-    static ON: OnceLock<bool> = OnceLock::new();
-    *ON.get_or_init(|| obrrt_core::sys::env::var("OBRRT_FLY").is_ok_and(|v| v == "1"))
 }
 
 /// A text dump of `s`'s coin sources and the coin route to 100 (the probe tool, with `OBRRT_TWOSTAR=1`).

@@ -232,29 +232,16 @@ pub struct Stop {
     pub good_max_frame: Option<u32>,
 }
 
-/// OBRRT_MOVES_UPHILL.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum Uphill {
-    #[default]
-    Kick,
-    Jump,
-    AirKick,
-}
-
 /// The domain knowledge's switches (the objectives and the movement library).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ObjectiveConfig {
     /// OBRRT_TECH: technique objectives on ("all", or a list; see extra/tech/mod.rs).
     pub tech: String,
-    /// OBRRT_FAST_MODAL (None: the library's default).
-    pub fast_modal: Option<bool>,
     /// OBRRT_MOVES / OBRRT_MOVES_EXTRA / OBRRT_MOVES_MODES / OBRRT_MOVES_UPHILL
     pub moves: bool,
     pub moves_extra: bool,
     pub moves_modes: bool,
-    pub moves_uphill: Uphill,
     pub swim_hold: bool,
     pub swim_targets: bool,
     pub gp_catch: bool,
@@ -264,7 +251,6 @@ pub struct ObjectiveConfig {
     pub grounds_fix: bool,
     /// OBRRT_MOVE_WEIGHT=<x>: the 0.5-weight techniques weigh x (None: unchanged).
     pub move_weight: Option<f64>,
-    pub talk_nil: bool,
     pub king_landing: bool,
     /// OBRRT_BLJ_*
     pub blj_detector: Option<String>,
@@ -289,11 +275,9 @@ impl Default for ObjectiveConfig {
     fn default() -> Self {
         ObjectiveConfig {
             tech: "all".into(),
-            fast_modal: None,
             moves: true,
             moves_extra: false,
             moves_modes: false,
-            moves_uphill: Uphill::Kick,
             swim_hold: true,
             swim_targets: false,
             gp_catch: true,
@@ -302,7 +286,6 @@ impl Default for ObjectiveConfig {
             painting_fast: true,
             grounds_fix: false,
             move_weight: Some(0.75),
-            talk_nil: false,
             king_landing: false,
             blj_detector: None,
             blj_fast: false,

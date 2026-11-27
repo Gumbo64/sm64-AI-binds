@@ -272,34 +272,6 @@ pub fn alignment(s: &St, goal: [f32; 3]) -> f32 {
     if n < 1e-3 { 0.0 } else { (vx * gx + vz * gz) / n }
 }
 
-/// OBRRT_BLJ_ALIGN=1 (off by default, as in v1: in 40 M trees from
-/// v42-tech-s1 node 4985 it cut BljRun successes; the presets' rule yaw
-/// already lines the chains up, cos 0.992-0.999 at the hand-off): a spot's
-/// ETA counts the chain's misalignment, [`misalign_frames`].
-fn align_eta() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| obrrt_core::sys::env::var("OBRRT_BLJ_ALIGN").is_ok_and(|v| v == "1"))
-}
-
-/// Share of the chain lost at right angles to the goal (cos 0): v1's
-/// progress factor 0.5 + 0.5 max(0, cos) on the chain metric.
-const ALIGN_SHARE: f64 = 0.5;
-
-/// Frames lost to a chain travelling off the bearing to `goal`: v1 scaled
-/// the chain's metric (x1.5 re-jumps built, each [`JUMP_FRAMES`]) by
-/// 0.5 + 0.5 max(0, cos); in frames, the re-jumps built so far (from
-/// [`CHAIN_BASE`] to the current backwards speed) times
-/// ALIGN_SHARE (1 - max(0, cos)). Only in a chain (a re-jump seen, `mem`'s
-/// [`M_ON`], and long jumping backwards); 0 at the chain's first speed, so
-/// it starts continuously, and with the alignment held it still falls as
-/// the speed grows (the chain left falls faster than this grows).
-pub fn misalign_frames(s: &St, mem: &Mem, goal: [f32; 3]) -> f64 {
-    if mem.flags & M_ON == 0 || !long_jumping(s) || s.forward_vel >= -CHAIN_BASE {
-        return 0.0;
-    }
-    let built = chain_frames(CHAIN_BASE, -s.forward_vel);
-    ALIGN_SHARE * (1.0 - alignment(s, goal).max(0.0) as f64) * built
-}
 
 
 /// The full-tilt raw stick that points `intendedYaw` along `yaw` (s16
@@ -538,8 +510,6 @@ pub struct Spot {
     tree_handoff: bool,
 }
 
-/// The tree the TAS's BoB elevator BLJ flies into (-420).
-const BOB_TREE: [f32; 3] = [4208.0, 927.0, 3772.0];
 /// The lobby-steps chain target (TAS -317 at the back wall).
 const LOBBY_WALL_SPEED: f32 = 300.0;
 /// The `tree_handoff` speed (TAS: -420 into the BoB tree).
@@ -821,12 +791,6 @@ impl Blj {
         self.in_area(s) && self.spot.star.is_none_or(|(c, i)| !s.has_star(c, i)) && s.dist(self.spot.start) < self.spot.start_radius
     }
 
-    /// Where the chain should travel: the spot's goal, or with the tree
-    /// hand-off on, the TAS's tree (the summit is reached via redirects).
-    fn align_goal(&self) -> [f32; 3] {
-        if self.poles.is_empty() { self.spot.goal } else { BOB_TREE }
-    }
-
     /// The backwards speed whose chain is this spot's success: the tree
     /// hand-off's with PoleRedirect on, the HyperWalk hand-off's at a free
     /// exit with HyperWalk on, else [`CHAIN_SPEED`].
@@ -935,10 +899,6 @@ impl Objective for Blj {
         } else {
             build_eta(s, Some(setup), target)
         };
-        // OBRRT_BLJ_ALIGN: v1's alignment factor.
-        if align_eta() {
-            speed += misalign_frames(s, mem, self.align_goal());
-        }
         // Once built, the place at the chain's speed is the other way in.
         let place = if built && self.spot.goal_y.is_none() {
             ((s.dist(self.spot.goal) - self.spot.goal_radius).max(0.0) / (-s.forward_vel).max(obrrt_core::PACE as f32)) as f64
@@ -1174,35 +1134,6 @@ pub fn probe_named(name: &str) -> Option<[f32; 3]> {
 /// Frames added to a run spot's horizon for the setup stage (GA budget).
 const SETUP_FRAMES: usize = 150;
 /// Frames added to the spot's horizon for the GA's own setup (GA budget).
-
-#[cfg(test)]
-mod align_tests {
-    use super::*;
-    use crate::extra::testkit::st;
-
-    /// OBRRT_BLJ_ALIGN's term: 0 lined up, outside a chain or at its first
-    /// speed; half the chain built at right angles; and with the alignment
-    /// held, the build ETA plus it still falls as the speed grows.
-    #[test]
-    fn misalign_frames_v1_factor() {
-        let goal = [0.0, 0.0, -5000.0];
-        let chain = |v: f32, vx: f32, vz: f32| {
-            let mut s = st(LEVEL_CASTLE, [0.0; 3], vec![]);
-            s.action = ACT_LONG_JUMP;
-            s.forward_vel = -v;
-            s.vel = [vx, 0.0, vz];
-            s
-        };
-        let on = Mem { flags: M_SEEN | M_ON, ..Mem::default() };
-        assert_eq!(misalign_frames(&chain(100.0, 0.0, -100.0), &on, goal), 0.0);
-        assert_eq!(misalign_frames(&chain(100.0, 100.0, 0.0), &Mem::default(), goal), 0.0);
-        assert_eq!(misalign_frames(&chain(CHAIN_BASE, 16.0, 0.0), &on, goal), 0.0);
-        let side = misalign_frames(&chain(100.0, 100.0, 0.0), &on, goal);
-        assert!((side - ALIGN_SHARE * chain_frames(CHAIN_BASE, 100.0)).abs() < 1e-9);
-        let total = |v: f32| build_eta(&chain(v, v, 0.0), None, 400.0) + misalign_frames(&chain(v, v, 0.0), &on, goal);
-        assert!(total(200.0) < total(100.0) && total(100.0) < total(40.0));
-    }
-}
 
 /// The preset spots (the BLJ spot registry's `preset` source): name, zone,
 /// start, the rule's facing (None: a hint spot), and whether the rule has a

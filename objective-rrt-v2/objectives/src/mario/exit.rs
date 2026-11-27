@@ -76,20 +76,7 @@ impl Objective for GoToCastle {
         -(s.stars as f64 * STAR_BIAS_FRAMES + s.coins as f64 * COIN_BIAS_FRAMES)
     }
     fn fixed(&self) -> Option<Budget> {
-        if crate::menu::fast() {
-            return Some(fast_exit());
-        }
-        let n = GamePad::new(0, 0, 0);
-        let mut pads = vec![GamePad::new(START_BUTTON, 0, 0)];
-        pads.extend(std::iter::repeat_n(n, 20));
-        pads.extend(std::iter::repeat_n(GamePad::new(0, 0, -100), 3));
-        pads.extend(std::iter::repeat_n(n, 10));
-        pads.push(GamePad::new(A_BUTTON, 0, 0));
-        // Then A every few frames through the fade and the castle's dialog.
-        for i in 0..240 {
-            pads.push(if i % 6 == 0 { GamePad::new(A_BUTTON, 0, 0) } else { n });
-        }
-        Some(Budget::Macro(pads))
+        Some(fast_exit())
     }
     fn temperature(&self) -> f64 {
         EXIT_TEMPERATURE

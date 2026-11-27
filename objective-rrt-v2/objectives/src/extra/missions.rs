@@ -745,10 +745,6 @@ pub fn generate_level(b: &St, out: &mut Vec<Arc<dyn Objective>>) {
         if let Some(r) = twostar::WingRing::new(b) {
             out.push(Arc::new(r));
         }
-        // OBRRT_TWOSTAR, wing cap on and not flying: into flight (a triple jump, a cannon shot).
-        if let Some(f) = twostar::FlyStart::new(b) {
-            out.push(Arc::new(f));
-        }
     }
     if let Some(t) = SecretTour::new(b) {
         out.push(Arc::new(t));

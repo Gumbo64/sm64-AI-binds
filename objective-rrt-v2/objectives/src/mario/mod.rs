@@ -9,4 +9,4 @@ mod time;
 pub use exit::GoToCastle;
 pub use idle::{Settle, Wait};
 pub use pos::{PosDist, swim_targets, underwater_point};
-pub use time::{PosTime, postime_n, postime_self};
+pub use time::{POSTIME_N, PosTime};

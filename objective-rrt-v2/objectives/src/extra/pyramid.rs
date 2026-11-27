@@ -64,11 +64,9 @@ fn walk(a: [f32; 3], b: [f32; 3]) -> f32 {
     geo::path_dist(ZONE, a, b).unwrap_or_else(|| dist(a, b))
 }
 
-/// Whether `t` is one of the three slab triggers (and the pyramid legs are on: `OBRRT_NO_PYRAMID=1` turns them
-/// off, for comparisons with the plain floor graph).
+/// Whether `t` is one of the three slab triggers.
 pub fn is_slab_trigger(t: [f32; 3]) -> bool {
-    static OFF: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    !*OFF.get_or_init(|| obrrt_core::sys::env::var_os("OBRRT_NO_PYRAMID").is_some()) && t[1] > 1900.0 && t[1] < 4000.0
+    t[1] > 1900.0 && t[1] < 4000.0
 }
 
 /// The slab (0 lowest) a point stands on or is just over.

@@ -163,19 +163,8 @@ impl RedNext {
         if s.zone() != self.zone {
             return None;
         }
-        // OBRRT_RED_V2=1 with OBRRT_GEO=1: the nearest by walking distance where the mesh knows it (a coin
-        // behind a wall or up a cliff is far), else straight.
-        let d = |p: [f32; 3]| if red_v2() { obrrt_core::geo::path_dist(s.zone(), s.pos, p).unwrap_or_else(|| s.dist(p)) } else { s.dist(p) };
-        s.objects().iter().filter(|o| o.bhv_name() == "bhvRedCoin").map(|o| o.pos).min_by(|a, b| d(*a).total_cmp(&d(*b)))
+        s.objects().iter().filter(|o| o.bhv_name() == "bhvRedCoin").map(|o| o.pos).min_by(|a, b| s.dist(*a).total_cmp(&s.dist(*b)))
     }
-}
-
-/// OBRRT_RED_V2=1: red coins by walking distance and with longer attempts (600 frames, not 240). The red-coin
-/// stars were the search's weakest: HMC `RedCoin::Next` 1 success of 768 attempts; t1 spent 3.1 B frames on
-/// HMC's and ended with 7 of 8 coins.
-fn red_v2() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| obrrt_core::sys::env::var("OBRRT_RED_V2").is_ok_and(|v| v == "1"))
 }
 
 /// RedCoin::Next start bias per red coin already had: v1's 2 heuristic
@@ -205,7 +194,7 @@ impl Objective for RedNext {
         self.nearest(s).is_some() && self.star.is_none_or(|(c, i)| !s.has_star(c, i))
     }
     fn ga_budget(&self) -> Option<obrrt_core::GaBudget> {
-        Some(obrrt_core::GaBudget { population: 20, generations: 5, horizon: if red_v2() { 600 } else { 240 } })
+        Some(obrrt_core::GaBudget { population: 20, generations: 5, horizon: 240 })
     }
     fn eta(&self, s: &St, start: &St, _mem: &mut Mem) -> Eta {
         if s.zone() != self.zone {

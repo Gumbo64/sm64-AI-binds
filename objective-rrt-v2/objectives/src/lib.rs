@@ -30,7 +30,6 @@ use obrrt_core::{Generator, Objective, St, dist};
 use rand::Rng;
 use rand::rngs::SmallRng;
 
-pub use menu::set_fast as set_fast_modal;
 pub use painting::Painting;
 
 /// Every castle painting (painting_table.rs), for labs.
@@ -43,29 +42,7 @@ const OBJECT_RADIUS: f32 = 5000.0;
 
 /// NPCs worth talking to, and how much: Bob-omb Buddies open cannons
 /// (bhvBobombBuddyOpensCannon), Toads give stars.
-/// OBRRT_TALK_NIL=1: no `Npc::Talk` for NPCs whose talk is known to give
-/// nothing: Toads with a plain dialog (the castle's 1st-floor Toads, 133-135,
-/// never give a star), star Toads whose star is had (save flags 24-26,
-/// mario_misc.c), and plain Bob-omb Buddies. Their dialog (~80 frames) is
-/// pure loss, yet the talk sat on travel paths as a waypoint (lobby -> WF).
-pub fn talk_nil() -> bool {
-    obrrt_core::config::current().objectives.talk_nil
-}
-
 fn npc_weight(b: &St, o: &obrrt_core::Obj) -> Option<f64> {
-    if talk_nil() {
-        let toad_star = match o.beh_params >> 24 {
-            82 => Some(24),
-            76 => Some(25),
-            83 => Some(26),
-            _ => None,
-        };
-        match o.bhv_name() {
-            "bhvToadMessage" if toad_star.is_none_or(|bit| b.save_flags & (1 << bit) != 0) => return None,
-            "bhvBobombBuddy" => return None,
-            _ => {}
-        }
-    }
     match o.bhv_name() {
         // WDW's buddy opens the cannon into the downtown tunnel (extra/warps.rs wdw_town_missing): a goal while a
         // downtown star is missing and the cannon's lid is still shut.
@@ -106,9 +83,9 @@ fn near_point(b: &St, rng: &mut SmallRng) -> [f32; 3] {
 pub struct Registry;
 
 impl Generator for Registry {
-    /// PosTime near b reads the records (`OBRRT_POSTIME=near`, default).
+    /// PosTime near b reads the records.
     fn wants_records(&self) -> bool {
-        !mario::postime_self()
+        true
     }
     /// OBRRT_BLJ_SCAN=1: the `blj_scan` block (bljany::scan's diagnostics).
     fn summary_blocks(&self) -> Vec<(String, String)> {
@@ -147,13 +124,12 @@ impl Generator for Registry {
             }
         }
         // Faster routes to places already reached: near b, before the
-        // tree's record there (OBRRT_POSTIME=near, default; candidates
-        // drawn like PosDist's, kept only where a node of b's context has
-        // been), or to b itself (OBRRT_POSTIME=self, or no records kept).
-        if mario::postime_self() || !obrrt_core::records::installed() {
+        // tree's record there (candidates drawn like PosDist's, kept only
+        // where a node of b's context has been), or to b itself (no records kept).
+        if !obrrt_core::records::installed() {
             out.push(Arc::new(mario::PosTime::new(b)));
         } else {
-            for _ in 0..mario::postime_n() {
+            for _ in 0..mario::POSTIME_N {
                 let p = near_point(b, rng);
                 if let Some(o) = mario::PosTime::sample(b, p) {
                     out.push(Arc::new(o));

@@ -23,7 +23,6 @@ pub use read::{bhv_addr, bhv_name, check_layout, read_state};
 pub use records::earliest_near;
 pub use sm64_binds::{GamePad, buttons};
 
-static EARLY_DIALOG_END: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
 
 /// Extra work under way that [`St::wip`] adds, set by the objectives crate
 /// (domain knowledge stays there; e.g. `OBRRT_TWOSTAR`'s coin count toward
@@ -33,13 +32,6 @@ static WIP_EXTRA: std::sync::OnceLock<fn(&St) -> i64> = std::sync::OnceLock::new
 /// Installs the [`St::wip`] extra (first call wins).
 pub fn set_wip_extra(f: fn(&St) -> i64) {
     let _ = WIP_EXTRA.set(f);
-}
-
-/// Whether a closing dialog stops counting as a dialog once Mario plays
-/// again ([`St::dialog_released`]); on by default, off for the old
-/// behaviour (`OBRRT_FAST_MODAL=0`).
-pub fn set_early_dialog_end(on: bool) {
-    EARLY_DIALOG_END.store(on, std::sync::atomic::Ordering::Relaxed);
 }
 
 /// An object's identity across states and replays: its behaviour and its
@@ -338,8 +330,7 @@ impl St {
         std::hash::Hasher::finish(&h)
     }
 
-    /// In a dialog that still holds Mario. With [`set_early_dialog_end`] on
-    /// (the default), a dialog that is closing while Mario already plays
+    /// In a dialog that still holds Mario. A dialog that is closing while Mario already plays
     /// ([`St::dialog_released`]) no longer counts.
     pub fn in_dialog(&self) -> bool {
         self.dialog >= 0 && !self.dialog_released()
@@ -350,11 +341,9 @@ impl St {
     /// `level_set_transition(-1)` freeze, ingame_menu.c:1768-1777) and an
     /// action outside the cutscene group (the dialog actions wait for
     /// gDialogID to clear). gDialogID itself stays set for ~8 more frames.
-    /// Always false with [`set_early_dialog_end`] off.
     pub fn dialog_released(&self) -> bool {
         use crate::layout::{ACT_GROUP_CUTSCENE, ACT_GROUP_MASK};
-        EARLY_DIALOG_END.load(std::sync::atomic::Ordering::Relaxed)
-            && self.dialog >= 0
+        self.dialog >= 0
             && self.dialog_state == 3
             && self.play_mode == 0
             && self.action != 0

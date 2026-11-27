@@ -1,9 +1,6 @@
 //! `Mario::PosDist(p)`: get within a radius of a point near `b`, as fast as
 //! possible. Plain RRT is this objective alone, with `p` uniform.
 //!
-//! `OBRRT_PACE=1` (time.rs): success also needs a mean pace, arrival within
-//! `d0 / OBRRT_PACE_DIST` (20 u/frame) + [`PACE_GRACE`] frames of the start
-//! (`d0` its distance to `p`), so a slow walk no longer counts as a fast run.
 
 use obrrt_core::{Eta, Mem, Objective, St, frames_for};
 use rand::Rng;
@@ -52,19 +49,6 @@ pub fn underwater_point(b: &St, rng: &mut SmallRng) -> Option<[f32; 3]> {
         return None;
     }
     Some([x, rng.random_range(bottom..top), z])
-}
-
-/// Frames on top of the pace allowance, for getting up to speed.
-const PACE_GRACE: f32 = 10.0;
-
-/// The most frames after `start` that still meet the pace, under
-/// `OBRRT_PACE=1` (v1: the latest trajectory index): a deadline.
-fn pace_limit(start: &St, p: [f32; 3]) -> u32 {
-    if !super::time::pace_on() {
-        return u32::MAX;
-    }
-    let speed = 20.0f32;
-    (start.dist(p) / speed + PACE_GRACE) as u32
 }
 
 pub struct PosDist {
@@ -134,8 +118,8 @@ impl Objective for PosDist {
     fn base_criteria(&self, s: &St) -> bool {
         s.zone() == self.zone && s.dist(self.p) > RADIUS
     }
-    fn eta(&self, s: &St, start: &St, _mem: &mut Mem) -> Eta {
-        if s.zone() != self.zone || s.frame.saturating_sub(start.frame) > pace_limit(start, self.p) {
+    fn eta(&self, s: &St, _start: &St, _mem: &mut Mem) -> Eta {
+        if s.zone() != self.zone {
             return Eta::Lost;
         }
         let d = s.dist(self.p);
@@ -164,8 +148,5 @@ impl Objective for PosDist {
     }
     fn steer_target(&self, _s: &St) -> Option<[f32; 3]> {
         Some(self.p)
-    }
-    fn steer_button(&self, s: &St) -> u16 {
-        super::time::pace_button(s, self.p)
     }
 }

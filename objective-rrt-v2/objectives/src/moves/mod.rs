@@ -815,26 +815,6 @@ fn select(st: &St, key: &MoveKey, ctx: &Ctx) -> MoveKind {
 // ---------------------------------------------------------------------------
 // Pads.
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum UphillStyle {
-    /// A held on the ground (pressed on landing), B tapped on ground
-    /// frames: the user's "hold A, press B whenever you touch the ground".
-    Kick,
-    /// A on landings and even ground frames, B in the air (jump kicks).
-    AirKick,
-    /// Jumps only.
-    Jump,
-}
-
-fn uphill_style() -> UphillStyle {
-    use obrrt_core::config::Uphill;
-    match obrrt_core::config::current().objectives.moves_uphill {
-        Uphill::Jump => UphillStyle::Jump,
-        Uphill::AirKick => UphillStyle::AirKick,
-        Uphill::Kick => UphillStyle::Kick,
-    }
-}
-
 /// The pad for `kind` this frame, for a target to stop at.
 pub fn pad_for(kind: MoveKind, st: &St, target: [f32; 3], frame: usize) -> GamePad {
     pad_for_with(kind, st, target, Arrival::Stop, frame)
@@ -878,30 +858,18 @@ pub fn pad_for_with(kind: MoveKind, st: &St, target: [f32; 3], arrival: Arrival,
         MoveKind::Run => pad(0),
         MoveKind::Air => pad(short_a),
         MoveKind::Stop => GamePad::new(0, 0, 0),
-        MoveKind::UphillKick => match uphill_style() {
-            UphillStyle::Kick => {
-                if air {
-                    pad(rising_a)
-                } else if is_landing(a) && (st.floor_normal[1] >= steep_limit(st.floor_type) || st.forward_vel.abs() > 3.0) {
-                    // The jump first: B on a landing frame kicks instead. Only
-                    // a stall on a steep floor (a steep jump straight up and
-                    // down at 0 speed) takes the kick's hop there.
-                    pad(A_BUTTON)
-                } else {
-                    pad(A_BUTTON | if even { B_BUTTON } else { 0 })
-                }
+        MoveKind::UphillKick => {
+            if air {
+                pad(rising_a)
+            } else if is_landing(a) && (st.floor_normal[1] >= steep_limit(st.floor_type) || st.forward_vel.abs() > 3.0) {
+                // The jump first: B on a landing frame kicks instead. Only
+                // a stall on a steep floor (a steep jump straight up and
+                // down at 0 speed) takes the kick's hop there.
+                pad(A_BUTTON)
+            } else {
+                pad(A_BUTTON | if even { B_BUTTON } else { 0 })
             }
-            style => {
-                if air {
-                    let kick = style == UphillStyle::AirKick
-                        && matches!(a, ACT_JUMP | ACT_DOUBLE_JUMP | ACT_FREEFALL)
-                        && st.forward_vel <= 28.0;
-                    pad(rising_a | if kick { B_BUTTON } else { 0 })
-                } else {
-                    pad(ground_a)
-                }
-            }
-        },
+        }
         MoveKind::LedgeJump => pad(if air { short_a } else { ground_a }),
         MoveKind::GapJump => pad(if air { rising_a } else { ground_a }),
         MoveKind::LongJumpChain | MoveKind::GapLongJump => {

@@ -22,16 +22,6 @@ impl E<'_> {
     fn get(&self, k: &str) -> Option<String> {
         (self.0)(k)
     }
-    /// Set to exactly "1".
-    fn is1(&self, k: &str) -> bool {
-        self.get(k).is_some_and(|v| v == "1")
-    }
-    /// `true` when "1"; otherwise untouched.
-    fn on(&self, k: &str, f: &mut bool) {
-        if self.is1(k) {
-            *f = true;
-        }
-    }
     /// When set, `value == "1"`.
     fn eq1(&self, k: &str, f: &mut bool) {
         if let Some(v) = self.get(k) {
@@ -162,17 +152,9 @@ pub fn from_env_with(base: SearchConfig, get: Lookup) -> Result<SearchConfig> {
     if let Some(v) = e.get("OBRRT_TECH") {
         objectives.tech = v;
     }
-    if let Some(v) = e.get("OBRRT_FAST_MODAL") {
-        objectives.fast_modal = Some(v != "0");
-    }
     e.eq1("OBRRT_MOVES", &mut objectives.moves);
     e.eq1("OBRRT_MOVES_EXTRA", &mut objectives.moves_extra);
     e.eq1("OBRRT_MOVES_MODES", &mut objectives.moves_modes);
-    match e.get("OBRRT_MOVES_UPHILL").as_deref() {
-        Some("jump") => objectives.moves_uphill = Uphill::Jump,
-        Some("airkick") => objectives.moves_uphill = Uphill::AirKick,
-        _ => {}
-    }
     e.eq1("OBRRT_SWIM_HOLD", &mut objectives.swim_hold);
     e.eq1("OBRRT_SWIM_TARGETS", &mut objectives.swim_targets);
     e.eq1("OBRRT_GP_CATCH", &mut objectives.gp_catch);
@@ -183,7 +165,6 @@ pub fn from_env_with(base: SearchConfig, get: Lookup) -> Result<SearchConfig> {
     if let Some(v) = e.get("OBRRT_MOVE_WEIGHT") {
         objectives.move_weight = Some(v.parse().with_context(|| "OBRRT_MOVE_WEIGHT: a number")?);
     }
-    e.eq1("OBRRT_TALK_NIL", &mut objectives.talk_nil);
     e.eq1("OBRRT_KING_LANDING", &mut objectives.king_landing);
     e.string("OBRRT_BLJ_DETECTOR", &mut objectives.blj_detector);
     e.eq1("OBRRT_BLJ_FAST", &mut objectives.blj_fast);

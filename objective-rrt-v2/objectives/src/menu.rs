@@ -42,7 +42,6 @@
 //! `OBRRT_FAST_MODAL=0` restores the old fixed macros: the stick held toward
 //! the option and A every 4th frame.
 
-use std::sync::atomic::{AtomicBool, Ordering};
 
 use obrrt_core::buttons::{A_BUTTON, B_BUTTON, START_BUTTON};
 use obrrt_core::layout::{MENU_OPT_CONTINUE_DONT_SAVE, MENU_OPT_SAVE_AND_CONTINUE};
@@ -55,19 +54,6 @@ const LIMIT: usize = 900;
 /// state that takes a press (ingame_menu.c:41-46).
 const DIALOG_STATE_VERTICAL: i8 = 1;
 
-static FAST: AtomicBool = AtomicBool::new(true);
-
-/// Frame-optimal policies (true, the default) or the old every-4th-frame
-/// macros (false) for dialogs and menus.
-pub fn set_fast(on: bool) {
-    FAST.store(on, Ordering::Relaxed);
-    obrrt_core::set_early_dialog_end(on);
-}
-
-pub(crate) fn fast() -> bool {
-    FAST.load(Ordering::Relaxed)
-}
-
 /// A new press of `a` or `b` (whichever the last frame didn't hold).
 pub(crate) fn press(played: &[GamePad], a: u16, b: u16) -> u16 {
     if played.last().is_some_and(|p| p.button & a != 0) { b } else { a }
@@ -78,11 +64,6 @@ pub(crate) fn press(played: &[GamePad], a: u16, b: u16) -> u16 {
 /// cursor once, then only every few frames).
 pub(crate) fn nudge(played: &[GamePad], dir: (i8, i8)) -> (i8, i8) {
     if played.last().is_some_and(|p| (p.stick_x, p.stick_y) == dir) { (0, 0) } else { dir }
-}
-
-/// The stick held at (x, y), A pressed every 4th frame.
-fn press_through(x: i8, y: i8, frames: usize) -> Vec<GamePad> {
-    (0..frames).map(|f| GamePad::new(if f % 4 == 3 { A_BUTTON } else { 0 }, x, y)).collect()
 }
 
 /// ETA while a dialog or menu is still open: a small constant (a press and
@@ -179,9 +160,6 @@ impl Objective for Dialog {
             Answer::Yes => -127,
             Answer::No => 127,
         };
-        if !fast() {
-            return Some(Budget::Macro(press_through(x, 0, LIMIT)));
-        }
         let line = match self.answer {
             Answer::Read => None,
             Answer::Yes => Some(1),
@@ -253,9 +231,6 @@ impl Objective for SaveMenu {
     fn fixed(&self) -> Option<Budget> {
         // The cursor runs 1 (top) to 3, clamped: up reaches 1, down 3.
         let y = if self.option == MENU_OPT_SAVE_AND_CONTINUE { 127 } else { -127 };
-        if !fast() {
-            return Some(Budget::Macro(press_through(0, y, LIMIT)));
-        }
         let target = self.option as i8;
         let policy = PadPolicy::new(move |traj, played| {
             let s = traj.last().unwrap();
@@ -287,7 +262,6 @@ pub struct SelectAct {
     /// Cursor position (among selectable acts) of `act`, and the right (+)
     /// or left (-) taps from where the cursor starts.
     target: i8,
-    taps: i32,
 }
 
 impl SelectAct {
@@ -321,7 +295,7 @@ impl SelectAct {
         acts.into_iter()
             .map(|act| {
                 let target = selectable.iter().position(|&a| a == act).unwrap_or(0) as i32;
-                SelectAct { course, act, target: target as i8, taps: target - b.act_cursor as i32 }
+                SelectAct { course, act, target: target as i8 }
             })
             .collect()
     }
@@ -350,9 +324,9 @@ impl Objective for SelectAct {
         1.0
     }
     fn base_criteria(&self, s: &St) -> bool {
-        // Fast: only while this act is still an option here (the pool keeps
+        // Only while this act is still an option here (the pool keeps
         // the options of earlier screens, whose act may be done by now).
-        s.act_select && s.course == self.course && (!fast() || self.target_in(s).is_some())
+        s.act_select && s.course == self.course && self.target_in(s).is_some()
     }
     /// v1 ranked dialog and menu starts by frame (`frame / 30`): the
     /// earliest first (the same dialog or menu, reached soonest).
@@ -362,39 +336,26 @@ impl Objective for SelectAct {
     fn eta(&self, s: &St, start: &St, mem: &mut Mem) -> Eta {
         // The act loaded is the one under the cursor (it is at most the
         // first missing act, so the game doesn't lower it).
-        let target = if fast() { self.target_in(start).unwrap_or(-1) } else { self.target };
+        let target = self.target_in(start).unwrap_or(-1);
         closed_on(mem, s.act_select, s.act_cursor, Some(target))
     }
     fn fixed(&self) -> Option<Budget> {
-        if fast() {
-            let (course, act) = (self.course, self.act);
-            let policy = PadPolicy::new(move |traj, played| {
-                let s = traj.last().unwrap();
-                // The cursor position of the act on this screen.
-                let target = SelectAct { course, act, target: 0, taps: 0 }.target_in(&traj[0]).unwrap_or(0);
-                if s.act_cursor != target {
-                    let dir = (if target > s.act_cursor { 127 } else { -127 }, 0);
-                    let (sx, sy) = nudge(played, dir);
-                    return GamePad::new(0, sx, sy);
-                }
-                // The stick stays centred: the cursor moves after the press
-                // check of the same frame.
-                let button = if s.menu_timer >= 11 { press(played, A_BUTTON, B_BUTTON) } else { 0 };
-                GamePad::new(button, 0, 0)
-            });
-            return Some(Budget::Policy { limit: LIMIT, policy });
-        }
-        // Wait for the screen to accept input (11 frames), tap the stick one
-        // act at a time, then A.
-        let mut pads = vec![GamePad::new(0, 0, 0); 14];
-        let x = if self.taps > 0 { 127 } else { -127 };
-        for _ in 0..self.taps.unsigned_abs() {
-            pads.push(GamePad::new(0, x, 0));
-            pads.push(GamePad::new(0, 0, 0));
-            pads.push(GamePad::new(0, 0, 0));
-        }
-        pads.extend(press_through(0, 0, LIMIT));
-        Some(Budget::Macro(pads))
+        let (course, act) = (self.course, self.act);
+        let policy = PadPolicy::new(move |traj, played| {
+            let s = traj.last().unwrap();
+            // The cursor position of the act on this screen.
+            let target = SelectAct { course, act, target: 0 }.target_in(&traj[0]).unwrap_or(0);
+            if s.act_cursor != target {
+                let dir = (if target > s.act_cursor { 127 } else { -127 }, 0);
+                let (sx, sy) = nudge(played, dir);
+                return GamePad::new(0, sx, sy);
+            }
+            // The stick stays centred: the cursor moves after the press
+            // check of the same frame.
+            let button = if s.menu_timer >= 11 { press(played, A_BUTTON, B_BUTTON) } else { 0 };
+            GamePad::new(button, 0, 0)
+        });
+        Some(Budget::Policy { limit: LIMIT, policy })
     }
     fn modal(&self) -> bool {
         true
