@@ -32,10 +32,6 @@ pub struct Config {
     pub out_dir: String,
     pub seed: u64,
     pub minutes: f64,
-    /// Failure decay of an objective's weight (×d per failed attempt).
-    pub decay: f64,
-    /// Back-off of a state's start weight per barren attempt.
-    pub state_decay: f64,
     /// Universal soft factor for health and lives: (wedges/8)^alpha · gamma^lives lost.
     pub alpha: f64,
     pub gamma: f64,
@@ -43,11 +39,8 @@ pub struct Config {
     pub expire_rounds: u32,
     /// Floor on any objective kind's share of samples.
     pub kind_floor: f64,
-    /// Initial probability of extending an attempt by one more objective
-    /// (then learned), the most objectives per attempt, and how far the next
-    /// objective's target may be from where the previous one is expected to
-    /// end.
-    pub chain_prob: f64,
+    /// The most objectives per attempt, and how far the next objective's
+    /// target may be from where the previous one is expected to end.
     pub max_chain: usize,
     pub chain_reach: f32,
     /// Experiment knob: multiply the GA's generations.
@@ -56,19 +49,15 @@ pub struct Config {
     /// Share of b drawn from the best routes (the states leading to each
     /// zone's earliest frontier state), so PosTime targets the route.
     pub route_share: f64,
-    /// Soft dedupe: keep states that only repeat a place (an earlier state
-    /// got there), at half the sampling weight per earlier state, instead of
-    /// dropping them; over `mem_budget` bytes of saves, the lowest-weight
-    /// repeats are retired. Yield and decay count only new or sooner states.
+    /// Soft dedupe: states that only repeat a place (an earlier state got
+    /// there) are kept at half the sampling weight per earlier state; over
+    /// `mem_budget` bytes of saves, the lowest-weight repeats are retired.
+    /// Yield counts only new or sooner states.
     /// Attempts planned per round (merged together after it).
     pub round_plans: usize,
     /// Stop after emulating this many frames (None: only the time limit).
     pub max_frames: Option<u64>,
-    pub soft_dedup: bool,
     pub mem_budget: usize,
-    /// Pick only objectives b (or its parent) satisfies the base criteria
-    /// of, so a start always exists.
-    pub pick_by_b: bool,
     /// New-eligible boost (OBRRT_NEW_ELIGIBLE=1): a state that can start an
     /// objective its parent couldn't (by key, objectives worth more than
     /// 1) is queued once per such key, and the queue is planned from first,
@@ -87,24 +76,20 @@ pub struct Config {
     /// the 30 s report, which made trees depend on machine load; 10 M frames
     /// is about 30 s of a 16-thread run (v35: 500 M frames in 1139 s).
     pub tune_frames: u64,
-    /// OBRRT_CHAIN=route: an attempt chases one objective; a follow-on stage
+    /// Route chains: an attempt chases one objective; a follow-on stage
     /// is appended only where the best routes (`hot`) met that objective and
     /// went on with a known next one ("continue along the known route"),
     /// each with the fixed probability `chain_follow`, never learned from
     /// success counts. Objectives met along the way are credited by the
-    /// arrival check in `merge`. Off: the random stacking of `extend_chain`
-    /// with its learned `chain_prob`.
-    pub chain_route: bool,
+    /// arrival check in `merge`.
     /// OBRRT_CHAIN_FOLLOW: probability of each route follow-on (0.5).
     pub chain_follow: f64,
-    /// OBRRT_SAMPLER=rate: entry weights are base_weight × clamp(rate /
+    /// Rate sampler: entry weights are base_weight × clamp(rate /
     /// median rate, floor, cap), the rate being an entry's improvement per
     /// frame spent (novel states, first success, frames saved on its
     /// soonest success, closer kept ends), faded in emulated frames, with a
-    /// prior at the pool's overall rate; no ×decay per failure and no
-    /// resets. Start states likewise: yield per frame (floored) instead of
-    /// ×state_decay per barren attempt. Off: the decay rules.
-    pub sampler_rate: bool,
+    /// prior at the pool's overall rate; no failure decay and no
+    /// resets. Start states likewise: yield per frame (floored).
     /// OBRRT_RATE_FLOOR / _CAP / _TAU / _PRIOR / _NOSTART (see RateParams).
     pub rate: crate::pool::RateParams,
     /// OBRRT_RATE_NODE_PRIOR: a start's prior, in frames at the tree's
@@ -127,13 +112,10 @@ impl Default for Config {
             out_dir: "runs/obrrt".into(),
             seed: 1,
             minutes: 30.0,
-            decay: 0.7,
-            state_decay: 0.85,
             alpha: 1.0,
             gamma: 0.5,
             expire_rounds: 200,
             kind_floor: 0.02,
-            chain_prob: 0.5,
             max_chain: 3,
             chain_reach: 2000.0,
             ga_scale: 3.0,
@@ -142,15 +124,11 @@ impl Default for Config {
             route_share: 0.0,
             round_plans: 64,
             max_frames: None,
-            soft_dedup: true,
             mem_budget: 3_000_000_000,
-            pick_by_b: false,
             new_eligible: true,
             report_every: Duration::from_secs(30),
             tune_frames: 10_000_000,
-            chain_route: true,
             chain_follow: 0.5,
-            sampler_rate: true,
             rate: crate::pool::RateParams { floor: 0.15, cap: 4.0, tau: 50_000_000.0, prior_frames: 200_000.0, nostart_frames: 5_000.0, novel: 1.0 },
             node_prior: 300_000.0,
             node_cap: 2.0,
@@ -504,7 +482,7 @@ impl Engine {
             index_pool,
             tree,
             pool: Pool::default(),
-            diag: Diagnostics { chain_prob: cfg.chain_prob, ..Default::default() },
+            diag: Diagnostics::default(),
             generator,
             workers,
             bases: vec![crate::game::into_plain(root_save).into_bytes()],
@@ -960,22 +938,20 @@ impl Engine {
                 .collect();
             self.route.sort_unstable();
             // Route chains: where the best routes met each objective.
-            if self.cfg.chain_route {
-                self.route_met.clear();
-                let mut ids: Vec<u32> = self.hot.iter().copied().collect();
-                ids.sort_unstable();
-                let mut known = 0;
-                for i in ids {
-                    let n = &self.tree.nodes[i as usize];
-                    let Some(m) = n.made_by.as_ref() else { continue };
-                    known += 1;
-                    if n.met {
-                        self.route_met.entry(m.key()).or_default().push(i);
-                    }
+            self.route_met.clear();
+            let mut ids: Vec<u32> = self.hot.iter().copied().collect();
+            ids.sort_unstable();
+            let mut known = 0;
+            for i in ids {
+                let n = &self.tree.nodes[i as usize];
+                let Some(m) = n.made_by.as_ref() else { continue };
+                known += 1;
+                if n.met {
+                    self.route_met.entry(m.key()).or_default().push(i);
                 }
-                self.diag.route_chain.route_nodes = known;
-                self.diag.route_chain.route_keys = self.route_met.len() as u64;
             }
+            self.diag.route_chain.route_nodes = known;
+            self.diag.route_chain.route_keys = self.route_met.len() as u64;
         }
         tick!(10);
     }
@@ -1295,12 +1271,8 @@ impl Engine {
             let zi = weighted(&mut self.rng, &zw).unwrap_or(0);
             let zone = &self.b_index[zi];
             let cell = &zone[self.rng.random_range(0..zone.len())];
-            if self.cfg.soft_dedup {
-                let w: Vec<(u32, f64)> = cell.iter().map(|&i| (i, 0.5f64.powi(self.tree.nodes[i as usize].stats.crowd as i32))).collect();
-                weighted(&mut self.rng, &w).unwrap_or(cell[0])
-            } else {
-                cell[self.rng.random_range(0..cell.len())]
-            }
+            let w: Vec<(u32, f64)> = cell.iter().map(|&i| (i, 0.5f64.powi(self.tree.nodes[i as usize].stats.crowd as i32))).collect();
+            weighted(&mut self.rng, &w).unwrap_or(cell[0])
         };
         self.tree.nodes[b as usize].stats.as_b += 1;
         if self.tree.nodes[b as usize].st.modal() {
@@ -1353,7 +1325,7 @@ impl Engine {
         None
     }
 
-    /// Route chains (`Config::chain_route`): after `first`, the objective the
+    /// Route chains: after `first`, the objective the
     /// best routes took next where they met it, if any (each follow-on with
     /// probability `chain_follow`), up to `max_chain` stages. Nothing is
     /// stacked that the routes didn't do, and nothing is learned from how
@@ -1433,14 +1405,10 @@ impl Engine {
         }
     }
 
-    /// A start's sampling multiplier: its back-off, or with the rate
-    /// sampler, its trap back-off × its recent new states per frame over the
-    /// tree's (prior `node_prior` frames at the tree's rate), clamped to
-    /// [rate.floor, node_cap].
+    /// A start's sampling multiplier: its trap back-off × its recent new
+    /// states per frame over the tree's (prior `node_prior` frames at the
+    /// tree's rate), clamped to [rate.floor, node_cap].
     fn start_mult(&self, s: &crate::tree::NodeStats) -> f64 {
-        if !self.cfg.sampler_rate {
-            return s.backoff;
-        }
         let (gy, gf, _) = self.node_rate;
         if !(gf > 0.0) {
             return s.backoff;
@@ -1558,8 +1526,8 @@ impl Engine {
             // The node this segment's inputs start from (its state's parent).
             let from = parent;
             let mut added = None;
-            // Added and new (no earlier state at its place): what yield,
-            // decay and back-off count. Without soft dedupe, added = novel.
+            // Added and new (no earlier state at its place): what yield
+            // and back-off count.
             let mut novel = false;
             let mut advanced = false;
             let mut next_start = None;
@@ -1610,7 +1578,7 @@ impl Engine {
                     let (id, adv) = self.tree.add(parent, std::mem::take(&mut carry), st, delta, kind);
                     // v2: the controller's plan from here seeds attempts from it.
                     self.tree.nodes[id as usize].tail = seg_tail;
-                    if self.cfg.chain_route {
+                    {
                         let n = &mut self.tree.nodes[id as usize];
                         n.made_by = Some(obj.clone());
                         n.met = seg.success;
@@ -1905,17 +1873,15 @@ impl Engine {
             if modal {
                 self.modal_queue.push(id);
             }
-            if self.cfg.soft_dedup {
-                let mut crowd = 0;
-                for &o in self.cells.get(&cc).map_or(&[][..], |v| v.as_slice()) {
-                    if self.tree.nodes[o as usize].st.frame <= frame {
-                        crowd += 1;
-                    } else {
-                        self.tree.nodes[o as usize].stats.crowd += 1;
-                    }
+            let mut crowd = 0;
+            for &o in self.cells.get(&cc).map_or(&[][..], |v| v.as_slice()) {
+                if self.tree.nodes[o as usize].st.frame <= frame {
+                    crowd += 1;
+                } else {
+                    self.tree.nodes[o as usize].stats.crowd += 1;
                 }
-                self.tree.nodes[id as usize].stats.crowd = crowd;
             }
+            self.tree.nodes[id as usize].stats.crowd = crowd;
             self.cells.entry(cc).or_default().push(id);
             self.dstats.added += 1;
             last[ci] = id;
@@ -1938,23 +1904,6 @@ impl Engine {
     /// Automatic tuning, tier 1: each kind's multiplier follows its yield
     /// relative to the mean.
     fn tune(&mut self) {
-        // Chains: extend more often while they yield more per frame than
-        // single objectives (ratio 1 -> 0.5).
-        let single = self.diag.chains.get(&1).filter(|c| c.attempts >= 20).map(|c| c.yield_per_kframe());
-        let mut multi = crate::diag::ChainStats::default();
-        for c in self.diag.chains.range(2..).map(|(_, c)| c) {
-            multi.attempts += c.attempts;
-            multi.frames += c.frames;
-            multi.added += c.added;
-            multi.frontier += c.frontier;
-            multi.new_zones += c.new_zones;
-            multi.value += c.value;
-        }
-        // Route chains learn nothing from how chains fared.
-        if let Some(single) = single.filter(|_| multi.attempts >= 20 && !self.cfg.chain_route) {
-            let ratio = (multi.yield_per_kframe() + 0.05) / (single + 0.05);
-            self.diag.chain_prob = (0.7 * self.diag.chain_prob + 0.3 * (0.5 * ratio)).clamp(0.1, 0.9);
-        }
         let mean = self.diag.mean_yield();
         for k in self.diag.kinds.values_mut() {
             if k.attempts < 10 {
@@ -2138,11 +2087,11 @@ impl Engine {
         if d.attempts > 0 {
             println!("   door attempts {} met {} overshoots {} (of met {})", d.attempts, d.met, d.overshoots, d.overshoots_met);
         }
-        if self.cfg.chain_route || self.cfg.sampler_rate {
+        {
             println!("   {}", self.diag.route_chain.line());
             summary["chain_route"] = serde_json::json!(&self.diag.route_chain);
         }
-        if self.cfg.sampler_rate {
+        {
             let r = &self.pool.rate;
             // Start multipliers over live, non-modal states.
             let mut m: Vec<f64> = self.tree.nodes.iter().filter(|n| !n.retired && !n.st.modal()).map(|n| self.start_mult(&n.stats)).collect();
@@ -2339,18 +2288,16 @@ impl Engine {
             let frame = st.frame;
             let (nid, _) = self.tree.add(parent, inputs, st, delta, via);
             debug_assert_eq!(nid as usize, id);
-            if self.cfg.soft_dedup {
-                // Crowd as merge counts it: earlier states at the same place.
-                let mut crowd = 0;
-                for &o in self.cells.get(&c).map_or(&[][..], |v| v.as_slice()) {
-                    if self.tree.nodes[o as usize].st.frame <= frame {
-                        crowd += 1;
-                    } else {
-                        self.tree.nodes[o as usize].stats.crowd += 1;
-                    }
+            // Crowd as merge counts it: earlier states at the same place.
+            let mut crowd = 0;
+            for &o in self.cells.get(&c).map_or(&[][..], |v| v.as_slice()) {
+                if self.tree.nodes[o as usize].st.frame <= frame {
+                    crowd += 1;
+                } else {
+                    self.tree.nodes[o as usize].stats.crowd += 1;
                 }
-                self.tree.nodes[nid as usize].stats.crowd = crowd;
             }
+            self.tree.nodes[nid as usize].stats.crowd = crowd;
             self.cells.entry(c).or_default().push(nid);
             // Saves no later record needs: states behind the frontier after
             // their last child (or with none to come).
@@ -2567,17 +2514,15 @@ impl Engine {
         if modal {
             self.modal_queue.push(id);
         }
-        if self.cfg.soft_dedup {
-            let mut crowd = 0;
-            for &o in self.cells.get(&c).map_or(&[][..], |v| v.as_slice()) {
-                if self.tree.nodes[o as usize].st.frame <= fr {
-                    crowd += 1;
-                } else {
-                    self.tree.nodes[o as usize].stats.crowd += 1;
-                }
+        let mut crowd = 0;
+        for &o in self.cells.get(&c).map_or(&[][..], |v| v.as_slice()) {
+            if self.tree.nodes[o as usize].st.frame <= fr {
+                crowd += 1;
+            } else {
+                self.tree.nodes[o as usize].stats.crowd += 1;
             }
-            self.tree.nodes[id as usize].stats.crowd = crowd;
         }
+        self.tree.nodes[id as usize].stats.crowd = crowd;
         self.cells.entry(c).or_default().push(id);
         self.sync_sent.insert(id);
         if adv {

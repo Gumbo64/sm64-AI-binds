@@ -41,7 +41,7 @@ fn stars_needed(name: &str) -> i16 {
     }
 }
 
-/// OBRRT_PAINTING_FAST=1 (off by default): faster painting (re-)entries.
+/// Faster painting (re-)entries:
 /// - Staged castle navigation: a painting behind a door ([`gate`]) is
 ///   steered to in two stages, the door first (as `Door::Enter` would:
 ///   Arrival::Door), then the painting; progress counts the stage, then the
@@ -57,10 +57,7 @@ fn stars_needed(name: &str) -> i16 {
 ///   at most 2 queueings per key per run) tries the painting from the first
 ///   post-exit state every time, not just after the first two exits, and
 ///   failures at earlier levels don't decay it.
-/// - Mario::GoToCastle loses its post-star boost (mario/exit.rs).
-pub fn painting_fast() -> bool {
-    obrrt_core::config::current().objectives.painting_fast
-}
+/// - Mario::GoToCastle has no post-star boost (mario/exit.rs).
 
 /// A door between the lobby and a painting's room (levels/castle_inside/
 /// areas/1/collision.inc.c special objects: the 0-star door to BoB's room,
@@ -121,22 +118,21 @@ pub struct Enter {
 
 impl Enter {
     pub fn new(b: &St, p: &'static Painting) -> Enter {
-        let fast = painting_fast();
-        // OBRRT_PAINTING_FAST: a wall painting is aimed at 150 above its
+        // A wall painting is aimed at 150 above its
         // bottom edge, not its centre: the warp floor is touched anywhere
         // in the painting's plane above it (the routes' triggers: BoB's at
         // y 446-566, bottom 410, centre 716; WF's at -177..174, bottom
         // -205), and the centre of a 614-high painting hung 200 above the
         // floor is a double jump up.
         let mut centre = p.centre();
-        if fast && p.pitch == 0.0 {
+        if p.pitch == 0.0 {
             centre[1] = centre[1].min(p.corner[1] + 150.0);
         }
         Enter {
             painting: p,
             centre,
-            gate: if fast && p.area == 1 { gate(p.name) } else { None },
-            others: if fast && p.area == 1 {
+            gate: if p.area == 1 { gate(p.name) } else { None },
+            others: if p.area == 1 {
                 crate::painting_table::PAINTINGS
                     .iter()
                     .filter(|q| q.area == 1 && q.name != p.name)
@@ -145,7 +141,7 @@ impl Enter {
             } else {
                 Vec::new()
             },
-            progress: fast.then(|| b.progress_set()),
+            progress: Some(b.progress_set()),
         }
     }
 

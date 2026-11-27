@@ -214,7 +214,6 @@ fn kinds_for(problem: &str) -> Vec<Kind> {
 
 fn main() -> Result<()> {
     unsafe {
-        std::env::set_var("OBRRT_LAKITU_ARC", "1");
         std::env::set_var("OBRRT_GROUNDS_FIX", "1");
     }
     obrrt_objectives::moves::install_controller();

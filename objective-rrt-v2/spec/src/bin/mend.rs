@@ -56,17 +56,10 @@ use sm64_binds::{SM64Game, SM64GameGenerator, SaveState};
 
 /// As `legs`: the P arm's movement set, which a plain run gets unless set.
 const DEFAULT_ENV: &[(&str, &str)] = &[
-    ("OBRRT_MOVES", "1"),
-    ("OBRRT_MOVE_GA", "1"),
     ("OBRRT_MOVE_GA_EXTRA", "1"),
     ("OBRRT_MOVES_MODES", "1"),
     ("OBRRT_MOVES_EXTRA", "1"),
     ("OBRRT_MOVES_SEEDED", "1"),
-    ("OBRRT_CALM", "1"),
-    ("OBRRT_LAKITU_ARC", "1"),
-    ("OBRRT_PAINTING_FAST", "1"),
-    ("OBRRT_GP_CATCH", "1"),
-    ("OBRRT_SWIM_HOLD", "1"),
     ("OBRRT_TECH", "all"),
     // The route's inputs can't be bred out.
     ("OBRRT_GA_KEEP_SEED", "1"),

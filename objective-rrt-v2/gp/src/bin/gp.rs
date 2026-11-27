@@ -104,7 +104,6 @@ fn pruned(pb: &Problem, game: &mut SM64Game, prog: &Prog) -> Result<Prog> {
 fn main() -> Result<()> {
     // The Lakitu skip's Hill mode exists only with this on.
     unsafe {
-        std::env::set_var("OBRRT_LAKITU_ARC", "1");
         std::env::set_var("OBRRT_GROUNDS_FIX", "1");
     }
     obrrt_objectives::moves::install_controller();

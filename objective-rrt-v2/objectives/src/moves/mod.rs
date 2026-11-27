@@ -1096,18 +1096,10 @@ pub fn install_controller() {
 }
 
 /// [`install_controller`] with the move library steering, and static floor
-/// snapshots on (`OBRRT_MOVES=1`, run/src/main.rs).
+/// snapshots on (run/src/main.rs).
 pub fn install() {
     obrrt_core::geo::want_static_floors();
     library().steer.store(true, Ordering::Relaxed);
-}
-
-/// [`install_controller`] with static floor snapshots for the GA's move
-/// policies (`OBRRT_MOVE_GA=1` without `OBRRT_MOVES=1`): the default
-/// steering stays generic.
-pub fn install_policies() {
-    obrrt_core::geo::want_static_floors();
-    library();
 }
 
 /// Turns the move library's steering off again (labs comparing both).

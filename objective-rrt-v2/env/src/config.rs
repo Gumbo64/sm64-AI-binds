@@ -48,8 +48,6 @@ impl Default for Budget {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Sampler {
-    /// OBRRT_PICK_BY_B
-    pub pick_by_b: bool,
     /// OBRRT_NEW_ELIGIBLE
     pub new_eligible: bool,
 }
@@ -57,7 +55,6 @@ pub struct Sampler {
 impl Default for Sampler {
     fn default() -> Self {
         Sampler {
-            pick_by_b: false,
             new_eligible: true,
         }
     }
@@ -143,10 +140,7 @@ pub struct Ga {
     pub regret: usize,
     /// OBRRT_GA_KEEP_SEED
     pub keep_seed: bool,
-    /// OBRRT_CALM
-    pub calm: bool,
-    /// OBRRT_MOVE_GA / OBRRT_MOVE_GA_EXTRA
-    pub move_ga: bool,
+    /// OBRRT_MOVE_GA_EXTRA
     pub move_ga_extra: bool,
 }
 
@@ -157,8 +151,6 @@ impl Default for Ga {
             gamma: 0.99,
             regret: 0,
             keep_seed: false,
-            calm: true,
-            move_ga: true,
             move_ga_extra: true,
         }
     }
@@ -216,16 +208,11 @@ pub struct Stop {
 pub struct ObjectiveConfig {
     /// OBRRT_TECH: technique objectives on ("all", or a list; see extra/tech/mod.rs).
     pub tech: String,
-    /// OBRRT_MOVES / OBRRT_MOVES_EXTRA / OBRRT_MOVES_MODES / OBRRT_MOVES_UPHILL
-    pub moves: bool,
+    /// OBRRT_MOVES_EXTRA / OBRRT_MOVES_MODES
     pub moves_extra: bool,
     pub moves_modes: bool,
-    pub swim_hold: bool,
     pub swim_targets: bool,
-    pub gp_catch: bool,
-    pub lakitu_arc: bool,
     pub lakitu_through_door: bool,
-    pub painting_fast: bool,
     pub grounds_fix: bool,
     /// OBRRT_MOVE_WEIGHT=<x>: the 0.5-weight techniques weigh x (None: unchanged).
     pub move_weight: Option<f64>,
@@ -245,15 +232,10 @@ impl Default for ObjectiveConfig {
     fn default() -> Self {
         ObjectiveConfig {
             tech: "all".into(),
-            moves: true,
             moves_extra: false,
             moves_modes: false,
-            swim_hold: true,
             swim_targets: false,
-            gp_catch: true,
-            lakitu_arc: true,
             lakitu_through_door: false,
-            painting_fast: true,
             grounds_fix: false,
             move_weight: Some(0.75),
             king_landing: false,

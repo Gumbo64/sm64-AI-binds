@@ -111,7 +111,6 @@ fn verify(g: &mut SM64Game, c: &Case, pads: &[GamePad]) -> Result<(bool, String)
 
 fn main() -> Result<()> {
     unsafe {
-        std::env::set_var("OBRRT_LAKITU_ARC", "1");
         std::env::set_var("OBRRT_GROUNDS_FIX", "1");
     }
     obrrt_objectives::moves::install_controller();

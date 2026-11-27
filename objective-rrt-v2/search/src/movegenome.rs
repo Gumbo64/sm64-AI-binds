@@ -46,10 +46,7 @@ pub fn set_only(names: Option<Vec<&'static str>>) {
 }
 
 pub fn enabled() -> bool {
-    if FORCED_OFF.load(std::sync::atomic::Ordering::Relaxed) {
-        return false;
-    }
-    obrrt_core::config::current().ga.move_ga
+    !FORCED_OFF.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 /// `OBRRT_MOVE_GA_N` (default 8): most policy-seeded rollouts in a first

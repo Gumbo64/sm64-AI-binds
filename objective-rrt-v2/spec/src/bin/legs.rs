@@ -38,10 +38,8 @@ use sm64_binds::{SM64GameGenerator, SaveState};
 
 const A: u16 = obrrt_core::buttons::A_BUTTON;
 /// Defaults for unset switches: the P arm's movement and technique set
-/// (RUNS.md) plus screen.sh's GP_CATCH / SWIM_HOLD.
+/// (RUNS.md).
 const LEGS_DEFAULT_ENV: &[(&str, &str)] = &[
-    ("OBRRT_MOVES", "1"),
-    ("OBRRT_MOVE_GA", "1"),
     ("OBRRT_MOVE_GA_EXTRA", "1"),
     // Every movement policy, not only the library's own: off, the old
     // defaults had speed-kick and all the mode policies silently unplayed.
@@ -49,11 +47,6 @@ const LEGS_DEFAULT_ENV: &[(&str, &str)] = &[
     ("OBRRT_MOVES_EXTRA", "1"),
     // Legs seeded from a reference play the policies too.
     ("OBRRT_MOVES_SEEDED", "1"),
-    ("OBRRT_CALM", "1"),
-    ("OBRRT_LAKITU_ARC", "1"),
-    ("OBRRT_PAINTING_FAST", "1"),
-    ("OBRRT_GP_CATCH", "1"),
-    ("OBRRT_SWIM_HOLD", "1"),
     ("OBRRT_TECH", "all"),
 ];
 /// Frames a press-through (cutscene tail, dialogs, menus) may take.
@@ -1301,11 +1294,10 @@ fn main() -> Result<()> {
     // Before the first leg too: without this a run shows nothing until its
     // first leg ends (the live writer has no base to add the running leg to).
     let _ = write_outputs!(true);
-    let moves_env = obrrt_core::sys::env::var("OBRRT_MOVES").is_ok_and(|v| v == "1");
     obrrt_search::movegenome::set_with_seed(obrrt_core::sys::env::var("OBRRT_MOVES_SEEDED").is_ok_and(|v| v == "1"));
     for (li, leg) in legs.iter().enumerate() {
         // `"moves": "off"` legs: the library's steering and policy genomes off.
-        obrrt_objectives::moves::set_steering(moves_env && !leg.moves_off && !leg.moves_kicks && !leg.moves_policies);
+        obrrt_objectives::moves::set_steering(!leg.moves_off && !leg.moves_kicks && !leg.moves_policies);
         obrrt_search::movegenome::set_forced_off(leg.moves_off);
         obrrt_search::movegenome::set_only(leg.moves_kicks.then(|| vec!["uphill-kick", "speed-kick", "jump-kick", "steep-climb"]));
         // The first generation plays every plausible policy alone, then

@@ -75,7 +75,6 @@ pub fn from_env_with(base: SearchConfig, get: Lookup) -> Result<SearchConfig> {
     e.strict_opt("OBRRT_MEM_MB", &mut budget.mem_mb)?;
     e.strict("OBRRT_ROUND", &mut budget.round_plans)?;
 
-    e.eq1("OBRRT_PICK_BY_B", &mut sampler.pick_by_b);
     e.eq1("OBRRT_NEW_ELIGIBLE", &mut sampler.new_eligible);
 
 
@@ -111,8 +110,6 @@ pub fn from_env_with(base: SearchConfig, get: Lookup) -> Result<SearchConfig> {
     e.lenient("OBRRT_GA_GAMMA", &mut ga.gamma);
     e.lenient("OBRRT_GA_REGRET", &mut ga.regret);
     e.eq1("OBRRT_GA_KEEP_SEED", &mut ga.keep_seed);
-    e.eq1("OBRRT_CALM", &mut ga.calm);
-    e.eq1("OBRRT_MOVE_GA", &mut ga.move_ga);
     e.eq1("OBRRT_MOVE_GA_EXTRA", &mut ga.move_ga_extra);
 
     // priors
@@ -139,15 +136,10 @@ pub fn from_env_with(base: SearchConfig, get: Lookup) -> Result<SearchConfig> {
     if let Some(v) = e.get("OBRRT_TECH") {
         objectives.tech = v;
     }
-    e.eq1("OBRRT_MOVES", &mut objectives.moves);
     e.eq1("OBRRT_MOVES_EXTRA", &mut objectives.moves_extra);
     e.eq1("OBRRT_MOVES_MODES", &mut objectives.moves_modes);
-    e.eq1("OBRRT_SWIM_HOLD", &mut objectives.swim_hold);
     e.eq1("OBRRT_SWIM_TARGETS", &mut objectives.swim_targets);
-    e.eq1("OBRRT_GP_CATCH", &mut objectives.gp_catch);
-    e.eq1("OBRRT_LAKITU_ARC", &mut objectives.lakitu_arc);
     e.eq1("OBRRT_LAKITU_THROUGH_DOOR", &mut objectives.lakitu_through_door);
-    e.eq1("OBRRT_PAINTING_FAST", &mut objectives.painting_fast);
     e.eq1("OBRRT_GROUNDS_FIX", &mut objectives.grounds_fix);
     if let Some(v) = e.get("OBRRT_MOVE_WEIGHT") {
         objectives.move_weight = Some(v.parse().with_context(|| "OBRRT_MOVE_WEIGHT: a number")?);

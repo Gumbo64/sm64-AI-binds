@@ -51,12 +51,11 @@ impl Objective for GoToCastle {
     fn key(&self) -> String {
         format!("GoToCastle {}", self.level)
     }
-    fn obj_weight(&self, b: &St) -> f64 {
-        // Worth most right after a course gave a star. OBRRT_PAINTING_FAST:
-        // not boosted (8 of 10 no-star course visits in the hy/dn/mg routes
+    fn obj_weight(&self, _b: &St) -> f64 {
+        // Not boosted after a course gave a star (8 of 10 no-star course visits in the hy/dn/mg routes
         // were pass-throughs: re-enter the same painting, exit, 179-234 f,
         // no faster than walking to the next painting).
-        if b.stars > 0 && !crate::painting::painting_fast() { 2.0 } else { 0.5 }
+        0.5
     }
     fn base_criteria(&self, s: &St) -> bool {
         s.level == self.level && s.action_has(ACT_FLAG_PAUSE_EXIT)

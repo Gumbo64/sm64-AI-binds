@@ -100,11 +100,10 @@ pub struct NodeStats {
     pub crowd: u32,
     /// Attempts from it in which the emulated game trapped.
     pub traps: u32,
-    /// Rate sampler (`Config::sampler_rate`): new states its attempts added
+    /// Rate sampler: new states its attempts added
     /// and frames they spent, faded by exp(-Δ/tau) in emulated frames since
     /// `rate_t`. Its start multiplier is this yield per frame against the
-    /// tree's, floored (see `Engine::start_mult`), instead of ×state_decay
-    /// per barren attempt.
+    /// tree's, floored (see `Engine::start_mult`).
     pub rate_y: f64,
     pub rate_f: f64,
     pub rate_t: u64,
@@ -128,7 +127,7 @@ pub struct Node {
     /// its place (it is then no longer a start).
     pub made_by: Option<Arc<dyn Objective>>,
     pub dominated: bool,
-    /// Route chains (`Config::chain_route`): whether `made_by` was met here
+    /// Route chains: whether `made_by` was met here
     /// (else the state was kept for progress toward it).
     pub met: bool,
     /// v2: the rolling-horizon controller's plan beyond this state (the best

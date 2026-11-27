@@ -405,10 +405,10 @@ pub fn classify_pad(st: &St, target: [f32; 3], arrival: Arrival, frame: usize) -
         return None;
     }
     let mut kind = select(st, &key, &ctx);
-    // OBRRT_CALM: with the target well behind on the ground, turn (stick
+    // Calm: with the target well behind on the ground, turn (stick
     // at it, no A: a jump stops the turn) instead of jumping on; a wall
     // kick reversal and a side flip onto a tall step keep their reasons.
-    if calm() && !ctx.air && ctx.yaw_err > BEHIND && JUMPY.contains(&kind) {
+    if !ctx.air && ctx.yaw_err > BEHIND && JUMPY.contains(&kind) {
         kind = MoveKind::Run;
     }
     Some(pad_for_with(kind, st, target, arrival, frame))
@@ -428,11 +428,6 @@ const JUMPY: [MoveKind; 7] = [
     MoveKind::UphillKick,
 ];
 
-/// `OBRRT_CALM=1`: fewer pointless jumps (module docs of mod.rs).
-pub fn calm() -> bool {
-    obrrt_core::config::current().ga.calm
-}
-
 const ACT_STEEP_JUMP: u32 = 0x0300_0885;
 const ACT_HOLD_JUMP: u32 = 0x0300_08A0;
 
@@ -446,7 +441,7 @@ pub fn is_jump_start(prev: &St, cur: &St) -> bool {
 }
 
 /// How useful jumping is from `st` towards `target` (a multiplier on
-/// random genomes' A presses, `OBRRT_CALM`): lower indoors (a ceiling
+/// random genomes' A presses, calm): lower indoors (a ceiling
 /// within 3000), near a door or a spot to stop at (within 800), with
 /// nothing to jump onto, over or off ahead, and with the target behind
 /// (jumping stops a turn, unless a wall ahead makes it a wall-kick

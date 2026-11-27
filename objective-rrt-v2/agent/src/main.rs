@@ -132,12 +132,6 @@ fn print(v: &Value, a: &Args, kind: &str) {
 /// move library, techniques), with legs' defaults for unset switches.
 fn setup_domain() -> Result<()> {
     const DEFAULTS: &[(&str, &str)] = &[
-        ("OBRRT_MOVES", "1"),
-        ("OBRRT_CALM", "1"),
-        ("OBRRT_LAKITU_ARC", "1"),
-        ("OBRRT_PAINTING_FAST", "1"),
-        ("OBRRT_GP_CATCH", "1"),
-        ("OBRRT_SWIM_HOLD", "1"),
         ("OBRRT_TECH", "all"),
     ];
     for (k, v) in DEFAULTS {

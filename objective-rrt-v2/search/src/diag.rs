@@ -136,8 +136,7 @@ pub struct RewireStats {
     pub frames_saved: u64,
 }
 
-/// Route chains (`Config::chain_route`, OBRRT_CHAIN=route) and the arrival
-/// credit both new modes use.
+/// Route chains and the arrival credit.
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct RouteChainStats {
     /// GA plans whose first objective was looked up on the best routes, and
@@ -188,8 +187,6 @@ pub struct Diagnostics {
     /// Per GA budget class ([`crate::ga::budget_class`]: macro, explore,
     /// precise); `met` is indexed by objectives met, as for chains.
     pub budgets: BTreeMap<&'static str, ChainStats>,
-    /// Probability of extending an attempt by one more objective (learned).
-    pub chain_prob: f64,
     /// s0 picks per node in the current window, for concentration.
     pub window_starts: Vec<u32>,
 }
@@ -290,7 +287,7 @@ impl Diagnostics {
             );
         }
         // Chains: does planning ahead pay?
-        let _ = writeln!(s, "chains (p extend {:.2}):", self.chain_prob);
+        let _ = writeln!(s, "chains:");
         for (len, c) in &self.chains {
             let met: Vec<String> = c.met.iter().map(|m| format!("{:.0}%", 100.0 * *m as f64 / c.attempts.max(1) as f64)).collect();
             let _ = writeln!(

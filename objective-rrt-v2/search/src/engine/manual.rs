@@ -228,8 +228,7 @@ impl Engine {
             let n = &nodes[i as usize];
             n.st.zone() == g.zone && !n.retired && !n.st.modal() && n.st.alive() && obrrt_core::dist(n.st.pos, g.pos) <= g.radius
         };
-        let soft = self.cfg.soft_dedup;
-        bubble_pick(&mut self.rng, &self.b_index, share, inside, |i| if soft { 0.5f64.powi(nodes[i as usize].stats.crowd as i32) } else { 1.0 })
+        bubble_pick(&mut self.rng, &self.b_index, share, inside, |i| 0.5f64.powi(nodes[i as usize].stats.crowd as i32))
     }
 
     /// Tree sync's fast path: the first own node (not imported by sync) in each zone (level, area) this tree had not

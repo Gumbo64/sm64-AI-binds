@@ -15,7 +15,6 @@ fn main() -> anyhow::Result<()> {
     use sm64_binds::SM64GameGenerator;
     use std::path::Path;
     unsafe {
-        std::env::set_var("OBRRT_LAKITU_ARC", "1");
         std::env::set_var("OBRRT_GROUNDS_FIX", "1");
     }
     obrrt_objectives::moves::install_controller();

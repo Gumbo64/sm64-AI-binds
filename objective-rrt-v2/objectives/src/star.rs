@@ -32,10 +32,6 @@ const ACT_GROUND_POUND: u32 = 0x0080_08A9;
 /// ACT_FALL_AFTER_STAR_GRAB (forward speed 0, gravity 3.2 a frame down to
 /// -65, apply_gravity in mario_step.c), and the star dance starts on
 /// landing: the frame that matters is that landing, not the touch.
-fn gp_catch() -> bool {
-    obrrt_core::config::current().objectives.gp_catch
-}
-
 /// Frames from an airborne star grab at `s` to the landing that starts the
 /// dance (ACT_FALL_AFTER_STAR_GRAB's fall onto `floor_y`); 0 on the ground.
 fn fall_frames(s: &St) -> usize {
@@ -174,7 +170,7 @@ impl Objective for Collect {
     fn done_frames(&self, s: &St, _mem: &Mem) -> f64 {
         // G06: the dance starts on landing, so an airborne grab costs its
         // fall (v1's success_heuristic: grab frame + fall_frames).
-        if gp_catch() { fall_frames(s) as f64 } else { 0.0 }
+        fall_frames(s) as f64
     }
     fn success_value(&self) -> f64 {
         50.0
@@ -190,7 +186,7 @@ impl Objective for Collect {
     fn steer_button(&self, s: &St) -> u16 {
         // G06: airborne, with the star within reach horizontally and 0-200
         // above, ground-pound into it.
-        if !gp_catch() || s.action & ACT_FLAG_AIR == 0 || s.action == ACT_GROUND_POUND {
+        if s.action & ACT_FLAG_AIR == 0 || s.action == ACT_GROUND_POUND {
             return 0;
         }
         let above = self.pos[1] - s.pos[1];

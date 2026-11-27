@@ -107,19 +107,11 @@ pub fn fork(s: &Session, pos: &[String], f: &HashMap<String, String>) -> Result<
 }
 
 const OBRRT2_ENV: &[(&str, &str)] = &[
-    ("OBRRT_SOFT_DEDUP", "1"),
     ("OBRRT_MEM_MB", "2500"),
     ("OBRRT_ROUND", "64"),
     ("OBRRT_TECH", "all"),
     ("OBRRT_NEW_ELIGIBLE", "1"),
-    ("OBRRT_STARSET_KEY", "1"),
-    ("OBRRT_PICK_BY_B", "0"),
-    ("OBRRT_SWIM_HOLD", "1"),
-    ("OBRRT_GP_CATCH", "1"),
-    ("OBRRT_KEEP_WIP", "1"),
     ("OBRRT_MOVE_WEIGHT", "0.75"),
-    ("OBRRT_CHAIN", "route"),
-    ("OBRRT_SAMPLER", "rate"),
     ("OBRRT_BOOT_NOWAIT", "1"),
 ];
 

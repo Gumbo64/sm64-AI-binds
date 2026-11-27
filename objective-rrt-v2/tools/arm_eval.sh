@@ -16,14 +16,14 @@ while [ $# -gt 0 ]; do
   names+=("${1%%=*}"); envs+=("${1#*=}"); shift
 done
 [ ${#seeds[@]} -eq 0 ] && seeds=(1)
-C="OBRRT_SOFT_DEDUP=1 OBRRT_MEM_MB=3000 OBRRT_ROUND=64 OBRRT_MAX_FRAMES=$FRAMES"
-BASE="OBRRT_TECH=all OBRRT_NEW_ELIGIBLE=1 OBRRT_STARSET_KEY=1 OBRRT_PICK_BY_B=0 OBRRT_SWIM_HOLD=1 OBRRT_GP_CATCH=1 OBRRT_KEEP_WIP=1 OBRRT_MOVE_WEIGHT=0.75 OBRRT_TAS_BOOT=1"
+C="OBRRT_MEM_MB=3000 OBRRT_ROUND=64 OBRRT_MAX_FRAMES=$FRAMES"
+BASE="OBRRT_TECH=all OBRRT_NEW_ELIGIBLE=1 OBRRT_MOVE_WEIGHT=0.75 OBRRT_TAS_BOOT=1"
 CD="OBRRT_CHAIN=route OBRRT_SAMPLER=rate"; [ "${NOCD:-0}" = 1 ] && CD=""
 for seed in "${seeds[@]}"; do
   for i in "${!names[@]}"; do
     out=runs/$PREFIX-${names[$i]}-s$seed
     rm -rf "$out"
-    env $C $BASE $CD ${envs[$i]} RAYON_NUM_THREADS=${THREADS:-16} nice -n 5 "$BIN" $ROM "$out" "$seed" 180 > logs/$PREFIX-${names[$i]}-s$seed.log 2>&1
+    env $C $BASE ${envs[$i]} RAYON_NUM_THREADS=${THREADS:-16} nice -n 5 "$BIN" $ROM "$out" "$seed" 180 > logs/$PREFIX-${names[$i]}-s$seed.log 2>&1
     echo "${names[$i]} s$seed: $(grep 'best times' logs/$PREFIX-${names[$i]}-s$seed.log | tail -1)"
   done
 done

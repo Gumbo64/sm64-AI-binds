@@ -84,10 +84,10 @@ fn ground(lib: &Library, st: &St, target: [f32; 3], arrival: Arrival, button: u1
         return GamePad::new(if frame % 2 == 0 { button } else { 0 }, sx, sy);
     }
     let mut jump = target[1] > st.pos[1] + 50.0 && frame % jump_every < jump_every / 2;
-    // OBRRT_CALM: the rhythm only towards a raised target close by, not
+    // Calm: the rhythm only towards a raised target close by, not
     // under a low ceiling, and not while turning towards one behind
     // (a jump stops the turn).
-    if jump && super::policies::calm() && st.action & ACT_FLAG_AIR == 0 {
+    if jump && st.action & ACT_FLAG_AIR == 0 {
         let (dx, dz) = (target[0] - st.pos[0], target[2] - st.pos[2]);
         let behind = wrap(angle(dx, dz) as i32 - st.yaw as i32).unsigned_abs() > super::policies::BEHIND;
         let close = st.hdist(target) < 500.0 && target[1] > st.pos[1] + 100.0;
@@ -148,7 +148,7 @@ fn swim(st: &St, target: [f32; 3], button: u16, frame: usize) -> GamePad {
     // about 100 frames, a circle 280 across. Coast while turning towards a
     // target that close, or he circles it.
     let want = yaw_err.unsigned_abs() < 0x2000 || hd > 600.0;
-    let stroke = if swim_hold() { want && hold_a(st, frame) } else { frame % 4 == 0 && want };
+    let stroke = want && hold_a(st, frame);
     let mut b = if stroke { A_BUTTON } else { 0 };
     if button & !A_BUTTON != 0 && frame % 4 == 2 {
         // B punches or grabs underwater (act_water_punch).
@@ -163,11 +163,6 @@ const ACT_FLUTTER_KICK: u32 = 0x300024D2;
 const ACT_HOLD_BREASTSTROKE: u32 = 0x300024D3;
 const ACT_HOLD_SWIMMING_END: u32 = 0x300024D4;
 const ACT_HOLD_FLUTTER_KICK: u32 = 0x300024D5;
-
-/// `OBRRT_SWIM_HOLD=1`: stroke with the TAS's held-A cadence ([`hold_a`]).
-fn swim_hold() -> bool {
-    obrrt_core::config::current().objectives.swim_hold
-}
 
 /// A for the 20-frame stroke at the 28 cap (13 BREASTSTROKE + 7
 /// SWIMMING_END, mario_actions_submerged.c), from the action at the start of

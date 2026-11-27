@@ -91,18 +91,12 @@ const ACT_FREEFALL: u32 = 0x0100_088C;
 pub enum Mode {
     Edge,
     Air,
-    /// `OBRRT_LAKITU_ARC=1` only: two long jumps on one straight line,
+    /// two long jumps on one straight line,
     /// takeoff on the outer bank → the railing strip → the castle door.
     Arc,
-    /// `OBRRT_LAKITU_ARC=1` only: the hill slide's speed (~100 u/f) and a
+    /// the hill slide's speed (~100 u/f) and a
     /// double jump from the bridge start over the whole box ([`hill`]).
     Hill,
-}
-
-/// `OBRRT_LAKITU_ARC=1`: the Arc mode, and the Edge / Air modes' direct
-/// approach and door aim (see [`arc`]). Off by default (byte-identical).
-pub fn arc_on() -> bool {
-    obrrt_core::config::current().objectives.lakitu_arc
 }
 
 pub struct LakituSkip {
@@ -202,11 +196,7 @@ pub fn generate_level(b: &St, out: &mut Vec<std::sync::Arc<dyn Objective>>) {
 /// Generated per object: for the intro Lakitu still waiting, both modes.
 pub fn generate(b: &St, o: &Obj, out: &mut Vec<std::sync::Arc<dyn Objective>>) {
     if grounds(b) && is_intro_lakitu(o) && o.action == CAMERA_LAKITU_INTRO_ACT_TRIGGER_CUTSCENE {
-        let mut modes = vec![Mode::Edge, Mode::Air];
-        if arc_on() {
-            modes.extend([Mode::Arc, Mode::Hill]);
-        }
-        for mode in modes {
+        for mode in [Mode::Edge, Mode::Air, Mode::Arc, Mode::Hill] {
             out.push(std::sync::Arc::new(LakituSkip { lakitu: o.id, mode }));
         }
     }
@@ -310,16 +300,14 @@ impl Objective for LakituSkip {
         obrrt_core::Precision::Precise
     }
     fn steer_target(&self, s: &St) -> Option<[f32; 3]> {
-        if arc_on() {
-            if self.mode == Mode::Arc {
-                return Some(arc::target(s));
-            }
-            if self.mode == Mode::Hill {
-                return Some(hill::target(s));
-            }
-            if let Some(t) = arc::edge_air_target(self.mode == Mode::Air, s) {
-                return Some(t);
-            }
+        if self.mode == Mode::Arc {
+            return Some(arc::target(s));
+        }
+        if self.mode == Mode::Hill {
+            return Some(hill::target(s));
+        }
+        if let Some(t) = arc::edge_air_target(self.mode == Mode::Air, s) {
+            return Some(t);
         }
         let ex = side(s);
         if !near_bridge(s) || s.pos[2] <= BOX_Z.0 + 100.0 {
@@ -396,7 +384,7 @@ fn lj_rule(air: bool, traj: &[St], played: &[GamePad], genome: GamePad) -> GameP
     pad
 }
 
-/// The Arc mode (`OBRRT_LAKITU_ARC=1`): Mario runs straight at a point on
+/// The Arc mode : Mario runs straight at a point on
 /// the nearer railing strip and long-jumps onto it, then long-jumps again
 /// (Z + A on the landing) through the forecourt gate towards the door.
 /// A long jump never turns Mario (update_air_without_turn) and the one
@@ -1095,7 +1083,7 @@ pub mod arc {
     }
 }
 
-/// The Hill mode (`OBRRT_LAKITU_ARC=1`), after the 2026 120-star TAS's
+/// The Hill mode , after the 2026 120-star TAS's
 /// grounds hill (ref/tas/slope_techniques.md): a crouch-slide long jump
 /// onto the hill's very slippery (0x13) west face, A+B+Z on the landing (a
 /// steep jump turned into a rising dive), the dive slide down the face

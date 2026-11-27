@@ -163,19 +163,15 @@ fn shore_ahead(st: &St, target: [f32; 3], fv: f32) -> bool {
     .unwrap_or(false)
 }
 
-fn swim_hold_env() -> bool {
-    obrrt_core::config::current().objectives.swim_hold
-}
-
 pub fn swim_plausible(k: Swim, st: &St, target: [f32; 3]) -> bool {
     if !swimming(st) {
         return false;
     }
     let surf = surface(st);
     match k {
-        // With OBRRT_SWIM_HOLD=1 the default swimming is this cadence
-        // already (the lab: no wins, a slot taken): offered without it.
-        Swim::Tas => !swim_hold_env(),
+        // The default swimming is this cadence already (the lab: no wins, a
+        // slot taken): not offered.
+        Swim::Tas => false,
         // A target well below the surface and far: else it is swim-tas.
         Swim::Surface => target[1] < surf - 300.0 && st.hdist(target) > 1200.0 && st.pos[1] < surf - 200.0,
         // A target out of the water the jump reaches.

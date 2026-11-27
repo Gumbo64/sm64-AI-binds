@@ -1058,8 +1058,8 @@ fn child(parents: &[Gen], rng: &mut SmallRng, b: &Breed, generation: u16, repoli
         4 => {
             // Press A, B or Z for a few frames somewhere.
             let mut button = [A_BUTTON, A_BUTTON, Z_TRIG, Z_TRIG, B_BUTTON][rng.random_range(0..5)];
-            // OBRRT_CALM: an A press only as often as A looks useful.
-            if button == A_BUTTON && calm() && !rng.random_bool(a_mult()) {
+            // Calm: an A press only as often as A looks useful.
+            if button == A_BUTTON && !rng.random_bool(a_mult()) {
                 button = 0;
             }
             let n = rng.random_range(1..5);
@@ -1163,13 +1163,8 @@ pub fn makeup_line() -> String {
     format!("gen0 per attempt: {}; children per breed: {}", part(&m.gen0, m.attempts), part(&m.children, m.breeds))
 }
 
-/// `OBRRT_CALM=1`: random genomes' A presses scaled by how useful jumping
-/// looks from the start (the mover's `jump_useful`). v1's other half, fewer
-/// jump starts as a tiebreak, is dropped: v2's fitness is a real-valued
-/// discounted sum and practically never ties.
-fn calm() -> bool {
-    obrrt_core::config::current().ga.calm
-}
+// Calm: random genomes' A presses scaled by how useful jumping looks from
+// the start (the mover's `jump_useful`), and fewer jump starts as a tiebreak.
 
 fn a_mult() -> f64 {
     A_MULT.with(|a| a.get())
@@ -1323,9 +1318,9 @@ impl Worker {
             }
         }
         let seed = if policy_pick.is_some() { policy_pick.as_deref() } else { seed };
-        // OBRRT_CALM: random genomes' A presses scaled by how useful
+        // Calm: random genomes' A presses scaled by how useful
         // jumping looks from the start (the mover's jump_useful).
-        if calm() {
+        {
             let m = match (obrrt_core::mover::mover(), stages[0].steer_target(start)) {
                 (Some(m), Some(t)) => (m.jump_useful(start, t, stages[0].arrival(start)) as f64).clamp(0.05, 1.0),
                 _ => 1.0,
@@ -1891,7 +1886,7 @@ struct Rollout {
     /// policy of the `repolicy` mutation that made it (`u8::MAX` none).
     plan: u32,
     rp: u8,
-    /// `OBRRT_CALM`: jump starts from the ground in the trajectory (the
+    /// Calm: jump starts from the ground in the trajectory (the
     /// mover's [`obrrt_core::mover::Mover::is_jump_start`]; 0 when off).
     jumps: u32,
     /// Genome indices an objective's keyed overlay marked as key frames.
@@ -1917,14 +1912,14 @@ fn qd_insert(a: &mut crate::qd::Archive, q: &crate::qd::Qd, r: &Rollout, n_stage
 
 impl Rollout {
     /// Greater is better: fitness, then fewer frames to its maximum, then
-    /// the lower final ETA, then (`OBRRT_CALM`) fewer jump starts.
+    /// the lower final ETA, then fewer jump starts.
     fn better(&self, other: &Rollout) -> Ordering {
         let o = self
             .fitness
             .total_cmp(&other.fitness)
             .then(other.at.cmp(&self.at))
             .then(other.final_eta.total_cmp(&self.final_eta));
-        if o.is_eq() && calm() { other.jumps.cmp(&self.jumps) } else { o }
+        if o.is_eq() { other.jumps.cmp(&self.jumps) } else { o }
     }
 }
 
@@ -2146,7 +2141,7 @@ impl Worker {
         let traj_len = traj.len();
         let final_eta = if ends.len() < stages.len() { prev } else { 0.0 };
         let jumps = match obrrt_core::mover::mover() {
-            Some(m) if calm() => traj.windows(2).filter(|w| m.is_jump_start(&w[0], &w[1])).count() as u32,
+            Some(m) => traj.windows(2).filter(|w| m.is_jump_start(&w[0], &w[1])).count() as u32,
             _ => 0,
         };
         if objects {
@@ -2583,8 +2578,8 @@ impl Worker {
                         4 => {
                             // Press A, B or Z for a few frames somewhere.
                             let mut button = [A_BUTTON, A_BUTTON, Z_TRIG, Z_TRIG, B_BUTTON][rng.random_range(0..5)];
-                            // OBRRT_CALM: an A press only as often as A looks useful.
-                            if button == A_BUTTON && calm() && !rng.random_bool(a_mult()) {
+                            // Calm: an A press only as often as A looks useful.
+                            if button == A_BUTTON && !rng.random_bool(a_mult()) {
                                 button = 0;
                             }
                             let n = rng.random_range(1..5);
