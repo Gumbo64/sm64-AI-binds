@@ -1400,7 +1400,7 @@ fn main() -> Result<()> {
                 // breaks a frame-exact trick in the next leg (tas-first-star:
                 // 8 units at the slope, then 171 M GA frames without the warp).
                 let mut ref_floor = None;
-                if seed_ref && obrrt_core::sys::env::var("OBRRT_LEGS_REF_FLOOR").map_or(true, |v| v != "0") {
+                if seed_ref {
                     if let Some((ri, b)) = leg_ref(li).and_then(|ri| refs[ri].legs[li].map(|(_, b)| (ri, b as usize))) {
                         let at = parent.inputs.len();
                         if at < b && b <= refs[ri].inputs.len() && refs[ri].inputs[..at] == parent.inputs[..] {

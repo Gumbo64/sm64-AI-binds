@@ -108,8 +108,6 @@ pub fn arc_on() -> bool {
 pub struct LakituSkip {
     lakitu: ObjId,
     mode: Mode,
-    /// `OBRRT_FREE_SETUP=1` only: the setup variant ([`free`]); 0 off.
-    fs: u8,
 }
 
 fn is_intro_lakitu(o: &Obj) -> bool {
@@ -204,16 +202,12 @@ pub fn generate_level(b: &St, out: &mut Vec<std::sync::Arc<dyn Objective>>) {
 /// Generated per object: for the intro Lakitu still waiting, both modes.
 pub fn generate(b: &St, o: &Obj, out: &mut Vec<std::sync::Arc<dyn Objective>>) {
     if grounds(b) && is_intro_lakitu(o) && o.action == CAMERA_LAKITU_INTRO_ACT_TRIGGER_CUTSCENE {
-        let fs_on = super::freesetup::on();
         let mut modes = vec![Mode::Edge, Mode::Air];
         if arc_on() {
             modes.extend([Mode::Arc, Mode::Hill]);
         }
         for mode in modes {
-            let n = if fs_on { free::variants(mode) } else { 1 };
-            for fs in 0..n {
-                out.push(std::sync::Arc::new(LakituSkip { lakitu: o.id, mode, fs }));
-            }
+            out.push(std::sync::Arc::new(LakituSkip { lakitu: o.id, mode }));
         }
     }
 }
@@ -227,21 +221,19 @@ impl Objective for LakituSkip {
         "Tech::LakituSkip"
     }
     fn key(&self) -> String {
-        let k = match self.mode {
+        match self.mode {
             Mode::Edge => "Tech::LakituSkip".to_string(),
             Mode::Air => "Tech::LakituSkip air".to_string(),
             Mode::Arc => "Tech::LakituSkip arc".to_string(),
             Mode::Hill => "Tech::LakituSkip hill".to_string(),
-        };
-        if super::freesetup::on() { k + &super::freesetup::tag(self.fs as usize) } else { k }
+        }
     }
     fn obj_weight(&self, _b: &St) -> f64 {
         // On the route to every star (Door::Enter is 8), and only offered
         // until the intro plays: high enough that the pool samples it
         // before then (at 4, after a few failures' decay, 1-4 attempts in
         // 60 M frames).
-        // OBRRT_FREE_SETUP: a mode's variants share its weight.
-        if super::freesetup::on() { 12.0 / free::variants(self.mode) as f64 } else { 12.0 }
+        12.0
     }
     fn success_value(&self) -> f64 {
         1.0
@@ -310,9 +302,6 @@ impl Objective for LakituSkip {
         if !grounds(s) {
             return Eta::Lost;
         }
-        if super::freesetup::on() {
-            return Eta::Frames(free::eta(self.mode, self.fs, s, mem));
-        }
         // Straight-line to the door warps (through the box: a walk into it
         // is caught at once, which is Lost above).
         Eta::Frames(frames_for((s.dist(DOOR) - DOOR_R).max(0.0)))
@@ -325,9 +314,6 @@ impl Objective for LakituSkip {
         obrrt_core::Precision::Precise
     }
     fn steer_target(&self, s: &St) -> Option<[f32; 3]> {
-        if super::freesetup::on() {
-            return Some(free::target(self.mode, self.fs, s));
-        }
         if arc_on() {
             if self.mode == Mode::Arc {
                 return Some(arc::target(s));
@@ -372,9 +358,6 @@ impl Objective for LakituSkip {
         0
     }
     fn pad_overlay(&self) -> Option<PadOverlay> {
-        if super::freesetup::on() {
-            return Some(free::overlay(self.mode, self.fs));
-        }
         if self.mode == Mode::Arc {
             return Some(PadOverlay::new(arc::overlay));
         }
@@ -1560,317 +1543,6 @@ pub mod hill {
     }
 }
 
-/// `OBRRT_FREE_SETUP=1` (super::freesetup): the modes' setups as targets
-/// with a tolerance, overlays cut to the frame-critical inputs, a setup ETA
-/// in phases, and setup variants in the key:
-/// - Edge / Air: the strip's side (0 west, 1 east) instead of the nearer
-///   one; ETA = the route through the strip's entry (Edge) or the long
-///   jump's landing on it (Air), then along it and out to the door, at
-///   PACE, plus the turn onto it; overlay unchanged (lj_rule is already
-///   only the exact-frame Z / Z + A presses).
-/// - Arc: the side (0 west, 1 east; [`ARC_BANDS`] has the canonical-line
-///   runway too, off: [`ARC_RUNWAYS`]). ETA
-///   before the takeoff = the planner's own frames for the variant's best
-///   direct line (run, turn, hops, walk), or the canonical line's frames
-///   plus the approach and turn to its takeoff; in the skip, the distance
-///   left at the canonical line's pace. Overlay: the crouch slide on the
-///   frame a line works from the current heading (on the canonical line's
-///   heading for its variants), Z + A, the hops' air stick and the strip
-///   landing's Z + A; the forced stick and button lock near the takeoff
-///   (the slow walk into position) is gone: the genome runs there.
-/// - Hill: the TAS's crouch-slide window at C ([`HILL_WINDOWS`], one
-///   variant, the line's tolerance as before: wider ones fell off the face
-///   in the steer lab); the genome runs the approach and only the last
-///   ~10 frames before the window get the stick on the line (key frames;
-///   it was forced over 700 units with the buttons locked). ETA: the
-///   approach, the turn to RUN_YAW and the run-up still needed for 30.5
-///   (freesetup::handoff_frames), then the chain at [`HILL_PACE`].
-pub mod free {
-    use super::*;
-    use crate::extra::tech::freesetup as fsu;
-    use crate::moves::arcs;
-    use buttons::{A_BUTTON, B_BUTTON, Z_TRIG};
-
-    /// Arc's runway variants (per side): a direct line (Mario runs
-    /// straight at the strip from where he is, takeoff at 18+:
-    /// act_crouch_slide long-jumps above 10, `takeoff_now` needs 18), or the
-    /// side's canonical line (a full-speed run-up along it, 29+: a walk
-    /// reaches 29 after ~20 frames, ~400 units from rest), heading within
-    /// [`CANON_YAW`] of it. Only the direct one is offered ([`ARC_RUNWAYS`]
-    /// = 1): in the steer lab (5 starts) direct lines took off and skipped
-    /// 10/10 on both sides, canonical ones 1/10 (the pursuit overshoots the
-    /// takeoff and turns back); a speed band on direct lines alone made the
-    /// lab circle (the plan comes and goes as the turn eats the speed).
-    pub const ARC_BANDS: [(f32, f32); 2] = [(18.0, 1000.0), (29.0, 1000.0)];
-    const ARC_RUNWAYS: u8 = 1;
-    /// (Steer lab: lines that work take off up to ~0x500 off its heading.)
-    const CANON_YAW: i32 = 0x800;
-    /// The stick is on the line over this much before the takeoff (~10
-    /// frames at 32).
-    const ARC_PURSUIT: f32 = 320.0;
-    /// Hill: the crouch slide's window along the run-up line, ahead of C in
-    /// frames of the current speed: the TAS's (C within the next frame).
-    /// One variant only: in the steer lab (lakitu_lab boot steer, 4 starts)
-    /// a window 1-3 frames earlier never got onto the face, and a line 60
-    /// wide / 0x400 in facing took off ~17 off it and fell in the moat after
-    /// the slide; the face landing wants the TAS's line to a few units.
-    pub const HILL_WINDOWS: [(f32, f32); 1] = [(-0.3, 0.95)];
-    /// The stick is on the line (key frames) over this much of the run-up
-    /// before the window (~10 frames at 32; hill::overlay forced it over 700
-    /// and stopped the genome's buttons there).
-    const HILL_PURSUIT: f32 = 320.0;
-    /// The line's tolerance at the crouch slide (hill::overlay's).
-    const HILL_LATERAL: f32 = 40.0;
-    const HILL_YAW: i32 = 0x300;
-    /// The crouch slide's speed (hill::overlay: > 30.5; the face landing
-    /// needs about the full run).
-    const HILL_SPEED: f32 = 30.5;
-    /// The hill chain's pace from C to the door (TAS run-up long jump at C
-    /// to the double jump's landing at the door: ~7700 units in ~100
-    /// frames; runs/q6-p-s1 hill successes take 111-152 frames incl. the
-    /// run-up).
-    pub const HILL_PACE: f64 = 75.0;
-    /// `mem.flags`: Hill's chain began (the run-up long jump or the slide's
-    /// speed); Arc's first hop began.
-    const GO: u32 = 2;
-
-    pub fn variants(mode: Mode) -> u8 {
-        match mode {
-            Mode::Edge | Mode::Air => 2,
-            Mode::Arc => 2 * ARC_RUNWAYS,
-            Mode::Hill => HILL_WINDOWS.len() as u8,
-        }
-    }
-
-    fn hd(a: [f32; 3], b: [f32; 3]) -> f32 {
-        (a[0] - b[0]).hypot(a[2] - b[2])
-    }
-
-    fn rad(yaw: i16) -> f32 {
-        yaw as f32 * std::f32::consts::TAU / 65536.0
-    }
-
-    fn door_left(p: [f32; 3]) -> f32 {
-        (hd(p, DOOR) - DOOR_R).max(0.0)
-    }
-
-    /// Arc's skip pace: the canonical line's distance to the door over its
-    /// planned frames (hops + slide + walk; ~38 u/f).
-    fn arc_pace() -> f64 {
-        static P: std::sync::OnceLock<f64> = std::sync::OnceLock::new();
-        *P.get_or_init(|| {
-            let c = arc::canonical(0);
-            (door_left(c.takeoff) as f64 / c.frames.max(1.0) as f64).max(obrrt_core::PACE)
-        })
-    }
-
-    fn canon_only(fs: u8) -> bool {
-        fs % ARC_RUNWAYS == 1
-    }
-
-    fn arc_side_band(fs: u8) -> (usize, (f32, f32)) {
-        ((fs / ARC_RUNWAYS) as usize, ARC_BANDS[(fs % ARC_RUNWAYS) as usize])
-    }
-
-    /// Along the strip of `ex` from z, then out to the door.
-    fn strip_rest(ex: f32, p: [f32; 3]) -> f32 {
-        let exit = [ex, 960.0, BOX_Z.0];
-        (p[2] - BOX_Z.0).max(0.0) + (p[0] - ex).abs() + door_left(exit)
-    }
-
-    /// The setup-phase ETA (module doc), after LakituSkip::eta's latches.
-    pub fn eta(mode: Mode, fs: u8, s: &St, mem: &mut Mem) -> f64 {
-        let air = s.action & arcs::ACT_FLAG_AIR != 0;
-        match mode {
-            Mode::Edge | Mode::Air => {
-                let ex = EDGE_X[fs as usize & 1];
-                if s.pos[2] <= BOX_Z.0 {
-                    return frames_for(door_left(s.pos));
-                }
-                let entry = if mode == Mode::Air { [ex, 960.0, AIR_LAND_Z] } else { [ex, 830.0, BOX_Z.1] };
-                let on_way = if mode == Mode::Air { s.pos[2] > AIR_LAND_Z + 100.0 } else { s.pos[2] > BOX_Z.1 };
-                if !on_way {
-                    return frames_for(strip_rest(ex, s.pos));
-                }
-                let d = hd(s.pos, entry) + strip_rest(ex, entry);
-                let turn = if air || s.pos[2] < BOX_Z.1 { 0.0 } else { fsu::turn_frames(s, fsu::yaw_to(s.pos, entry)).min(8.0) };
-                frames_for(d) + turn
-            }
-            Mode::Arc => {
-                if s.action == ACT_LONG_JUMP {
-                    mem.flags |= GO;
-                }
-                if mem.flags & GO != 0 || s.pos[2] < BOX_Z.1 {
-                    return door_left(s.pos) as f64 / arc_pace();
-                }
-                let (side, band) = arc_side_band(fs);
-                let moving = !air && s.forward_vel > 1.0;
-                let plan = if canon_only(fs) {
-                    f64::INFINITY
-                } else {
-                    arc::plan_from_moving_in(s.pos, s.forward_vel.max(0.0), moving.then(|| rad(s.yaw)), Some(side), Some(band))
-                        .map_or(f64::INFINITY, |l| l.frames as f64)
-                };
-                let c = arc::canonical(side);
-                let cy = fsu::yaw_to([0.0; 3], [c.h[0], 0.0, c.h[1]]);
-                let canon = frames_for(hd(s.pos, c.takeoff)) + fsu::turn_frames(s, cy).min(12.0) + c.frames as f64;
-                plan.min(canon)
-            }
-            Mode::Hill => {
-                let run = s.action == ACT_LONG_JUMP && s.pos[2] > hill::RAMP_Z + 1500.0;
-                if run || s.forward_vel > 55.0 {
-                    mem.flags |= GO;
-                }
-                if mem.flags & GO != 0 {
-                    return door_left(s.pos) as f64 / HILL_PACE;
-                }
-                let at = hill_point(fs, HILL_SPEED);
-                fsu::handoff_frames(s, at, hill::RUN_YAW as i32, HILL_SPEED) + door_left(at) as f64 / HILL_PACE
-            }
-        }
-    }
-
-    /// The point on the run-up line where variant `fs`'s window opens at
-    /// speed `v` (its far end: the crouch slide there or later).
-    fn hill_point(fs: u8, v: f32) -> [f32; 3] {
-        let d = hill::dir(hill::RUN_YAW);
-        let back = HILL_WINDOWS[fs as usize].1 * v;
-        [hill::C[0] - back * d[0], hill::C[1], hill::C[2] - back * d[1]]
-    }
-
-    pub fn target(mode: Mode, fs: u8, s: &St) -> [f32; 3] {
-        match mode {
-            Mode::Edge | Mode::Air => {
-                let ex = EDGE_X[fs as usize & 1];
-                if !near_bridge(s) || s.pos[2] <= BOX_Z.0 + 100.0 {
-                    if s.pos[2] > BOX_Z.1 && grounds(s) {
-                        return if mode == Mode::Air { [ex, 960.0, AIR_LAND_Z] } else { [ex, 830.0, BOX_Z.1 - 20.0] };
-                    }
-                    return DOOR;
-                }
-                match mode {
-                    Mode::Edge if s.pos[2] > BOX_Z.1 && (s.pos[0] - ex).abs() > ON_STRIP => [ex, 830.0, BOX_Z.1 - 20.0],
-                    Mode::Edge => [ex, 960.0, s.pos[2].min(BOX_Z.1) - STRIP_AHEAD],
-                    _ if s.pos[2] > AIR_LAND_Z + 100.0 => [ex, 960.0, AIR_LAND_Z],
-                    _ => [ex, 960.0, BOX_Z.0 - 200.0],
-                }
-            }
-            Mode::Arc => {
-                if !grounds(s) || s.pos[2] <= BOX_Z.0 + 100.0 {
-                    return DOOR;
-                }
-                if arc::airborne(s) || s.pos[2] < BOX_Z.1 {
-                    return arc::aim(s.pos[0]);
-                }
-                let (side, band) = arc_side_band(fs);
-                let moving = s.forward_vel > 1.0;
-                if !canon_only(fs)
-                    && let Some(l) = arc::plan_from_moving_in(s.pos, s.forward_vel.max(0.0), moving.then(|| rad(s.yaw)), Some(side), Some(band))
-                {
-                    return [l.land[0], s.pos[1], l.land[2]];
-                }
-                // Onto the side's canonical line behind its takeoff (pure
-                // pursuit), as arc::target.
-                let c = arc::canonical(side);
-                let t = c.takeoff;
-                let (dx, dz) = (s.pos[0] - t[0], s.pos[2] - t[2]);
-                let a = -(dx * c.h[0] + dz * c.h[1]);
-                let e = (dx * c.h[1] - dz * c.h[0]).abs();
-                let along = if a > 150.0 && e < 150.0 + 0.2 * a { a - 350.0 } else { 700.0 };
-                [t[0] - along * c.h[0], s.pos[1], t[2] - along * c.h[1]]
-            }
-            Mode::Hill => hill::target(s),
-        }
-    }
-
-    pub fn overlay(mode: Mode, fs: u8) -> PadOverlay {
-        match mode {
-            Mode::Edge | Mode::Air => {
-                let air = mode == Mode::Air;
-                PadOverlay::new(move |traj, played, genome| lj_rule(air, traj, played, genome))
-            }
-            Mode::Arc => PadOverlay::keyed(move |traj, played, genome| arc_rule(fs, traj, played, genome)),
-            Mode::Hill => PadOverlay::keyed(move |traj, played, genome| hill_rule(fs, traj, played, genome)),
-        }
-    }
-
-    /// arc::overlay without the takeoff lock; the crouch slide only onto the
-    /// variant's strip at its band's speed.
-    fn arc_rule(fs: u8, traj: &[St], played: &[GamePad], genome: GamePad) -> (GamePad, bool) {
-        let Some(s) = traj.last() else { return (genome, false) };
-        if !grounds(s) || !s.controllable() || s.pos[2] < BOX_Z.0 - 300.0 {
-            return (genome, false);
-        }
-        match s.action {
-            ACT_WALKING | arcs::ACT_IDLE | arcs::ACT_DECELERATING => {
-                let (side, band) = arc_side_band(fs);
-                let on_canon = !canon_only(fs) || {
-                    let c = arc::canonical(side);
-                    fsu::yaw_diff(s.yaw as i32, fsu::yaw_to([0.0; 3], [c.h[0], 0.0, c.h[1]])) < CANON_YAW
-                };
-                if s.action == ACT_WALKING && on_canon && arc::takeoff_now_in(s, Some(side), Some(band)) {
-                    let last_z = played.last().is_some_and(|p| p.button & Z_TRIG != 0);
-                    let (x, y) = arcs::stick(s.cam_yaw, s.yaw, 1.0);
-                    return (GamePad::new(if last_z { 0 } else { Z_TRIG }, x, y), true);
-                }
-                // The last ~10 frames before the takeoff: the stick on the
-                // line (key frames; the hop line wants the heading to a
-                // degree or so). arc::overlay forced it, buttons off, from
-                // 700 (1600) out.
-                let t = if canon_only(fs) {
-                    Some(arc::canonical(side).takeoff)
-                } else {
-                    let moving = s.forward_vel > 1.0;
-                    arc::plan_from_moving_in(s.pos, s.forward_vel.max(0.0), moving.then(|| rad(s.yaw)), Some(side), Some(band)).map(|l| l.takeoff)
-                };
-                if t.is_some_and(|t| hd(s.pos, t) < ARC_PURSUIT) && s.forward_vel > 10.0 {
-                    let tg = target(Mode::Arc, fs, s);
-                    let d = (tg[0] - s.pos[0]).atan2(tg[2] - s.pos[2]);
-                    let (x, y) = arcs::stick(s.cam_yaw, arc::rad_to_yaw(d), 1.0);
-                    return (GamePad::new(0, x, y), true);
-                }
-                (genome, false)
-            }
-            ACT_LONG_JUMP_LAND | ACT_CROUCH_SLIDE => (arc::overlay(traj, played, genome), true),
-            _ => (arc::overlay(traj, played, genome), false),
-        }
-    }
-
-    /// hill::overlay with the run-up's walking frames freed (module doc).
-    fn hill_rule(fs: u8, traj: &[St], played: &[GamePad], genome: GamePad) -> (GamePad, bool) {
-        let Some(s) = traj.last() else { return (genome, false) };
-        if !grounds(s) || !s.controllable() || s.pos[2] < BOX_Z.0 - 200.0 {
-            return (genome, false);
-        }
-        let fast = s.forward_vel > 55.0;
-        if s.action != arcs::ACT_WALKING || s.pos[2] <= hill::RAMP_Z + 1500.0 || fast {
-            let crouch = s.action == arcs::ACT_CROUCH_SLIDE && !fast;
-            return (hill::overlay(traj, played, genome), crouch);
-        }
-        let d = hill::dir(hill::RUN_YAW);
-        let ahead = (hill::C[0] - s.pos[0]) * d[0] + (hill::C[2] - s.pos[2]) * d[1];
-        let e = (s.pos[0] - hill::C[0]) * d[1] - (s.pos[2] - hill::C[2]) * d[0];
-        let yaw_err = fsu::yaw_diff(s.yaw as i32, hill::RUN_YAW as i32);
-        let (lo, hi) = HILL_WINDOWS[fs as usize];
-        let v = s.forward_vel;
-        if e.abs() < HILL_LATERAL && yaw_err < HILL_YAW && v > HILL_SPEED && ahead > lo * v && ahead < hi * v {
-            let last_z = played.last().is_some_and(|p| p.button & Z_TRIG != 0);
-            let (x, y) = arcs::stick(s.cam_yaw, s.yaw, 1.0);
-            return (GamePad::new(if last_z { 0 } else { Z_TRIG }, x, y), true);
-        }
-        // The last frames before the window: the stick on the line (key
-        // frames, the genome's x bends it a little); the rest is the
-        // genome's.
-        if yaw_err < 0x2000 && e.abs() < 120.0 && v > 10.0 && ahead > hi * v && ahead < hi * v + HILL_PURSUIT {
-            let corr = if ahead > 2.0 * v { -(e / 150.0).atan() } else { 0.0 };
-            let want = hill::RUN_YAW as i32 + (corr * 65536.0 / std::f32::consts::TAU) as i32;
-            let (x, y) = arcs::stick(s.cam_yaw, want as i16, 1.0);
-            return (GamePad::new(genome.button & !(A_BUTTON | B_BUTTON | Z_TRIG), x, y), true);
-        }
-        (genome, false)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::arc;
@@ -1885,36 +1557,5 @@ mod tests {
             println!("canonical {side}: {:?}", arc::canonical(side));
         }
         assert!(arc::plan_from([-1328.0, 260.0, 4354.0]).is_some());
-    }
-
-    /// OBRRT_FREE_SETUP's setup ETAs fall along a setup (free::eta is
-    /// called directly: the switch itself is read once per process).
-    #[test]
-    fn free_setup_eta_falls() {
-        use super::{Mode, free};
-        use crate::extra::tech::testkit::{ACT_WALKING, st};
-        use obrrt_core::Mem;
-        let at = |p: [f32; 3], yaw: i16, fv: f32| {
-            let mut s = st(16, 1, p, ACT_WALKING);
-            s.yaw = yaw;
-            s.forward_vel = fv;
-            s
-        };
-        // Edge, west strip: walking north (-z, yaw 0x8000) from the bank to
-        // its entry, then along it.
-        let north = 0x8000u16 as i16;
-        let path = [[-800.0, 811.0, 300.0], [-650.0, 811.0, 0.0], [-549.0, 900.0, -200.0], [-549.0, 960.0, -1000.0], [-549.0, 960.0, -1900.0]];
-        let f: Vec<f64> = path.iter().map(|&p| free::eta(Mode::Edge, 0, &at(p, north, 32.0), &mut Mem::default())).collect();
-        assert!(f.windows(2).all(|w| w[1] < w[0]), "edge {f:?}");
-        // Hill: closer to the run-up's crouch slide, faster, on its facing.
-        let c = super::hill::C;
-        let y = super::hill::RUN_YAW;
-        let far = free::eta(Mode::Hill, 0, &at([-1328.0, 260.0, 4354.0], 0, 0.0), &mut Mem::default());
-        let near = free::eta(Mode::Hill, 0, &at([c[0] - 300.0 * 0.75, 260.0, c[2] + 300.0 * 0.66], y, 32.0), &mut Mem::default());
-        assert!(near < far, "hill {far} {near}");
-        // Arc: the planner's frames fall as Mario runs at the strip.
-        let a0 = free::eta(Mode::Arc, 0, &at([-1500.0, 700.0, 600.0], north, 32.0), &mut Mem::default());
-        let a1 = free::eta(Mode::Arc, 0, &at([-1000.0, 760.0, 300.0], north, 32.0), &mut Mem::default());
-        assert!(a1 < a0 && a0.is_finite(), "arc {a0} {a1}");
     }
 }

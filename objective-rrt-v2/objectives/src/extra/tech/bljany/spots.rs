@@ -40,7 +40,31 @@ use std::sync::{Mutex, OnceLock};
 use obrrt_core::St;
 use serde_json::{Value, json};
 
-use super::objscan::Frame;
+/// An object's frame: position and facing yaw.
+struct Frame {
+    pos: [f32; 3],
+    yaw: i32,
+}
+
+impl Frame {
+    fn of(o: &obrrt_core::Obj) -> Frame {
+        Frame { pos: o.pos, yaw: o.yaw }
+    }
+    /// Local coordinates of a world point.
+    fn to_l(&self, p: [f32; 3]) -> [f32; 3] {
+        let a = self.yaw as f32 * std::f32::consts::TAU / 65536.0;
+        let (c, s) = (a.cos(), a.sin());
+        let (dx, dz) = (p[0] - self.pos[0], p[2] - self.pos[2]);
+        [dx * c - dz * s, p[1] - self.pos[1], dx * s + dz * c]
+    }
+}
+
+/// Whether (x, z) is over `t` (same sign of all three edge tests).
+fn inside_xz(t: &obrrt_core::geo::Tri, x: f32, z: f32) -> bool {
+    let e = |a: [f32; 3], b: [f32; 3]| (b[0] - a[0]) * (z - a[2]) - (b[2] - a[2]) * (x - a[0]);
+    let (d1, d2, d3) = (e(t.v[0], t.v[1]), e(t.v[1], t.v[2]), e(t.v[2], t.v[0]));
+    (d1 >= 0.0 && d2 >= 0.0 && d3 >= 0.0) || (d1 <= 0.0 && d2 <= 0.0 && d3 <= 0.0)
+}
 
 pub fn on() -> bool {
     obrrt_core::config::current().objectives.blj_spots
@@ -217,19 +241,6 @@ pub fn note(zone: (u16, u8), owner: &str, clause: &str, local: [f32; 3], yaw: i3
     i
 }
 
-/// An attempt's outcome at spot `i` (from BljAny::note_result).
-pub fn note_result(i: usize, var: u8, success: bool, frames: usize, end_fv: Option<f32>) {
-    let mut r = reg().lock().unwrap();
-    let Some(s) = r.spots.get_mut(i) else { return };
-    s.attempted += 1;
-    s.succeeded += success as u64;
-    s.seg_sum += frames as f64;
-    s.variants.insert(var);
-    if success {
-        s.best_fv = s.best_fv.max(end_fv.map_or(0.0, |v| -v));
-    }
-}
-
 fn long_jumping(s: &St) -> bool {
     matches!(s.action, 0x0300_0888 | 0x0000_0479)
 }
@@ -289,7 +300,7 @@ fn node_hook(id: u32, parent: u32, st: &St) {
     let known = {
         let r = reg().lock().unwrap();
         r.spots.iter().any(|s| s.zone == zone && s.sources.iter().any(|x| x != "observed") && d3(s.world, cs.pos) <= MERGE_DIST)
-    } || super::scan::zone_cands(zone).is_some_and(|v| v.iter().any(|c| d3(c.start, cs.pos) <= MERGE_DIST));
+    };
     let i = note(zone, &owner, clause, local, yaw, cs.pos, "observed", cs.frame, Some(node), false);
     // A miss once per spot, and only when the tree saw the chain start
     // itself (its first chain node still slow: the first tree node of many
@@ -324,7 +335,7 @@ fn miss_record(cs: &St, node: u32, owner: &str, clause: &str) -> Value {
     let near = |v: &[[f32; 3]; 3]| {
         let t = obrrt_core::geo::Tri { v: *v, n: [0.0, 1.0, 0.0], kind: 0, room: 0 };
         v.iter().any(|p| [cs.pos, along].iter().any(|c| (p[0] - c[0]).hypot(p[2] - c[2]) <= DUMP_R && (p[1] - c[1]).abs() <= 2.0 * DUMP_R))
-            || [cs.pos, along].iter().any(|c| super::scan::inside_xz_pub(&t, c[0], c[2]) && v.iter().any(|p| (p[1] - c[1]).abs() <= 2.0 * DUMP_R))
+            || [cs.pos, along].iter().any(|c| inside_xz(&t, c[0], c[2]) && v.iter().any(|p| (p[1] - c[1]).abs() <= 2.0 * DUMP_R))
     };
     let mut tris = Vec::new();
     if obrrt_core::mover::published(zone) {
@@ -353,21 +364,6 @@ fn miss_record(cs: &St, node: u32, owner: &str, clause: &str) -> Value {
         "headroom": cs.ceil_y - cs.floor_y - 160.0, "wall_normal": cs.wall_normal,
         "floor_obj": cs.floor_obj, "tris": tris,
     })
-}
-
-/// Static-owner observed and catalogue spots within `r` of `b` (BljAny
-/// scan candidates): (index, clause, world start, facing).
-pub fn extra_cands(b: &St, r: f32) -> Vec<(usize, String, [f32; 3], i32)> {
-    if !on() {
-        return Vec::new();
-    }
-    let reg = reg().lock().unwrap();
-    reg.spots
-        .iter()
-        .enumerate()
-        .filter(|(_, s)| s.zone == b.zone() && s.owner == "static" && (s.sources.contains("observed") || s.sources.contains("catalog")) && b.dist(s.world) <= r)
-        .map(|(i, s)| (i, s.clause.clone(), s.world, s.yaw))
-        .collect()
 }
 
 fn spot_json(s: &Spot) -> Value {

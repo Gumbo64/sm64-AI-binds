@@ -57,7 +57,7 @@
 use obrrt_core::layout::{ACT_FLAG_AIR, ACT_FLAG_MOVING};
 use obrrt_core::{Eta, GamePad, Mem, Objective, PadOverlay, St, buttons, frames_for};
 
-use super::travel::{ACT_CROUCH_SLIDE, ACT_DIVE, ACT_DIVE_SLIDE, ACT_FORWARD_ROLLOUT, ACT_FREEFALL, ACT_LONG_JUMP, StartKind, can_start, timed_eta_with, unit};
+use super::travel::{ACT_CROUCH_SLIDE, ACT_DIVE, ACT_DIVE_SLIDE, ACT_FORWARD_ROLLOUT, ACT_FREEFALL, ACT_LONG_JUMP, can_start, timed_eta_with, unit};
 
 /// The objective weight of a movement technique (diverollout, ljchain and
 /// their variants, jumpkick, slidekick, flipheight, the wall-kick modes)
@@ -101,19 +101,14 @@ fn land_stop(action: u32) -> bool {
 /// the latter (BoB f21918: A held, then A | B with raw stick (0, 54) at 90).
 /// Those frames are key (the GA mutates their stick). Elsewhere the
 /// genome's pad.
-///
-/// OBRRT_FREE_SETUP=1: A is forced only on the falling frames just before
-/// the landing ([`landing_soon`]: the frame whose A_DOWN the landing-stop
-/// frame needs and one before it), not the whole descent.
 fn landing_kick_overlay() -> PadOverlay {
     use buttons::{A_BUTTON, B_BUTTON};
-    let free = super::freesetup::on();
     PadOverlay::keyed(move |traj, played, genome| {
         let s = traj.last().unwrap();
         let prev = played.last();
         let held = |b: u16| prev.is_some_and(|p| p.button & b != 0);
         match s.action {
-            ACT_FORWARD_ROLLOUT | ACT_BACKWARD_ROLLOUT | ACT_LONG_JUMP if s.vel[1] < 0.0 && (!free || landing_soon(s)) => {
+            ACT_FORWARD_ROLLOUT | ACT_BACKWARD_ROLLOUT | ACT_LONG_JUMP if s.vel[1] < 0.0 => {
                 (GamePad::new((genome.button | A_BUTTON) & !B_BUTTON, genome.stick_x, genome.stick_y), false)
             }
             a if land_stop(a) && held(A_BUTTON) && !held(B_BUTTON) => {
@@ -124,12 +119,6 @@ fn landing_kick_overlay() -> PadOverlay {
             _ => (genome, false),
         }
     })
-}
-
-/// Falling to the floor within 2 frames (gravity 4 for a rollout, 2 for a
-/// long jump: the 4 is the safe side).
-fn landing_soon(s: &St) -> bool {
-    s.pos[1] + 2.0 * s.vel[1] - 4.0 <= s.floor_y + 1.0
 }
 
 /// Horizontal speed.
@@ -414,11 +403,7 @@ impl Objective for KickRun {
             return bo.eta(s, start, mem, self.zone);
         }
         let limit = self.limit(start.dist(self.p));
-        let free = super::freesetup::on().then_some(match self.kick {
-            Kick::Slide => StartKind::SlideKick,
-            Kick::Jump => StartKind::JumpKick,
-        });
-        timed_eta_with(s, mem, self.zone, self.p, limit, 1, |prev, s| self.kick.started(prev, s), free)
+        timed_eta_with(s, mem, self.zone, self.p, limit, 1, |prev, s| self.kick.started(prev, s))
     }
     fn start_bias(&self, s: &St) -> f64 {
         // v1: a running start ranks ahead (not for boosts).

@@ -155,73 +155,12 @@ pub(super) const START_FRAMES: f64 = 8.0;
 /// start (the index in the rollout), `f[1]` the previous frame's action,
 /// `f[2]` technique starts so far.
 
-/// OBRRT_FREE_SETUP=1: which technique start [`start_frames`] prices.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(super) enum StartKind {
-    /// A dive rollout (counted at the rollout).
-    Dive,
-    /// A long jump (from a crouch slide, or chained on a landing).
-    LongJump,
-    /// G05's FREEFALL dive, G17's jump dive: no simple phase, START_FRAMES.
-    Other,
-    SlideKick,
-    JumpKick,
-}
-
-/// Frames from a dive to its landing in DIVE_SLIDE (rough: a ground dive's
-/// short arc; the rollout's A comes on the landing).
-const DIVE_AIR_FRAMES: f64 = 5.0;
-/// Speeds a start needs (decomp): a ground dive at 29+
-/// (check_ground_dive_or_punch), a crouch slide's long jump above 10
-/// (act_crouch_slide), its slide kick at 10+.
-const DIVE_FV: f32 = 29.0;
-const CROUCH_FV: f32 = 10.5;
-
-/// OBRRT_FREE_SETUP=1: the next start's frames from `s` in phases (the run
-/// to the speed it needs at update_walking_speed's rate, the presses and,
-/// for a dive, its flight to the rollout), replacing [`START_FRAMES`]; the
-/// starts after it come on a chain's landings (1 frame each).
-pub(super) fn start_frames(kind: StartKind, s: &St) -> f64 {
-    use super::freesetup::speed_frames;
-    let air = s.action & ACT_FLAG_AIR != 0;
-    match kind {
-        StartKind::Dive => match s.action {
-            ACT_DIVE_SLIDE => 1.0,
-            ACT_DIVE => DIVE_AIR_FRAMES,
-            _ if air && (s.forward_vel > 28.0 || s.action == ACT_FREEFALL) => 1.0 + DIVE_AIR_FRAMES,
-            _ if air => START_FRAMES,
-            _ => speed_frames(s.forward_vel, DIVE_FV) + 1.0 + DIVE_AIR_FRAMES,
-        },
-        StartKind::LongJump => match s.action {
-            ACT_CROUCH_SLIDE | ACT_LONG_JUMP_LAND | ACT_LONG_JUMP => 1.0,
-            _ if air => START_FRAMES,
-            _ => speed_frames(s.forward_vel, CROUCH_FV) + 2.0,
-        },
-        StartKind::SlideKick => match s.action {
-            ACT_CROUCH_SLIDE if s.forward_vel >= 10.0 => 1.0,
-            _ if air => START_FRAMES,
-            _ => speed_frames(s.forward_vel, CROUCH_FV) + 2.0,
-        },
-        StartKind::JumpKick => {
-            if air && s.forward_vel <= 28.0 {
-                1.0
-            } else {
-                2.0
-            }
-        }
-        StartKind::Other => START_FRAMES,
-    }
-}
-
 /// A timed run's goal: get to `p` of `zone` within `limit` frames of the
 /// start with `needed` starts of the technique (`started(prev_action, s)`
 /// says whether the frame into `s` is one) by then. Arrival is within
 /// [`RADIUS`]. As v1: the first arrival decides: with enough starts `Done`,
 /// else `Lost`; past `limit`, or out of the zone, `Lost`. Before that
 /// `frames_for(dist) + START_FRAMES × starts still needed`.
-/// With `free` (OBRRT_FREE_SETUP=1, else None) the starts still needed
-/// cost [`start_frames`] for the next one and a frame for each after it,
-/// instead of [`START_FRAMES`] each.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn timed_eta_with(
     s: &St,
@@ -231,7 +170,6 @@ pub(super) fn timed_eta_with(
     limit: usize,
     needed: usize,
     started: impl Fn(u32, &St) -> bool,
-    free: Option<StartKind>,
 ) -> Eta {
     let i = mem.f[0] as usize;
     if i > 0 && started(mem.f[1] as u32, s) {
@@ -251,11 +189,7 @@ pub(super) fn timed_eta_with(
         return Eta::Lost;
     }
     let left = needed.saturating_sub(n);
-    let starts = match free {
-        Some(k) if left > 0 => start_frames(k, s) + (left - 1) as f64,
-        _ => START_FRAMES * left as f64,
-    };
-    Eta::Frames(frames_for(s.dist(p)) + starts)
+    Eta::Frames(frames_for(s.dist(p)) + START_FRAMES * left as f64)
 }
 
 /// Which dive-rollout objective a [`Dash`] is (see the module docs).
@@ -435,12 +369,7 @@ impl Objective for Dash {
             return bo.eta(s, start, mem, self.zone);
         }
         let limit = self.limit(start.dist(self.p));
-        let free = super::freesetup::on().then(|| match (self.mv, self.var) {
-            (Move::DiveRollout, Variant::Plain) => StartKind::Dive,
-            (Move::LongJumpChain, _) => StartKind::LongJump,
-            _ => StartKind::Other,
-        });
-        timed_eta_with(s, mem, self.zone, self.p, limit, self.needed(), |prev, s| self.started(prev, s), free)
+        timed_eta_with(s, mem, self.zone, self.p, limit, self.needed(), |prev, s| self.started(prev, s))
     }
     fn start_bias(&self, s: &St) -> f64 {
         // v1: a running start ranks ahead (not for boosts, ranked by their own).

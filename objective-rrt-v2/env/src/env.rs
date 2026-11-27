@@ -167,16 +167,8 @@ pub fn from_env_with(base: SearchConfig, get: Lookup) -> Result<SearchConfig> {
     }
     e.eq1("OBRRT_KING_LANDING", &mut objectives.king_landing);
     e.string("OBRRT_BLJ_DETECTOR", &mut objectives.blj_detector);
-    e.eq1("OBRRT_BLJ_FAST", &mut objectives.blj_fast);
-    e.eq1("OBRRT_BLJ_RISERS", &mut objectives.blj_risers);
-    e.eq1("OBRRT_BLJ_SCAN", &mut objectives.blj_scan);
     e.eq1("OBRRT_BLJ_SPOTS", &mut objectives.blj_spots);
     e.string("OBRRT_BLJ_SPOTS_CATALOG", &mut objectives.blj_spots_catalog);
-    e.eq1("OBRRT_BLJ_WALLS", &mut objectives.blj_walls);
-    e.eq1("OBRRT_FASTEXIT", &mut objectives.fastexit);
-    e.eq1("OBRRT_MOATWARP", &mut objectives.moatwarp);
-    e.eq1("OBRRT_PAUSE_BUF", &mut objectives.pause_buf);
-    e.eq1("OBRRT_WATERWARP", &mut objectives.waterwarp);
     e.eq1("OBRRT_TWOSTAR", &mut objectives.twostar);
     e.eq1("OBRRT_STATIC_ID", &mut objectives.static_id);
     e.eq1("OBRRT_GEO", &mut objectives.geo);

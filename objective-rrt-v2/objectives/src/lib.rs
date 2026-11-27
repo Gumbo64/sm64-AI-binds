@@ -87,11 +87,9 @@ impl Generator for Registry {
     fn wants_records(&self) -> bool {
         true
     }
-    /// OBRRT_BLJ_SCAN=1: the `blj_scan` block (bljany::scan's diagnostics).
+    /// OBRRT_BLJ_SPOTS: the `blj_spots` block.
     fn summary_blocks(&self) -> Vec<(String, String)> {
-        let mut v: Vec<(String, String)> = extra::tech::bljany::scan::summary_block().into_iter().collect();
-        v.extend(extra::tech::bljany::spots::summary_block());
-        v
+        extra::tech::bljany::spots::summary_block().into_iter().collect()
     }
     /// OBRRT_BLJ_SPOTS: blj_spots.jsonl, blj_misses.jsonl, blj_zones.json.
     fn report(&self, out_dir: &str) {

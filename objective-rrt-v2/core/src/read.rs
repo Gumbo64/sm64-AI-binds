@@ -231,7 +231,7 @@ fn read_state_from(m: Mem, frame: u32, objects: bool) -> St {
                 crate::geo::observe_floors(all, &st);
                 // OBRRT_GEO: the walkable mesh of this area, built once.
                 crate::geo::observe(all, &st);
-                // OBRRT_BLJ_SCAN_OBJECTS: the object collision near Mario.
+                // OBRRT_BLJ_SPOTS: the object collision near Mario.
                 if crate::dyngeo::on() {
                     crate::dyngeo::attach(&st, crate::dyngeo::read(all, st.pos));
                 }

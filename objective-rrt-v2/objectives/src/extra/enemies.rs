@@ -126,10 +126,6 @@ pub fn generate_level(b: &St, out: &mut Vec<Arc<dyn Objective>>) {
         out.push(Arc::new(x));
     }
     if let Some(x) = clip::GateClip::new(b).filter(|_| super::tech::enabled("gateclip")) {
-        if super::tech::freesetup::on() {
-            out.extend(x.free_variants().into_iter().map(|v| Arc::new(v) as Arc<dyn Objective>));
-        } else {
-            out.push(Arc::new(x));
-        }
+        out.push(Arc::new(x));
     }
 }

@@ -1,71 +1,27 @@
-//! The BLJ spot detectors' thresholds as data (`OBRRT_BLJ_DETECTOR=<file>`,
-//! e.g. ref/blj_detector.json; tools/analysis/blj_tune.py writes new ones).
-//! Without the switch every value is the code default, which is the
-//! constant the detectors used before, so nothing changes.
+//! The BLJ spot registry's clause thresholds as data (`OBRRT_BLJ_DETECTOR=<file>`;
+//! tools/analysis/blj_tune.py writes such files). Without the switch every
+//! value is the code default.
 //!
 //! The file is a flat JSON object of `"name": number` (other keys, such as
-//! a `"changes"` log, are ignored). Names: the fields of [`Detector`].
+//! a `"changes"` log, and names the registry no longer reads are ignored).
+//! Names: the fields of [`Detector`].
 
 use std::sync::OnceLock;
 
-/// Every detector threshold (defaults: the former constants).
+/// The thresholds [`super::spots`] classifies observed chain starts with.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Detector {
-    /// Slope clause: ny range (rise tan >= 1.25 up to the wall limit) and
-    /// the smallest triangle (projected), static and on objects.
+    /// Slope clause: ny range (rise tan >= 1.25 up to the wall limit).
     pub slope_ny_min: f32,
     pub slope_ny_max: f32,
-    pub slope_area: f32,
-    pub obj_slope_area: f32,
-    /// Slope starts: also grid points this far apart over the triangle (0:
-    /// the centroid only).
-    pub slope_spacing: f32,
-    /// Riser clause: height and length range; the floor in front within
-    /// `front_lo..front_hi` of the foot, the one behind up to `behind_extra`
-    /// above the top.
-    pub riser_h_min: f32,
-    pub riser_h_max: f32,
-    pub riser_min_len: f32,
-    pub riser_front_lo: f32,
-    pub riser_front_hi: f32,
-    pub riser_behind_extra: f32,
     /// Ceiling clause: headroom range over 160.
     pub ceil_head_lo: f32,
     pub ceil_head_hi: f32,
-    /// Corner rules: a riser end within `corner_dist` of a wall taller
-    /// than `corner_tall`; the pinned BLJ only on risers up to `pin_h`.
-    pub corner_dist: f32,
-    pub corner_tall: f32,
-    pub pin_h: f32,
-    /// The scan radius and spots per base, and the lab's match distance.
-    pub scan_r: f32,
-    pub scan_n: f32,
-    pub match_dist: f32,
 }
 
 impl Default for Detector {
     fn default() -> Self {
-        Detector {
-            slope_ny_min: 0.2924,
-            slope_ny_max: 0.6247,
-            slope_area: 20000.0,
-            obj_slope_area: 5000.0,
-            slope_spacing: 0.0,
-            riser_h_min: 15.0,
-            riser_h_max: 60.0,
-            riser_min_len: 100.0,
-            riser_front_lo: -60.0,
-            riser_front_hi: 8.0,
-            riser_behind_extra: 60.0,
-            ceil_head_lo: 0.0,
-            ceil_head_hi: 50.0,
-            corner_dist: 25.0,
-            corner_tall: 150.0,
-            pin_h: 37.5,
-            scan_r: 2500.0,
-            scan_n: 3.0,
-            match_dist: 300.0,
-        }
+        Detector { slope_ny_min: 0.2924, slope_ny_max: 0.6247, ceil_head_lo: 0.0, ceil_head_hi: 50.0 }
     }
 }
 
@@ -112,37 +68,14 @@ impl Detector {
             let f = match k.as_str() {
                 "slope_ny_min" => &mut self.slope_ny_min,
                 "slope_ny_max" => &mut self.slope_ny_max,
-                "slope_area" => &mut self.slope_area,
-                "obj_slope_area" => &mut self.obj_slope_area,
-                "slope_spacing" => &mut self.slope_spacing,
-                "riser_h_min" => &mut self.riser_h_min,
-                "riser_h_max" => &mut self.riser_h_max,
-                "riser_min_len" => &mut self.riser_min_len,
-                "riser_front_lo" => &mut self.riser_front_lo,
-                "riser_front_hi" => &mut self.riser_front_hi,
-                "riser_behind_extra" => &mut self.riser_behind_extra,
                 "ceil_head_lo" => &mut self.ceil_head_lo,
                 "ceil_head_hi" => &mut self.ceil_head_hi,
-                "corner_dist" => &mut self.corner_dist,
-                "corner_tall" => &mut self.corner_tall,
-                "pin_h" => &mut self.pin_h,
-                "scan_r" => &mut self.scan_r,
-                "scan_n" => &mut self.scan_n,
-                "match_dist" => &mut self.match_dist,
                 _ => continue,
             };
             *f = v;
             used.push(k.clone());
         }
         used
-    }
-
-    /// The parameters as the flat JSON the loader reads.
-    pub fn to_json(&self) -> String {
-        format!(
-            "{{\"slope_ny_min\": {}, \"slope_ny_max\": {}, \"slope_area\": {}, \"obj_slope_area\": {}, \"slope_spacing\": {}, \"riser_h_min\": {}, \"riser_h_max\": {}, \"riser_min_len\": {}, \"riser_front_lo\": {}, \"riser_front_hi\": {}, \"riser_behind_extra\": {}, \"ceil_head_lo\": {}, \"ceil_head_hi\": {}, \"corner_dist\": {}, \"corner_tall\": {}, \"pin_h\": {}, \"scan_r\": {}, \"scan_n\": {}, \"match_dist\": {}}}",
-            self.slope_ny_min, self.slope_ny_max, self.slope_area, self.obj_slope_area, self.slope_spacing, self.riser_h_min, self.riser_h_max, self.riser_min_len, self.riser_front_lo, self.riser_front_hi, self.riser_behind_extra, self.ceil_head_lo, self.ceil_head_hi, self.corner_dist, self.corner_tall, self.pin_h, self.scan_r, self.scan_n, self.match_dist
-        )
     }
 }
 
@@ -169,14 +102,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn defaults_round_trip_through_json() {
-        let d = Detector::default();
-        let mut e = Detector { slope_area: 1.0, ..Detector::default() };
-        e.apply(&parse_numbers(&d.to_json()));
-        assert_eq!(d, e);
+    fn apply_reads_known_names_only() {
         let mut f = Detector::default();
-        let used = f.apply(&parse_numbers("{\"slope_area\": 1.5e4, \"changes\": [{\"x\": \"y\"}], \"riser_h_max\": 70}"));
-        assert_eq!(used, vec!["slope_area", "riser_h_max"]);
-        assert_eq!((f.slope_area, f.riser_h_max), (15000.0, 70.0));
+        let used = f.apply(&parse_numbers("{\"ceil_head_hi\": 1.5e1, \"changes\": [{\"x\": \"y\"}], \"riser_h_max\": 70}"));
+        assert_eq!(used, vec!["ceil_head_hi"]);
+        assert_eq!(f.ceil_head_hi, 15.0);
     }
 }

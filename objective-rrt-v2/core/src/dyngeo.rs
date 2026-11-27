@@ -1,6 +1,6 @@
 //! Object collision (the dynamic surface partition) per state, for
-//! objectives' geometry probes (`OBRRT_BLJ_SCAN_OBJECTS=1`, default off:
-//! nothing is read or stored).
+//! the BLJ spot registry's miss dumps (`OBRRT_BLJ_SPOTS=1`; otherwise
+//! nothing is read or stored; the agent's inspector reads it directly).
 //!
 //! `gDynamicSurfacePartition` (surface_collision.c / surface_load.c) has the
 //! static partition's layout (16 x 16 cells of floor / ceiling / wall list
@@ -24,10 +24,9 @@ use std::sync::{Arc, Mutex, OnceLock, Weak};
 use crate::geo::Tri;
 use crate::{Obj, St};
 
-/// OBRRT_BLJ_SCAN_OBJECTS=1.
+/// Whether states carry their object collision (`OBRRT_BLJ_SPOTS=1`).
 pub fn on() -> bool {
-    static ON: OnceLock<bool> = OnceLock::new();
-    *ON.get_or_init(|| crate::sys::env::var("OBRRT_BLJ_SCAN_OBJECTS").is_ok_and(|v| v == "1"))
+    crate::config::current().objectives.blj_spots
 }
 
 /// Surfaces with a vertex within this of Mario (horizontally) are kept.

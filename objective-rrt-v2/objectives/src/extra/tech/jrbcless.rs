@@ -325,22 +325,7 @@ fn on_spire(s: &St) -> bool {
 pub struct PillarHyper {
     zone: (u16, u8),
     boxpos: [f32; 3],
-    /// OBRRT_FREE_SETUP=1: the run-up variant (index into [`RUNWAYS`]).
-    fs: u8,
 }
-
-/// OBRRT_FREE_SETUP=1: where on the run-up line (through [`SLOPE`] along
-/// [`SLOPE_YAW`]) the crouch slide may start, as distance back from SLOPE:
-/// the TAS's (DOCK_START is 1606 back and 71 off the line; its crouch slide
-/// comes ~50 on, at 10) and a longer runway one further back. The genome
-/// runs there; [`dock_free`] presses Z on the first frame in the band
-/// facing the slope within 0x180 at 10-18 and on the line within 100.
-const RUNWAYS: [(f32, f32); 2] = [(1500.0, 1600.0), (1600.0, 1700.0)];
-const RUNWAY_LATERAL: f32 = 100.0;
-const RUNWAY_FV: (f32, f32) = (10.0, 18.0);
-/// The first long jump's flight onto the slope (31 frames on the flat,
-/// ref/blj-conditions.md 1.2; the TAS's f82457-82488).
-const JUMP1_FRAMES: f64 = 31.0;
 
 impl PillarHyper {
     pub fn new(b: &St) -> Vec<Arc<dyn Objective>> {
@@ -348,19 +333,11 @@ impl PillarHyper {
             return Vec::new();
         }
         let Some(o) = star_box(b) else { return Vec::new() };
-        let n = if super::freesetup::on() { RUNWAYS.len() as u8 } else { 1 };
-        (0..n)
-            .map(|fs| PillarHyper { zone: b.zone(), boxpos: o.pos, fs })
+        Some(PillarHyper { zone: b.zone(), boxpos: o.pos })
             .filter(|x| x.base_criteria(b))
             .map(|x| Arc::new(x) as Arc<dyn Objective>)
+            .into_iter()
             .collect()
-    }
-
-    /// The runway band's far end on the run-up line (the hand-off point).
-    fn runway_point(&self) -> [f32; 3] {
-        let a = SLOPE_YAW as f32 * std::f32::consts::TAU / 65536.0;
-        let back = RUNWAYS[self.fs as usize].1;
-        [SLOPE[0] - back * a.sin(), DOCK_START[1], SLOPE[2] - back * a.cos()]
     }
 
     /// The ETA's stages (see the module doc). `hyper`: the rollout has been
@@ -388,14 +365,6 @@ impl PillarHyper {
         if fast(s) {
             return (s.hdist(SPIRE_BASE) / -s.forward_vel) as f64 + from_base;
         }
-        if super::freesetup::on() && !super::blj::long_jumping(s) && s.action != super::blj::ACT_CROUCH_SLIDE && on_dock(s) {
-            // OBRRT_FREE_SETUP: the run to the runway's hand-off (approach,
-            // turn to SLOPE_YAW, the run-up to 10), the first long jump onto
-            // the slope, then the chain (blj's figure for a start already
-            // set up there).
-            let handoff = super::freesetup::handoff_frames(s, self.runway_point(), SLOPE_YAW, RUNWAY_FV.0);
-            return handoff + JUMP1_FRAMES + super::blj::build_eta(s, None, BLJ_STOP) + SLOPE_TO_BASE_FRAMES + from_base;
-        }
         super::blj::build_eta(s, Some(SLOPE), BLJ_STOP) + SLOPE_TO_BASE_FRAMES + from_base
     }
 }
@@ -412,11 +381,10 @@ impl Objective for PillarHyper {
         "Jrb::PillarHyper"
     }
     fn key(&self) -> String {
-        let k = format!("Jrb::PillarHyper {:?}", self.zone);
-        if super::freesetup::on() { k + &super::freesetup::tag(self.fs as usize) } else { k }
+        format!("Jrb::PillarHyper {:?}", self.zone)
     }
     fn obj_weight(&self, _b: &St) -> f64 {
-        if super::freesetup::on() { 4.0 / RUNWAYS.len() as f64 } else { 4.0 }
+        4.0
     }
     fn base_criteria(&self, s: &St) -> bool {
         s.zone() == self.zone
@@ -485,7 +453,6 @@ impl Objective for PillarHyper {
         }
     }
     fn pad_overlay(&self) -> Option<PadOverlay> {
-        let free = super::freesetup::on().then_some(RUNWAYS[self.fs as usize]);
         Some(PadOverlay::keyed(move |traj, played, genome| {
             let s = traj.last().unwrap();
             let held = |b: u16| played.last().is_some_and(|p| p.button & b != 0);
@@ -494,9 +461,6 @@ impl Objective for PillarHyper {
             let broken = begun && !super::blj::long_jumping(s);
             let hyper = traj.iter().any(|t| t.forward_vel < -BLJ_STOP);
             if on_dock(&traj[0]) && !hyper && !broken && s.pos[0] < DOCK_X && !wet(s) {
-                if let Some(band) = free {
-                    return dock_free(band, traj, played, genome);
-                }
                 return dock_rule(traj, played, genome);
             }
             // One-frame windows at speed: B dives out of a freefall, A rolls
@@ -627,40 +591,6 @@ fn dock_rule(traj: &[St], played: &[GamePad], genome: GamePad) -> (GamePad, bool
     (GamePad::new(if z { Z_TRIG } else { 0 }, fwd.0, fwd.1), false)
 }
 
-/// OBRRT_FREE_SETUP=1: [`dock_rule`] without its run-up (the walk to
-/// DOCK_START, the stop and the line-up there): until the first crouch
-/// slide the genome runs; the rule presses Z (stick along SLOPE_YAW, a key
-/// frame) on the first walking frame in the runway `band` (distance back
-/// from SLOPE along the line), within [`RUNWAY_LATERAL`] of it, facing
-/// SLOPE_YAW within 0x180, at [`RUNWAY_FV`]. From the crouch slide on,
-/// [`dock_rule`] (the two long jumps and the chain's presses).
-fn dock_free(band: (f32, f32), traj: &[St], played: &[GamePad], genome: GamePad) -> (GamePad, bool) {
-    let s = traj.last().unwrap();
-    let begun = traj.iter().any(|t| t.action == super::blj::ACT_CROUCH_SLIDE || super::blj::long_jumping(t));
-    if begun {
-        return dock_rule(traj, played, genome);
-    }
-    let a = SLOPE_YAW as f32 * std::f32::consts::TAU / 65536.0;
-    let (dx, dz) = (SLOPE[0] - s.pos[0], SLOPE[2] - s.pos[2]);
-    let back = dx * a.sin() + dz * a.cos();
-    let lat = (dx * a.cos() - dz * a.sin()).abs();
-    let lined_up = ((s.yaw as i32 - SLOPE_YAW) as i16).unsigned_abs() < 0x180;
-    let held_z = played.last().is_some_and(|p| p.button & Z_TRIG != 0);
-    if s.action == ACT_WALKING
-        && lined_up
-        && (RUNWAY_FV.0..=RUNWAY_FV.1).contains(&s.forward_vel)
-        && back >= band.0
-        && back <= band.1
-        && lat < RUNWAY_LATERAL
-        && !held_z
-    {
-        let fwd = stick_along(s, SLOPE_YAW);
-        return (GamePad::new(Z_TRIG, fwd.0, fwd.1), true);
-    }
-    // No Z elsewhere (a crouch slide off the line is a wasted long jump).
-    (GamePad::new(genome.button & !Z_TRIG, genome.stick_x, genome.stick_y), false)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -697,7 +627,7 @@ mod tests {
 
     #[test]
     fn hyper_stages_drop() {
-        let obj = PillarHyper { zone: (LEVEL_JRB as u16, AREA), boxpos: BOXPOS, fs: 0 };
+        let obj = PillarHyper { zone: (LEVEL_JRB as u16, AREA), boxpos: BOXPOS };
         let fastat = |p: [f32; 3], a: u32, fv: f32| {
             let mut s = at(p, a);
             s.forward_vel = fv;

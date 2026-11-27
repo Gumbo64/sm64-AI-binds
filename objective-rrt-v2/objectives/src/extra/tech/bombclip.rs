@@ -298,15 +298,13 @@ pub fn eta(wall: &Wall, zone: (u16, u8), s: &St, mem: &mut Mem) -> Eta {
 
     let d = wall.depth(s.pos);
     let through = THROUGH_FRAMES + ((WALL_RADIUS + 10.0 - d).max(0.0) / CARRY_PACE) as f64;
-    let free = super::freesetup::on();
     if let Some(h) = held_bobomb(s) {
         mem.flags &= !RELEASED;
         if h.action == ACT_EXPLODE {
             mem.flags |= HELD_BLOATED_PREV;
             return Eta::Frames(carry(wall, s.pos) + RELEASE_FRAMES + through);
         }
-        let setup = if free { free_setup(wall, s.pos, s.action & ACT_FLAG_AIR != 0, s.yaw as i32) } else { SETUP_FRAMES };
-        return Eta::Frames(setup + carry(wall, s.pos) + RELEASE_FRAMES + through);
+        return Eta::Frames(SETUP_FRAMES + carry(wall, s.pos) + RELEASE_FRAMES + through);
     }
     // Just released a bloated one at the wall: the push through is next.
     if held_prev && d >= -RELEASE_DIST {
@@ -325,39 +323,10 @@ pub fn eta(wall: &Wall, zone: (u16, u8), s: &St, mem: &mut Mem) -> Eta {
     }
     match s.objects().iter().filter(|o| fetchable(o)).min_by(|a, b| s.dist(a.pos).total_cmp(&s.dist(b.pos))) {
         Some(o) => {
-            // OBRRT_FREE_SETUP: after the grab Mario faces the bob-omb (the
-            // punch-grab's facing), and turns from there to the wall point.
-            let setup = if free {
-                free_setup(wall, o.pos, false, yaw_to(s.pos, o.pos)) + super::freesetup::turn_frames(s, yaw_to(s.pos, o.pos)).min(8.0)
-            } else {
-                SETUP_FRAMES
-            };
-            Eta::Frames(frames_for(s.dist(o.pos)) + GRAB_FRAMES + setup + carry(wall, o.pos) + RELEASE_FRAMES + through)
+            Eta::Frames(frames_for(s.dist(o.pos)) + GRAB_FRAMES + SETUP_FRAMES + carry(wall, o.pos) + RELEASE_FRAMES + through)
         }
         None => Eta::Lost,
     }
-}
-
-// OBRRT_FREE_SETUP: SETUP_FRAMES (30, TAS f21972-22003) in phases.
-/// The hold jump up to the air throw: the jump frame and the throw on the
-/// 2nd air frame (the rule's AIR_THROW_FORCE; TAS f21972-21978).
-const THROW_FRAMES: f64 = 3.0;
-/// The thrown bob-omb's flight to its landing, where it starts to bloat
-/// (TAS f21978 throw, f22002 BOBOMB_ACT_EXPLODE).
-const THROWN_FLIGHT_FRAMES: f64 = 22.0;
-
-/// A held plain bob-omb set off from `pos` facing `yaw`: the turn to the wall
-/// point (0x800 a frame holding it, as walking), the hold jump and air
-/// throw, its flight and the regrab as it bloats. 30 frames facing the wall,
-/// as SETUP_FRAMES.
-fn free_setup(wall: &Wall, pos: [f32; 3], air: bool, yaw: i32) -> f64 {
-    let toward = yaw_to(pos, wall.p);
-    let turn = if air {
-        0.0
-    } else {
-        super::freesetup::yaw_diff(yaw, toward) as f64 / super::freesetup::WALK_TURN
-    };
-    turn + THROW_FRAMES + THROWN_FLIGHT_FRAMES + REGRAB_FRAMES
 }
 
 /// Whether [`eta`]'s fold has seen a push frame (Mario moved 20+ more than
@@ -415,75 +384,8 @@ pub fn steer_target(wall: &Wall, s: &St) -> Option<[f32; 3]> {
 }
 
 /// The bomb-clip rule as a keyed overlay on the GA's pads (module doc).
-/// With OBRRT_FREE_SETUP=1, [`rule_free`].
 pub fn overlay(wall: Wall) -> PadOverlay {
-    if super::freesetup::on() {
-        return PadOverlay::keyed(move |traj, played, genome| rule_free(&wall, traj, played, genome));
-    }
     PadOverlay::keyed(move |traj, played, genome| rule(&wall, traj, played, genome))
-}
-
-/// OBRRT_FREE_SETUP=1: [`rule`] with the setup in the genome's hands. The
-/// carry of a bloated bob-omb, its release at the wall and the time after
-/// it (the clip itself, phases 4-5) are [`rule`]'s. Before that only the
-/// exact-frame presses are forced (key frames), the walk, the turns and the
-/// jumps are the genome's:
-/// - fetch: B (with a short stick at it, so no dive) on the first frame
-///   the punch-grab reaches it, facing it within 45 degrees; no other B on
-///   the ground (a dive or a stray punch);
-/// - holding a plain one: B (air throw) on the 2nd air frame of a jump that
-///   faces the wall point within 33.75 degrees (or the genome's B on an
-///   earlier air frame there); no B elsewhere (a ground throw or a throw
-///   away from the wall);
-/// - regrab: B with the short stick once it bloats within 150 (or the
-///   genome's B within 300), as [`rule`].
-fn rule_free(w: &Wall, traj: &[St], played: &[GamePad], g: GamePad) -> (GamePad, bool) {
-    let s = traj.last().unwrap();
-    if !s.controllable() {
-        return (g, false);
-    }
-    if held_bobomb(s).is_some_and(|h| h.action == ACT_EXPLODE) {
-        return rule(w, traj, played, g);
-    }
-    let b_last = played.last().is_some_and(|p| p.button & B_BUTTON != 0);
-    let b_recent = played.iter().rev().take(4).any(|p| p.button & B_BUTTON != 0);
-    let g_b = g.button & B_BUTTON != 0 && !b_last;
-    let no_b = GamePad::new(g.button & !B_BUTTON, g.stick_x, g.stick_y);
-    let air = s.action & ACT_FLAG_AIR != 0;
-    if held_bobomb(s).is_some() {
-        let toward = if s.hdist(w.p) > NEAR_WALL { yaw_to(s.pos, w.p) } else { w.away_yaw().wrapping_add(0x8000) };
-        if !air || yaw_err(s, toward) > 0x1800 {
-            return (no_b, false);
-        }
-        let n = traj.iter().rev().take_while(|t| t.action & ACT_FLAG_AIR != 0 && held_bobomb(t).is_some()).count();
-        let throw = g_b || (n > AIR_THROW_FORCE && !b_last);
-        let b = if throw { B_BUTTON } else { 0 };
-        return (GamePad::new((g.button & !B_BUTTON) | b, g.stick_x, g.stick_y), true);
-    }
-    if s.holding {
-        return (g, false);
-    }
-    if let Some(j) = traj.iter().rposition(|t| held_bobomb(t).is_some()) {
-        let thrown = played[j.saturating_sub(12)..played.len().min(j + 1)].iter().any(|p| p.button & B_BUTTON != 0);
-        if thrown && held_bobomb(&traj[j]).is_some_and(|o| o.action == ACT_EXPLODE) {
-            return rule(w, traj, played, g);
-        }
-    }
-    let Some(o) = nearest_bobomb(s).filter(|o| s.hdist(o.pos) < 2.0 * FETCH) else { return (g, false) };
-    let d = s.hdist(o.pos);
-    let to = yaw_to(s.pos, o.pos);
-    let i = traj.len() - 1;
-    let short = |pad_b: u16| {
-        let (x, y) = stick_tilt(s, to, 30.0);
-        GamePad::new(pad_b, x, y)
-    };
-    if o.action == ACT_LAUNCHED || bloated(traj, i, o.slot) {
-        let key = d < 300.0;
-        let press = !air && ((key && g_b) || (o.action == ACT_EXPLODE && d < 150.0 && !b_recent));
-        return if press { (short(B_BUTTON), true) } else { (no_b, key) };
-    }
-    let press = !air && d < 130.0f32.max(5.0 * s.forward_vel) && yaw_err(s, to) < 0x2000 && !b_recent;
-    if press { (short(B_BUTTON), true) } else { (if air { g } else { no_b }, false) }
 }
 
 fn rule(w: &Wall, traj: &[St], played: &[GamePad], g: GamePad) -> (GamePad, bool) {

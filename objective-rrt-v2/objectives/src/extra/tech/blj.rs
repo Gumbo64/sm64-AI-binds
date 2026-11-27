@@ -347,14 +347,13 @@ pub fn overlay(start: [f32; 3], yaw: i32, run_up: f32, spot: Option<[f32; 3]>, s
 /// is played (it steers the exit to the spot's goal) instead of nothing.
 pub fn overlay_exit(start: [f32; 3], yaw: i32, run_up: f32, spot: Option<[f32; 3]>, stop: f32, free_exit: bool) -> PadOverlay {
     let r = Rule { start, yaw, run_up, spot, stop, free_exit };
-    // OBRRT_PAUSE_BUF=1: pause-buffer presses after a same-frame landing.
-    super::pausebuf::maybe(PadOverlay::keyed(move |traj, played, genome| {
+    PadOverlay::keyed(move |traj, played, genome| {
         let pad = r.pad(traj, played, Some(genome));
         // Key frames: the chain's presses (the genome's stick is used there).
         let key = pad.button & A_BUTTON != 0 && traj.last().is_some_and(|s| s.action == ACT_LONG_JUMP_LAND)
             || (r.free_exit && traj.last().is_some_and(|s| s.action == ACT_LONG_JUMP) && !traj.iter().any(|t| t.action == ACT_LONG_JUMP_LAND));
         (pad, key)
-    }))
+    })
 }
 
 #[derive(Clone, Copy)]
@@ -739,8 +738,6 @@ pub struct Blj {
     run: bool,
     /// The pole objects of the base (`tree_handoff` with `poleredirect` on).
     poles: Vec<[f32; 3]>,
-    /// OBRRT_BLJ_FAST's setup variant (rule spots; 0 off).
-    var: u8,
 }
 
 impl Blj {
@@ -750,25 +747,11 @@ impl Blj {
     pub fn generate(b: &St, out: &mut Vec<std::sync::Arc<dyn Objective>>) {
         for spot in SPOTS.iter().filter(|s| enabled(s.tech)) {
             let poles = if spot.tree_handoff && enabled("poleredirect") { poleredirect::poles(b) } else { Vec::new() };
-            let mut o = Blj { spot, run: spot.rule.is_some(), poles, var: 0 };
-            if o.fast() {
-                o.var = super::bljfast::variant(b, spot.start, spot.rule.unwrap().0, (b.frame % 2) as u8);
-            }
+            let o = Blj { spot, run: spot.rule.is_some(), poles };
             if o.start(b) {
                 out.push(std::sync::Arc::new(o));
             }
         }
-    }
-
-    /// OBRRT_BLJ_FAST on a rule spot (bljfast): the fast setup.
-    fn fast(&self) -> bool {
-        super::bljfast::on() && self.run && self.spot.rule.is_some()
-    }
-
-    /// The fast setup's platform phase (a rule spot without a riser: a
-    /// rising floor, the BoB elevator).
-    fn wait(&self, s: &St) -> Option<(f64, f64)> {
-        self.spot.rule.filter(|r| r.2.is_none()).and_then(|_| super::bljfast::platform_wait(s, None, self.spot.start))
     }
 
     fn in_area(&self, s: &St) -> bool {
@@ -784,9 +767,7 @@ impl Blj {
             // RUNS.md pole row), so they keep their start radius (in 40 M
             // trees with the wide radius they took 2/3 of the BljRun budget).
             let radius = if self.spot.tech == "blj" { SETUP_RADIUS.max(self.spot.start_radius) } else { self.spot.start_radius };
-            // OBRRT_BLJ_FAST: a variant's bases approach from its side.
-            let side = !self.fast() || super::bljfast::side(s, self.spot.start, self.spot.rule.unwrap().0) == self.var >> 1;
-            return side && spot_open(self.spot, s) && s.controllable() && s.forward_vel > -CHAIN_BUILT && s.dist(self.spot.start) < radius;
+            return spot_open(self.spot, s) && s.controllable() && s.forward_vel > -CHAIN_BUILT && s.dist(self.spot.start) < radius;
         }
         self.in_area(s) && self.spot.star.is_none_or(|(c, i)| !s.has_star(c, i)) && s.dist(self.spot.start) < self.spot.start_radius
     }
@@ -844,14 +825,7 @@ impl Objective for Blj {
         if self.run { "Tech::BljRun" } else { "Tech::Blj" }
     }
     fn key(&self) -> String {
-        if self.fast() {
-            return format!("{} {} v{}", self.kind(), self.spot.name, self.var);
-        }
         format!("{} {}", self.kind(), self.spot.name)
-    }
-    fn needs_objects(&self) -> bool {
-        // OBRRT_BLJ_FAST: the platform phase reads the platforms each frame.
-        self.fast() && self.spot.rule.is_some_and(|r| r.2.is_none())
     }
     fn obj_weight(&self, b: &St) -> f64 {
         if self.start(b) { 8.0 } else { 0.0 }
@@ -894,11 +868,7 @@ impl Objective for Blj {
         // The chain to the target speed, set up at the pose (run spots),
         // or the start point.
         let setup = pose_point(self.spot).filter(|_| self.run).map_or(self.spot.start, |(p, _)| p);
-        let mut speed = if self.fast() {
-            super::bljfast::build_eta(s, self.spot.start, self.spot.rule.unwrap().0, target, self.wait(s))
-        } else {
-            build_eta(s, Some(setup), target)
-        };
+        let speed = build_eta(s, Some(setup), target);
         // Once built, the place at the chain's speed is the other way in.
         let place = if built && self.spot.goal_y.is_none() {
             ((s.dist(self.spot.goal) - self.spot.goal_radius).max(0.0) / (-s.forward_vel).max(obrrt_core::PACE as f32)) as f64
@@ -914,10 +884,6 @@ impl Objective for Blj {
         3.0
     }
     fn steer_target(&self, s: &St) -> Option<[f32; 3]> {
-        // OBRRT_BLJ_FAST: the approach is the genome's, to the spot.
-        if self.fast() && !long_jumping(s) && s.forward_vel > -CHAIN_BUILT {
-            return Some(self.spot.start);
-        }
         // With the overlay only the press frames' stick is the genome's;
         // seed it at the riser before the chain, then straight back.
         if let Some((pre, _)) = pose_point(self.spot).filter(|_| self.run && !long_jumping(s)) {
@@ -934,13 +900,7 @@ impl Objective for Blj {
         }
     }
     fn pad_overlay(&self) -> Option<PadOverlay> {
-        let (yaw, run_up, riser) = self.spot.rule.filter(|_| self.run)?;
-        if self.fast() {
-            let f = super::bljfast::Board::Near;
-            let board = if riser.is_none() { super::bljfast::Board::Rising } else { f };
-            let chain = overlay_exit(self.spot.start, yaw, run_up, riser, 1000.0, self.spot.free_exit);
-            return Some(super::bljfast::overlay(self.spot.start, yaw, super::bljfast::PRESET, self.var & 1, board, chain));
-        }
+        self.spot.rule.filter(|_| self.run)?;
         Some(staged_overlay(self.spot))
     }
     fn steer_button(&self, s: &St) -> u16 {

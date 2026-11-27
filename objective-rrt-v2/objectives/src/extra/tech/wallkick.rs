@@ -137,40 +137,6 @@ const CHAIN_RISE: f32 = 250.0;
 /// the frames after the kick the check is made at (v1: kick + 3).
 const RD_WINDOW_FRAMES: f64 = 2.0;
 const RD_AFTER: usize = 3;
-// OBRRT_FREE_SETUP=1: the setups in phases (TRIPLE_SETUP_FRAMES and
-// FLIP_SETUP_FRAMES by the action Mario is in).
-/// One jump of the triple's first two with its landing (the 30 above, per
-/// jump).
-const TJ_JUMP_FRAMES: f64 = 15.0;
-/// act_double_jump_land triples only above 20 (set_triple_jump_action).
-const TJ_FV: f32 = 20.0;
-const ACT_JUMP: u32 = 0x0300_0880;
-const ACT_DOUBLE_JUMP: u32 = 0x0300_0881;
-
-/// The triple jump's setup from `s`: both jumps still to do, the second, or
-/// only the press on the double jump's landing; plus the run-up to 20 the
-/// triple needs, on the ground before the first jump.
-fn triple_setup(s: &St) -> f64 {
-    match s.action {
-        ACT_DOUBLE_JUMP_LAND => 1.0,
-        ACT_DOUBLE_JUMP => TJ_JUMP_FRAMES / 2.0,
-        ACT_JUMP_LAND => TJ_JUMP_FRAMES / 2.0 + 1.0,
-        ACT_JUMP => 1.5 * TJ_JUMP_FRAMES,
-        _ if s.action & ACT_FLAG_AIR != 0 => 2.0 * TJ_JUMP_FRAMES,
-        _ => 2.0 * TJ_JUMP_FRAMES + super::freesetup::speed_frames(s.forward_vel, TJ_FV),
-    }
-}
-
-/// The side flip's setup from `s`: the turn-around needs 16+ towards the
-/// wall (the run-up to it), then the reversed stick's frame and the A.
-fn flip_setup(s: &St) -> f64 {
-    match s.action {
-        ACT_TURNING_AROUND | ACT_FINISH_TURNING_AROUND => 1.0,
-        _ if s.action & ACT_FLAG_AIR != 0 => FLIP_SETUP_FRAMES,
-        _ => 2.0 + super::freesetup::speed_frames(s.forward_vel, SF_TURN_FV),
-    }
-}
-
 /// A triple jump wall kick: up to about 1,075.
 const MIN_GAIN_TJ: f32 = 650.0;
 const MAX_GAIN_TJ: f32 = 1150.0;
@@ -515,8 +481,6 @@ impl Objective for Climb {
         let by_height = ((self.goal_y - s.pos[1]).max(0.0) / KICK_RISE).ceil() as u32;
         let kicks = by_height.max(u32::from(seen.kicks == 0));
         let setup = match self.mode {
-            Mode::Tjwk if !seen.triple && super::freesetup::on() => triple_setup(s),
-            Mode::SideFlip if !seen.flip && super::freesetup::on() => flip_setup(s),
             Mode::Tjwk if !seen.triple => TRIPLE_SETUP_FRAMES,
             Mode::SideFlip if !seen.flip => FLIP_SETUP_FRAMES,
             _ => 0.0,

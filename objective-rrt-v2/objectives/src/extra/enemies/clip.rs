@@ -133,38 +133,14 @@ pub fn clip_setup(s: &St) -> bool {
 pub struct GateClip {
     zone: (u16, u8),
     wall: Wall,
-    /// OBRRT_FREE_SETUP=1: the setup variant (index into [`GATE_OFFSETS`]).
-    fs: u8,
 }
-
-/// OBRRT_FREE_SETUP=1: GateClip's setup variants, the release point along
-/// the gate's line (units off its centre, along the plane): the carry and
-/// release aim there (the wall point the rule and the ETA's carry use), so
-/// the pool keeps a straight-in setup and one each side. Success is the
-/// same for all (behind the bars anywhere, or star 6): the cage is 512
-/// either side of the gate (`Gate::behind`), the TAS's clip came in at
-/// lateral 441.
-pub const GATE_OFFSETS: [f32; 3] = [0.0, -200.0, 200.0];
 
 impl GateClip {
     /// Offered in BoB while the gate stands, star 6 isn't had, and a
     /// bob-omb is loaded.
     pub fn new(b: &St) -> Option<GateClip> {
         let g = Gate::find(b)?;
-        (!b.has_star(COURSE, INDEX) && b.objects().iter().any(is_bobomb)).then_some(GateClip { zone: b.zone(), wall: g.wall(), fs: 0 })
-    }
-
-    /// OBRRT_FREE_SETUP=1: this objective's setup variants ([`GATE_OFFSETS`]).
-    pub fn free_variants(self) -> Vec<GateClip> {
-        let w = self.wall;
-        let t = [w.n[1], -w.n[0]];
-        (0..GATE_OFFSETS.len())
-            .map(|i| {
-                let o = GATE_OFFSETS[i];
-                let p = [w.p[0] + o * t[0], w.p[1], w.p[2] + o * t[1]];
-                GateClip { zone: self.zone, wall: Wall { p, n: w.n }, fs: i as u8 }
-            })
-            .collect()
+        (!b.has_star(COURSE, INDEX) && b.objects().iter().any(is_bobomb)).then_some(GateClip { zone: b.zone(), wall: g.wall() })
     }
 
     /// Star 6 (not any star) or Mario behind the gate; base_criteria
@@ -204,8 +180,7 @@ impl Objective for GateClip {
         "Bobomb::GateClip"
     }
     fn key(&self) -> String {
-        let k = format!("Bobomb::GateClip {:?}", self.zone);
-        if crate::extra::tech::freesetup::on() { k + &crate::extra::tech::freesetup::tag(self.fs as usize) } else { k }
+        format!("Bobomb::GateClip {:?}", self.zone)
     }
     fn obj_weight(&self, b: &St) -> f64 {
         // More with a fresh bob-omb at hand near the gate (the clip saves
@@ -216,9 +191,7 @@ impl Objective for GateClip {
             Some(o) => o.action != 3,
             None => nearest_bobomb(b).is_some_and(|o| o.action == 0 || o.action == 2),
         };
-        let w = if self.base_criteria(b) && fresh { 12.0 } else { 4.0 };
-        // OBRRT_FREE_SETUP: the variants share it.
-        if crate::extra::tech::freesetup::on() { w / GATE_OFFSETS.len() as f64 } else { w }
+        if self.base_criteria(b) && fresh { 12.0 } else { 4.0 }
     }
     fn base_criteria(&self, s: &St) -> bool {
         if s.zone() != self.zone || !s.alive() || s.has_star(COURSE, INDEX) {
