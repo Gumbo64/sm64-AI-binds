@@ -6,7 +6,8 @@
 //! state that leaked between engines (a process-wide static, the first engine's thread pool, one config read
 //! for the other, one engine's publish epoch tagging the other's caches) changes a tree. Not covered: the static
 //! floor snapshots of `obrrt_core::geo`, which are a function of the ROM and the zone (see `obrrt_core::runtime`).
-//! Needs the game ROM: SM64_ROM names it; without it the test says so and passes.
+//! Each config's reference tree comes from a fresh process (A's from this one, run first; B's from a child process
+//! running only it), so a leak either way shows. Needs the game ROM: SM64_ROM names it; without it the test says so and passes.
 
 use std::path::Path;
 use std::sync::Arc;
@@ -80,19 +81,10 @@ fn tree_of(rom: &str, sc: &SearchConfig, goal: Goal, out: &str, frames: u64) -> 
     std::fs::read(format!("{out}/tree.bin")).unwrap()
 }
 
-#[test]
-fn two_engines_with_different_configs_in_one_process() {
-    let Some(rom) = std::env::var("SM64_ROM").ok().filter(|p| Path::new(p).exists()) else {
-        eprintln!("two_configs: SM64_ROM not set (or missing); skipped");
-        return;
-    };
-    let frames = 250_000;
-    let dir = std::env::temp_dir().join(format!("obrrt-two-configs-{}", std::process::id()));
-    let d = |n: &str| dir.join(n).to_string_lossy().into_owned();
-
-    // A: the castle's zone-locked tree with dense adds and a position goal over the castle grounds' bridge; B:
-    // free, no dense adds, no kinship stretch, movement techniques only, the rolling-horizon controller with a
-    // small population (its parameters are derived from the config once per config), no goal.
+/// A: the castle's zone-locked tree with dense adds and a position goal over the castle grounds' bridge; B: free, no
+/// dense adds, no kinship stretch, movement techniques only, the rolling-horizon controller with a small population
+/// (its parameters are derived from the config once per config), no goal.
+fn configs() -> (SearchConfig, Goal, SearchConfig) {
     let mut a = SearchConfig::default();
     a.zone.lock = true;
     a.dedup.dense_adds = true;
@@ -102,10 +94,38 @@ fn two_engines_with_different_configs_in_one_process() {
     b.objectives.tech = "movement".into();
     b.research.rh.on = true;
     b.research.rh.pop = 16;
-    let goal_a: Goal = Some((((16, 1), [0.0, 811.0, -100.0], 4000.0), 0.4));
+    (a, Some((((16, 1), [0.0, 811.0, -100.0], 4000.0), 0.4)), b)
+}
 
+const FRAMES: u64 = 250_000;
+
+/// Set in the child process that makes B's tree first thing (into this directory).
+const CHILD: &str = "TWO_CONFIGS_B_FRESH";
+
+#[test]
+fn two_engines_with_different_configs_in_one_process() {
+    let Some(rom) = std::env::var("SM64_ROM").ok().filter(|p| Path::new(p).exists()) else {
+        eprintln!("two_configs: SM64_ROM not set (or missing); skipped");
+        return;
+    };
+    let (a, goal_a, b) = configs();
+    if let Ok(out) = std::env::var(CHILD) {
+        tree_of(&rom, &b, None, &out, FRAMES);
+        return;
+    }
+    let frames = FRAMES;
+    let dir = std::env::temp_dir().join(format!("obrrt-two-configs-{}", std::process::id()));
+    let d = |n: &str| dir.join(n).to_string_lossy().into_owned();
+
+    // Each config's tree from a fresh process: A here (first), B in a child process running only it.
     let a_alone = tree_of(&rom, &a, goal_a, &d("a-alone"), frames);
-    let b_alone = tree_of(&rom, &b, None, &d("b-alone"), frames);
+    let child = std::process::Command::new(std::env::current_exe().unwrap())
+        .args(["two_engines_with_different_configs_in_one_process", "--exact", "--test-threads=1", "--nocapture"])
+        .env(CHILD, d("b-alone"))
+        .status()
+        .unwrap();
+    assert!(child.success(), "B's child process failed");
+    let b_alone = std::fs::read(format!("{}/tree.bin", d("b-alone"))).unwrap();
     assert_ne!(a_alone, b_alone, "the two configs must make different trees, or the test shows nothing");
 
     // Back to back, then at the same time, in this process.
