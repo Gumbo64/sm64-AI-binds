@@ -7,100 +7,46 @@ use obrrt_core::{GamePad, Objective, St};
 
 use crate::store::Delta;
 
-/// OBRRT_STAR_WINDOW=W (default 1): the frontier spans the top W star counts
-/// (with the best key count). A state is behind it only when it has fewer
-/// stars than best - (W - 1), so with 2 a slower or different k+1th star stays
-/// open until some state has k+2: which star comes next is judged by what it
-/// leads to.
-pub static STAR_WINDOW: std::sync::atomic::AtomicI16 = std::sync::atomic::AtomicI16::new(1);
-
-/// OBRRT_ZONE_LOCK=1 (per-zone trees of the 120-star plan): the level the
-/// tree is locked to (the root's), -1 when off. A state in another level is
-/// kept as an exit (its path is a segment out of the zone, with whatever it
-/// collected) but is never a start, never on the frontier and never
-/// advances it. A Bowser course's arena counts as the course.
-pub static ZONE_LOCK: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(-1);
-
-/// Whether `level` is outside the locked zone.
-pub fn outside_lock(level: u16) -> bool {
-    let l = ZONE_LOCK.load(std::sync::atomic::Ordering::Relaxed);
-    if l < 0 || level as i32 == l {
-        return false;
-    }
-    // The castle (inside, grounds, courtyard) is one zone.
-    let hub = |x: i32| matches!(x, 6 | 16 | 26);
-    if hub(l) && hub(level as i32) {
-        return false;
-    }
-    !matches!((l, level), (17, 30) | (19, 33) | (21, 34))
+/// The tree's own settings (one per [`Tree`]; the engine builds them from its config).
+#[derive(Clone, Copy, Debug)]
+pub struct TreeConfig {
+    /// Per-zone trees of the 120-star plan (OBRRT_ZONE_LOCK): the level the tree is locked to (the root's).
+    /// A state in another level is kept as an exit (its path is a segment out of the zone, with whatever it
+    /// collected) but is never a start, never on the frontier and never advances it. A Bowser course's arena
+    /// counts as the course.
+    pub zone_lock: Option<u16>,
+    /// The frontier spans the top W star counts (with the best key count). A state is behind it only when it
+    /// has fewer stars than best - (W - 1). Under the zone lock every star count stays open: a star that
+    /// doesn't end the visit (100 coins) mustn't close the others.
+    pub star_window: i16,
+    /// Sparse saves (objective-scattershot's `replay_max`): a node keeps a save state only when rebuilding it
+    /// would replay more than this many frames from its nearest saved ancestor (its anchor); the others hold
+    /// none and are rebuilt by loading the anchor's save and replaying the recorded inputs
+    /// (`Tree::load_into`). None: every node saved.
+    pub replay_max: Option<u32>,
+    /// Dense adds (OBRRT_ADD): the grid of the dense key (`crate::dense::dkey`) every node is indexed by, in
+    /// units; 0 = off (no index).
+    pub dense_grid: u32,
 }
 
-/// The lowest progress still on the frontier when the best is `p`.
-fn window_floor(p: (u8, i16)) -> (u8, i16) {
-    let w = STAR_WINDOW.load(std::sync::atomic::Ordering::Relaxed);
-    (p.0, (p.1 - (w - 1)).max(0).min(p.1))
+impl Default for TreeConfig {
+    fn default() -> Self {
+        TreeConfig { zone_lock: None, star_window: 1, replay_max: None, dense_grid: 0 }
+    }
 }
 
-/// OBRRT_KEEP_WIP=1: a state behind the frontier with work under way in
-/// its level (`St::wip`: boss damage, red coins, posts) that every frontier
-/// state in that level lacks (its wip above theirs) is not retired: it is
-/// incomparable, not behind. At most KEEP_WIP_N such states per level (the
-/// most wip, then the earliest), and none more than KEEP_WIP_FRAMES game
-/// frames before the frontier's earliest state in that level (or anywhere,
-/// with none there). They are b candidates and starts. Off by default.
-pub static KEEP_WIP: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// A state behind the frontier with work under way in its level (`St::wip`: boss damage, red coins, posts)
+/// that every frontier state in that level lacks (its wip above theirs) is not retired: it is incomparable,
+/// not behind. At most KEEP_WIP_N such states per level (the most wip, then the earliest), and none more than
+/// KEEP_WIP_FRAMES game frames before the frontier's earliest state in that level (or anywhere, with none
+/// there). They are b candidates and starts.
 const KEEP_WIP_N: usize = 64;
 const KEEP_WIP_FRAMES: u32 = 3000;
-
-/// OBRRT_REPLAY_MAX (sparse saves, objective-scattershot's `replay_max`):
-/// a node keeps a save state only when rebuilding it would replay more than
-/// this many frames from its nearest saved ancestor (its anchor); the others
-/// hold none and are rebuilt by loading the anchor's save and replaying the
-/// recorded inputs (`Tree::load_into`). u32::MAX = off (every node saved).
-pub static REPLAY_MAX: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(u32::MAX);
-/// OBRRT_ADD (dense adds): the grid of the dense key (`crate::dense::dkey`)
-/// every node is indexed by, in units; 0 = off (no index).
-pub static DENSE_GRID: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
-
-/// OBRRT_KIN_UNIT=attempt: kinship counts generations in attempts, not
-/// nodes. Going up from a node to its parent costs `Tree::gen_step` of the
-/// node: 1 for an attempt's result (a segment end, a reroute graft of one,
-/// the last node of a zone-share chain), 0 for a dense intermediate ("~d")
-/// and the other nodes of a zone-share chain. Off (false): every node is one
-/// generation, as before.
-pub static KIN_ATTEMPT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-/// OBRRT_KIN_CAP (attempt unit only): at most this many members per kin set,
-/// nearest first (0 = no cap).
-pub static KIN_CAP: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-
-/// OBRRT_KIN_UNIT=frames: kinship generations in game frames of tree-path
-/// time: going up from a node to its parent costs its frames since the
-/// parent / `KIN_FRAMES` (OBRRT_KIN_FRAMES, 150 frames per generation).
-pub static KIN_FRAMES_UNIT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-pub static KIN_FRAMES: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(150);
-/// OBRRT_KIN_SOFT=λ (f64 bits; 0 = off): continuous kinship. Instead of the
-/// hard set within k generations, every node sharing an ancestor with b
-/// within d generations of both (in the unit) has its start weight × λ^d;
-/// members below 1e-3 (d > ln 1e-3 / ln λ) are left out. λ = 1: no limit.
-pub static KIN_SOFT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-
-/// Kin-set diagnostics (attempt unit): calls, cache hits, members returned,
-/// nodes visited, capped sets, nanoseconds building them.
-#[derive(Default)]
-pub struct KinStats {
-    pub calls: std::sync::atomic::AtomicU64,
-    pub hits: std::sync::atomic::AtomicU64,
-    pub members: std::sync::atomic::AtomicU64,
-    pub visited: std::sync::atomic::AtomicU64,
-    pub capped: std::sync::atomic::AtomicU64,
-    pub nanos: std::sync::atomic::AtomicU64,
-    pub max: std::sync::atomic::AtomicU64,
-}
 
 /// Sparse saves: no anchor (the node holds its own save, or none at all).
 const SELF: u32 = u32::MAX;
 
-/// Sparse-save bookkeeping (`REPLAY_MAX`), per node and in total.
+/// Sparse-save bookkeeping (`TreeConfig::replay_max`), per node and in total.
 #[derive(Default)]
 pub struct Sparse {
     pub cap: u32,
@@ -193,6 +139,7 @@ pub struct Node {
 }
 
 pub struct Tree {
+    pub cfg: TreeConfig,
     /// OBRRT_ZONE_LOCK: exits of the zone that are worth having (see `add`).
     pub good_exits: u64,
     pub nodes: Vec<Node>,
@@ -204,18 +151,8 @@ pub struct Tree {
     /// While set, an advance of the frontier doesn't retire the states
     /// behind it (resume: a later record may still need their saves).
     pub hold_retire: bool,
-    /// OBRRT_POLISH: nodes kept loadable when retired (save, anchor and
-    /// objects stay; they are still not starts for ordinary plans): the best
-    /// route, polish results and route-graft chains (see `polish`).
-    pub pinned: std::collections::HashSet<u32>,
-    /// Pin the nodes `add` makes while set.
-    pub pin_next: bool,
-    /// OBRRT_POLISH: a frontier advance pins the new frontier's ancestors
-    /// before retiring what is behind it (the route there stays loadable).
-    pub pin_routes: bool,
-    /// OBRRT_KEEP_WIP: each node's `St::wip` (taken when added, as retiring
-    /// drops the objects), the states kept for it (sorted), and counts.
-    pub keep_wip: bool,
+    /// Each node's `St::wip` (taken when added, as retiring drops the objects), the states kept for it
+    /// (sorted), and counts.
     pub wip: Vec<i64>,
     pub wip_kept: Vec<u32>,
     pub wip_peak: usize,
@@ -229,16 +166,6 @@ pub struct Tree {
     pub dgrid: f32,
     /// Bytes of the object lists nodes hold (reported; see `mem_bytes`).
     pub obj_bytes: usize,
-    /// OBRRT_KIN_UNIT=attempt: per node, the generations going up from it
-    /// to its parent costs (see `KIN_ATTEMPT`); set on add from `via`
-    /// (dense "~d": 0, else 1), adjusted by the callers for replay chains.
-    pub gen_step: Vec<bool>,
-    /// Attempt-unit kin sets by (b, k), valid while the node count is the
-    /// first field (the tree only changes by adding nodes).
-    kin_cache: std::sync::Mutex<(usize, std::collections::HashMap<(u32, u32), std::sync::Arc<Vec<u32>>>)>,
-    /// Frames-unit / soft kin sets with weights, cached the same way.
-    kin_wcache: std::sync::Mutex<(usize, std::collections::HashMap<(u32, u32), std::sync::Arc<Vec<(u32, f32)>>>)>,
-    pub kin_stats: KinStats,
     /// Earliest arrivals near points (obrrt_core::records), when the
     /// generator wants them ([`Tree::enable_records`]): every node, as added.
     pub records: Option<std::sync::Arc<std::sync::RwLock<obrrt_core::records::Records>>>,
@@ -250,10 +177,11 @@ fn obj_bytes(st: &St) -> usize {
 }
 
 impl Tree {
-    pub fn new(root: St) -> Tree {
+    pub fn new(root: St, cfg: TreeConfig) -> Tree {
         let progress = root.progress();
         let root_wip = root.wip();
         Tree {
+            cfg,
             nodes: vec![Node {
                 parent: None,
                 depth: 0,
@@ -274,10 +202,6 @@ impl Tree {
             frontier: vec![0],
             delta_bytes: 0,
             hold_retire: false,
-            pinned: Default::default(),
-            pin_next: false,
-            pin_routes: false,
-            keep_wip: KEEP_WIP.load(std::sync::atomic::Ordering::Relaxed),
             wip: vec![root_wip],
             wip_kept: Vec::new(),
             wip_peak: 0,
@@ -287,21 +211,16 @@ impl Tree {
             dkeys: Default::default(),
             dgrid: 0.0,
             obj_bytes: 0,
-            gen_step: vec![true],
-            kin_cache: Default::default(),
-            kin_wcache: Default::default(),
-            kin_stats: Default::default(),
             records: None,
         }
         .with_sparse()
     }
 
     fn with_sparse(mut self) -> Tree {
-        let cap = REPLAY_MAX.load(std::sync::atomic::Ordering::Relaxed);
-        if cap != u32::MAX {
+        if let Some(cap) = self.cfg.replay_max {
             self.sparse = Some(Sparse { cap, saved: vec![true], anchor: vec![SELF], dist: vec![0], refs: vec![0], ..Default::default() });
         }
-        let g = DENSE_GRID.load(std::sync::atomic::Ordering::Relaxed);
+        let g = self.cfg.dense_grid;
         if g > 0 {
             self.dgrid = g as f32;
             let st = &self.nodes[0].st;
@@ -313,7 +232,27 @@ impl Tree {
 
     /// Whether `st` is on the frontier: at its best count (or within the star window).
     pub fn on_frontier(&self, st: &St) -> bool {
-        st.progress() >= window_floor(self.frontier_progress)
+        st.progress() >= self.window_floor(self.frontier_progress)
+    }
+
+    /// The lowest progress still on the frontier when the best is `p`.
+    fn window_floor(&self, p: (u8, i16)) -> (u8, i16) {
+        let w = self.cfg.star_window;
+        (p.0, (p.1 - (w - 1)).max(0).min(p.1))
+    }
+
+    /// Whether `level` is outside the locked zone.
+    fn outside_lock(&self, level: u16) -> bool {
+        let Some(l) = self.cfg.zone_lock.map(i32::from) else { return false };
+        if level as i32 == l {
+            return false;
+        }
+        // The castle (inside, grounds, courtyard) is one zone.
+        let hub = |x: i32| matches!(x, 6 | 16 | 26);
+        if hub(l) && hub(level as i32) {
+            return false;
+        }
+        !matches!((l, level), (17, 30) | (19, 33) | (21, 34))
     }
 
     /// Builds the records (obrrt_core::records) from the nodes so far; from
@@ -349,7 +288,7 @@ impl Tree {
         let progress = st.progress();
         // An exit is a state Mario can act from: the menus on the way out or in
         // (star select, the save prompt) stay inside, so they can be answered.
-        let outside = outside_lock(st.level) && st.controllable() && !st.modal() && !st.in_dialog();
+        let outside = self.outside_lock(st.level) && st.controllable() && !st.modal() && !st.in_dialog();
         self.delta_bytes += save.bytes();
         let depth = self.nodes[parent as usize].depth + 1;
         obrrt_core::hooks::node_added(id, parent, &st);
@@ -369,17 +308,13 @@ impl Tree {
         });
         self.children.push(Vec::new());
         self.children[parent as usize].push(id);
-        if self.pin_next {
-            self.pinned.insert(id);
-        }
-        self.gen_step.push(!via.ends_with("~d"));
         self.note_added(id, parent);
-        self.wip.push(if self.keep_wip { self.nodes[id as usize].st.wip() } else { 0 });
+        self.wip.push(self.nodes[id as usize].st.wip());
         if outside {
             // An exit of the locked zone: recorded, then retired at once. A
             // good one: more progress than the root's (a course), or any
             // course entered (the castle).
-            let l = ZONE_LOCK.load(std::sync::atomic::Ordering::Relaxed);
+            let l = self.cfg.zone_lock.map_or(-1, i32::from);
             let skip = &obrrt_core::config::current().stop.exit_skip;
             let level = self.nodes[id as usize].st.level;
             // A cap-switch course (TotWC, CotMC, VCutM) whose switch the root
@@ -459,24 +394,19 @@ impl Tree {
         let advanced = progress > self.frontier_progress;
         if advanced {
             self.frontier_progress = progress;
-            let floor = window_floor(progress);
+            let floor = self.window_floor(progress);
             let nodes = &self.nodes;
             self.frontier.retain(|&i| nodes[i as usize].st.progress() >= floor);
-            if self.keep_wip {
-                // The new frontier state first: the wip comparison needs it.
-                self.frontier.push(id);
-                if !self.hold_retire {
-                    self.retire(floor);
-                }
-                return (id, advanced);
-            }
+            // The new frontier state first: the wip comparison needs it.
+            self.frontier.push(id);
             if !self.hold_retire {
                 self.retire(floor);
             }
+            return (id, advanced);
         }
-        if progress >= window_floor(self.frontier_progress) {
+        if progress >= self.window_floor(self.frontier_progress) {
             self.frontier.push(id);
-        } else if self.keep_wip && !self.hold_retire {
+        } else if !self.hold_retire {
             self.wip_note(id);
         }
         (id, advanced)
@@ -528,15 +458,13 @@ impl Tree {
 
     /// Retires every state behind the frontier (after `hold_retire`).
     pub fn retire_behind(&mut self) {
-        self.pin_frontier_routes();
-        self.retire(window_floor(self.frontier_progress));
+        self.retire(self.window_floor(self.frontier_progress));
     }
 
     /// Frees the save state and object list of every state behind `progress`:
     /// with b drawn from the frontier and starts never behind b, they can't be
     /// used again. Their inputs stay, for replaying descendants.
     fn retire(&mut self, progress: (u8, i16)) {
-        self.pin_frontier_routes();
         let keep = self.wip_select(|t, n| t.nodes[n as usize].st.progress() < progress);
         let ids: Vec<u32> = (0..self.nodes.len() as u32)
             .filter(|&i| {
@@ -581,9 +509,6 @@ impl Tree {
     /// selects (plus those already kept), at most KEEP_WIP_N per level, the
     /// most wip and then the earliest first. Sets `wip_kept`; sorted ids.
     fn wip_select(&mut self, behind: impl Fn(&Tree, u32) -> bool) -> Vec<u32> {
-        if !self.keep_wip {
-            return Vec::new();
-        }
         let bounds = self.wip_bounds();
         let mut by_level: std::collections::BTreeMap<u16, Vec<(i64, u32, u32)>> = Default::default();
         for i in 0..self.nodes.len() as u32 {
@@ -621,7 +546,7 @@ impl Tree {
     /// qualifies (retiring a kept state of its level beyond the cap).
     /// Returns whether it is kept.
     fn wip_note(&mut self, id: u32) -> bool {
-        if !self.keep_wip || self.wip[id as usize] <= 0 {
+        if self.wip[id as usize] <= 0 {
             return false;
         }
         let bounds = self.wip_bounds();
@@ -657,7 +582,7 @@ impl Tree {
     /// may since have the same work in that level, or have moved too far on;
     /// those are retired.
     pub fn wip_refresh(&mut self) {
-        if !self.keep_wip || self.wip_kept.is_empty() || self.hold_retire {
+        if self.wip_kept.is_empty() || self.hold_retire {
             return;
         }
         let bounds = self.wip_bounds();
@@ -678,7 +603,7 @@ impl Tree {
 
     /// OBRRT_KEEP_WIP: whether `i` is kept for its work under way.
     pub fn is_wip(&self, i: u32) -> bool {
-        self.keep_wip && self.wip_kept.binary_search(&i).is_ok()
+        self.wip_kept.binary_search(&i).is_ok()
     }
 
     /// Frees one state's save and objects (its inputs stay, for replaying
@@ -696,40 +621,7 @@ impl Tree {
     /// still anchoring live save-less nodes keeps its save until they go;
     /// a save-less node releases its anchor.
     fn retire_at(&mut self, i: u32) {
-        if self.pinned.contains(&i) {
-            self.nodes[i as usize].retired = true;
-            return;
-        }
         self.free_retired(i);
-    }
-
-    /// OBRRT_POLISH: pins the ancestors of the frontier's soonest state of
-    /// its best progress (the best route).
-    fn pin_frontier_routes(&mut self) {
-        if !self.pin_routes {
-            return;
-        }
-        let best = self.frontier.iter().copied().min_by_key(|&i| {
-            let st = &self.nodes[i as usize].st;
-            (std::cmp::Reverse((st.stars, st.keys)), st.frame, i)
-        });
-        let mut at = best;
-        while let Some(i) = at {
-            self.pinned.insert(i);
-            at = self.nodes[i as usize].parent;
-        }
-    }
-
-    /// Whether `id` is pinned (`pinned`).
-    pub fn is_pinned(&self, id: u32) -> bool {
-        self.pinned.contains(&id)
-    }
-
-    /// Unpins `id`; if it was retired meanwhile, frees it now.
-    pub fn unpin(&mut self, id: u32) {
-        if self.pinned.remove(&id) && self.nodes[id as usize].retired {
-            self.free_retired(id);
-        }
     }
 
     /// The freeing part of `retire_at`.
@@ -758,7 +650,7 @@ impl Tree {
         let a = sp.anchor[iu];
         if a != SELF && sp.refs[a as usize] > 0 {
             sp.refs[a as usize] -= 1;
-            if sp.refs[a as usize] == 0 && self.nodes[a as usize].retired && sp.saved[a as usize] && !self.pinned.contains(&a) {
+            if sp.refs[a as usize] == 0 && self.nodes[a as usize].retired && sp.saved[a as usize] {
                 let an = &mut self.nodes[a as usize];
                 self.delta_bytes -= an.save.bytes();
                 an.save = Delta::none();
@@ -845,334 +737,9 @@ impl Tree {
         self.delta_bytes + self.obj_bytes + inputs + self.nodes.len() * std::mem::size_of::<Node>() + self.records_bytes()
     }
 
-    /// Ids of `id` and its ancestors, nearest first, up to `k` generations up
-    /// (in attempts with OBRRT_KIN_UNIT=attempt, see `KIN_ATTEMPT`).
-    pub fn ancestors(&self, id: u32, k: u32) -> Vec<u32> {
-        if KIN_ATTEMPT.load(std::sync::atomic::Ordering::Relaxed) {
-            self.ancestors_attempt(id, k)
-        } else {
-            self.ancestors_node(id, k)
-        }
-    }
-
-    /// Every node sharing an ancestor with `b` at most `k` generations above
-    /// both (nodes, or attempts with OBRRT_KIN_UNIT=attempt), `b` included.
-    pub fn kin_set(&self, b: u32, k: u32) -> Vec<u32> {
-        if Self::kin_generic_on() {
-            return self.kin_weighted_cached(b, k).iter().map(|x| x.0).collect();
-        }
-        if KIN_ATTEMPT.load(std::sync::atomic::Ordering::Relaxed) {
-            self.kin_set_attempt_cached(b, k).as_ref().clone()
-        } else {
-            self.kin_set_node(b, k)
-        }
-    }
-
-    /// Whether `a` and `b` share an ancestor at most `k` generations above
-    /// each (`b_ancestors` from `ancestors(b, k)`).
-    pub fn kin(&self, a: u32, b_ancestors: &[u32], k: u32) -> bool {
-        if KIN_ATTEMPT.load(std::sync::atomic::Ordering::Relaxed) {
-            self.kin_attempt(a, b_ancestors, k)
-        } else {
-            self.kin_node(a, b_ancestors, k)
-        }
-    }
-
-    /// Whether the frames unit or soft kinship is on (`kin_generic`).
-    fn kin_generic_on() -> bool {
-        use std::sync::atomic::Ordering::Relaxed;
-        KIN_FRAMES_UNIT.load(Relaxed) || KIN_SOFT.load(Relaxed) != 0
-    }
-
-    /// `kin_set` with each member's start-weight multiplier (1 except with
-    /// OBRRT_KIN_SOFT), for `Engine::pick_start`.
-    pub fn kin_weighted(&self, b: u32, k: u32) -> std::sync::Arc<Vec<(u32, f32)>> {
-        if Self::kin_generic_on() {
-            return self.kin_weighted_cached(b, k);
-        }
-        let v = if KIN_ATTEMPT.load(std::sync::atomic::Ordering::Relaxed) {
-            self.kin_set_attempt_cached(b, k).iter().map(|&i| (i, 1.0)).collect()
-        } else {
-            self.kin_set_node(b, k).into_iter().map(|i| (i, 1.0)).collect()
-        };
-        std::sync::Arc::new(v)
-    }
-
-    /// `kin_generic`, cached per (b, k) until a node is added.
-    fn kin_weighted_cached(&self, b: u32, k: u32) -> std::sync::Arc<Vec<(u32, f32)>> {
-        use std::sync::atomic::Ordering::Relaxed;
-        let ks = &self.kin_stats;
-        ks.calls.fetch_add(1, Relaxed);
-        let n = self.nodes.len();
-        {
-            let mut c = self.kin_wcache.lock().unwrap();
-            if c.0 != n {
-                c.0 = n;
-                c.1.clear();
-            }
-            if let Some(v) = c.1.get(&(b, k)) {
-                ks.hits.fetch_add(1, Relaxed);
-                ks.members.fetch_add(v.len() as u64, Relaxed);
-                return v.clone();
-            }
-        }
-        let t = obrrt_core::sys::Instant::now();
-        let v = std::sync::Arc::new(self.kin_generic(b, k));
-        ks.nanos.fetch_add(t.elapsed().as_nanos() as u64, Relaxed);
-        ks.members.fetch_add(v.len() as u64, Relaxed);
-        ks.max.fetch_max(v.len() as u64, Relaxed);
-        let mut c = self.kin_wcache.lock().unwrap();
-        if c.0 == n {
-            if c.1.len() >= 4096 {
-                c.1.clear();
-            }
-            c.1.insert((b, k), v.clone());
-        }
-        v
-    }
-
-    /// The generations going up from `id` to its parent costs in the
-    /// current unit: frames since the parent / KIN_FRAMES (frames unit),
-    /// `gen_step` (attempt unit), else 1.
-    fn step_cost(&self, id: u32, frames: bool, attempt: bool, per: f64) -> f64 {
-        if frames {
-            let n = &self.nodes[id as usize];
-            let pf = n.parent.map_or(n.st.frame, |p| self.nodes[p as usize].st.frame);
-            n.st.frame.saturating_sub(pf) as f64 / per
-        } else if attempt {
-            self.step(id) as f64
-        } else {
-            1.0
-        }
-    }
-
-    /// Kin set in any unit, hard (within `k`) or soft (OBRRT_KIN_SOFT=λ:
-    /// within ln 1e-3 / ln λ, weight λ^d), with each member's weight. A
-    /// member's d is the larger of b's and its own distance to their
-    /// nearest common ancestor (the first ancestor of b whose search finds
-    /// it). The same search as `kin_set_attempt`: ancestors nearest first,
-    /// each one's descendants by 0-1 BFS order (a zero-cost child next),
-    /// the child toward b skipped; deterministic, each node visited once.
-    pub fn kin_generic(&self, b: u32, k: u32) -> Vec<(u32, f32)> {
-        use std::sync::atomic::Ordering::Relaxed;
-        let frames = KIN_FRAMES_UNIT.load(Relaxed);
-        let attempt = KIN_ATTEMPT.load(Relaxed);
-        let per = KIN_FRAMES.load(Relaxed).max(1) as f64;
-        let lam = f64::from_bits(KIN_SOFT.load(Relaxed));
-        let soft = lam > 0.0;
-        let limit = if !soft {
-            k as f64
-        } else if lam >= 1.0 {
-            f64::INFINITY
-        } else {
-            (1e-3f64).ln() / lam.ln()
-        };
-        let weight = |d: f64| if soft { lam.powf(d) as f32 } else { 1.0 };
-        let cap = match KIN_CAP.load(Relaxed) {
-            0 => usize::MAX,
-            c => c,
-        };
-        // b's ancestors within the limit, with their distance up from b.
-        let mut anc = vec![(b, 0.0f64)];
-        let (mut at, mut d) = (b, 0.0f64);
-        while let Some(p) = self.nodes[at as usize].parent {
-            d += self.step_cost(at, frames, attempt, per);
-            if d > limit {
-                break;
-            }
-            anc.push((p, d));
-            at = p;
-        }
-        let mut out = Vec::new();
-        let mut dq: std::collections::VecDeque<(u32, f64)> = std::collections::VecDeque::new();
-        let mut visited = 0u64;
-        'outer: for (j, &(a, up)) in anc.iter().enumerate() {
-            let skip = if j > 0 { anc[j - 1].0 } else { u32::MAX };
-            dq.clear();
-            dq.push_back((a, 0.0));
-            while let Some((n, d)) = dq.pop_front() {
-                out.push((n, weight(up.max(d))));
-                if out.len() >= cap {
-                    self.kin_stats.capped.fetch_add(1, Relaxed);
-                    break 'outer;
-                }
-                for &c in &self.children[n as usize] {
-                    if c == skip {
-                        continue;
-                    }
-                    visited += 1;
-                    let w = self.step_cost(c, frames, attempt, per);
-                    if d + w > limit {
-                        continue;
-                    }
-                    if w == 0.0 {
-                        dq.push_front((c, d));
-                    } else {
-                        dq.push_back((c, d + w));
-                    }
-                }
-            }
-        }
-        self.kin_stats.visited.fetch_add(visited, Relaxed);
-        out
-    }
-
-    /// The generations going up from `id` to its parent costs (attempt unit).
-    #[inline]
-    fn step(&self, id: u32) -> u32 {
-        self.gen_step.get(id as usize).copied().unwrap_or(true) as u32
-    }
-
-    /// `ancestors` in attempts: `id` and every ancestor whose weighted
-    /// distance up (the sum of `gen_step` of the nodes left behind) is at
-    /// most `k`, nearest first.
-    pub fn ancestors_attempt(&self, id: u32, k: u32) -> Vec<u32> {
-        let mut out = vec![id];
-        let (mut at, mut d) = (id, 0u32);
-        while let Some(p) = self.nodes[at as usize].parent {
-            d += self.step(at);
-            if d > k {
-                break;
-            }
-            out.push(p);
-            at = p;
-        }
-        out
-    }
-
-    /// `kin_set` in attempts, cached per (b, k) until a node is added.
-    pub fn kin_set_attempt_cached(&self, b: u32, k: u32) -> std::sync::Arc<Vec<u32>> {
-        use std::sync::atomic::Ordering::Relaxed;
-        let ks = &self.kin_stats;
-        ks.calls.fetch_add(1, Relaxed);
-        let n = self.nodes.len();
-        {
-            let mut c = self.kin_cache.lock().unwrap();
-            if c.0 != n {
-                c.0 = n;
-                c.1.clear();
-            }
-            if let Some(v) = c.1.get(&(b, k)) {
-                ks.hits.fetch_add(1, Relaxed);
-                ks.members.fetch_add(v.len() as u64, Relaxed);
-                return v.clone();
-            }
-        }
-        let t = obrrt_core::sys::Instant::now();
-        let v = std::sync::Arc::new(self.kin_set_attempt(b, k));
-        ks.nanos.fetch_add(t.elapsed().as_nanos() as u64, Relaxed);
-        ks.members.fetch_add(v.len() as u64, Relaxed);
-        ks.max.fetch_max(v.len() as u64, Relaxed);
-        let mut c = self.kin_cache.lock().unwrap();
-        if c.0 == n {
-            if c.1.len() >= 4096 {
-                c.1.clear();
-            }
-            c.1.insert((b, k), v.clone());
-        }
-        v
-    }
-
-    /// `kin_set` in attempts: for each ancestor `a` of `b` within `k`
-    /// (nearest first), the descendants of `a` within weighted depth `k`
-    /// below it, by 0-1 BFS (a child costing 0 is taken next, one costing 1
-    /// after the rest of its distance), so nearer kin come first. The order
-    /// depends only on the tree. As in `kin_set_node`, the child on the way
-    /// to `b` is skipped (its own search, from one nearer ancestor, already
-    /// covered at least as deep below it), which makes the searches disjoint:
-    /// each node is visited once. With `KIN_CAP` the set stops at that many.
-    pub fn kin_set_attempt(&self, b: u32, k: u32) -> Vec<u32> {
-        use std::sync::atomic::Ordering::Relaxed;
-        let cap = match KIN_CAP.load(Relaxed) {
-            0 => usize::MAX,
-            c => c,
-        };
-        let mut out = Vec::new();
-        let anc = self.ancestors_attempt(b, k);
-        let mut dq: std::collections::VecDeque<(u32, u32)> = std::collections::VecDeque::new();
-        let mut visited = 0u64;
-        'outer: for (j, &a) in anc.iter().enumerate() {
-            let skip = if j > 0 { anc[j - 1] } else { u32::MAX };
-            dq.clear();
-            dq.push_back((a, 0));
-            while let Some((n, d)) = dq.pop_front() {
-                out.push(n);
-                if out.len() >= cap {
-                    self.kin_stats.capped.fetch_add(1, Relaxed);
-                    break 'outer;
-                }
-                for &c in &self.children[n as usize] {
-                    if c == skip {
-                        continue;
-                    }
-                    visited += 1;
-                    let w = self.step(c);
-                    if d + w > k {
-                        continue;
-                    }
-                    if w == 0 {
-                        dq.push_front((c, d));
-                    } else {
-                        dq.push_back((c, d + 1));
-                    }
-                }
-            }
-        }
-        self.kin_stats.visited.fetch_add(visited, Relaxed);
-        out
-    }
-
-    /// `kin` in attempts: whether some ancestor of `a` within weighted
-    /// distance `k` is in `b_ancestors` (from `ancestors_attempt(b, k)`).
-    pub fn kin_attempt(&self, a: u32, b_ancestors: &[u32], k: u32) -> bool {
-        let (mut at, mut d) = (a, 0u32);
-        loop {
-            if b_ancestors.contains(&at) {
-                return true;
-            }
-            match self.nodes[at as usize].parent {
-                Some(p) => {
-                    d += self.step(at);
-                    if d > k {
-                        return false;
-                    }
-                    at = p;
-                }
-                None => return false,
-            }
-        }
-    }
-
-    /// One line on the attempt-unit kin sets (None when unused).
-    pub fn kin_line(&self) -> Option<String> {
-        use std::sync::atomic::Ordering::Relaxed;
-        let s = &self.kin_stats;
-        let calls = s.calls.load(Relaxed);
-        if calls == 0 {
-            return None;
-        }
-        let built = calls - s.hits.load(Relaxed);
-        Some(format!(
-            "kin sets ({}): {calls} calls, {} cached, mean {:.0} members (max {}), {:.0} visited per build, {} capped, {:.2}s building ({:.1} us per build); {} of {} nodes are attempt boundaries",
-            {
-                let unit = if KIN_FRAMES_UNIT.load(Relaxed) { format!("frames / {}", KIN_FRAMES.load(Relaxed)) } else if KIN_ATTEMPT.load(Relaxed) { "attempt unit".to_string() } else { "node unit".to_string() };
-                let l = f64::from_bits(KIN_SOFT.load(Relaxed));
-                if l > 0.0 { format!("{unit}, soft {l}") } else { unit }
-            },
-            s.hits.load(Relaxed),
-            s.members.load(Relaxed) as f64 / calls as f64,
-            s.max.load(Relaxed),
-            s.visited.load(Relaxed) as f64 / built.max(1) as f64,
-            s.capped.load(Relaxed),
-            s.nanos.load(Relaxed) as f64 * 1e-9,
-            s.nanos.load(Relaxed) as f64 * 1e-3 / built.max(1) as f64,
-            self.gen_step.iter().filter(|&&g| g).count(),
-            self.gen_step.len(),
-        ))
-    }
 
     /// Ids of `id` and its ancestors, nearest first, up to `k` generations up.
-    pub fn ancestors_node(&self, id: u32, k: u32) -> Vec<u32> {
+    pub fn ancestors(&self, id: u32, k: u32) -> Vec<u32> {
         let mut out = vec![id];
         let mut at = id;
         for _ in 0..k {
@@ -1189,10 +756,10 @@ impl Tree {
 
     /// Every node sharing an ancestor with `b` at most `k` generations above
     /// both (k = 4 allows third cousins), `b` included.
-    pub fn kin_set_node(&self, b: u32, k: u32) -> Vec<u32> {
+    pub fn kin_set(&self, b: u32, k: u32) -> Vec<u32> {
         let mut out = Vec::new();
         let mut seen = std::collections::HashSet::new();
-        let anc = self.ancestors_node(b, k);
+        let anc = self.ancestors(b, k);
         for (j, &a) in anc.iter().enumerate() {
             // Descendants of `a` at most k generations below it. The child
             // on the way to `b` (the previous ancestor) is skipped: its BFS,
@@ -1221,7 +788,7 @@ impl Tree {
 
     /// Whether `a` and `b` share an ancestor at most `k` generations above
     /// each (k = 4 allows third cousins).
-    pub fn kin_node(&self, a: u32, b_ancestors: &[u32], k: u32) -> bool {
+    pub fn kin(&self, a: u32, b_ancestors: &[u32], k: u32) -> bool {
         let mut at = a;
         for _ in 0..=k {
             if b_ancestors.contains(&at) {

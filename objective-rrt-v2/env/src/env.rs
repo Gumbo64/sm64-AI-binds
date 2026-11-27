@@ -3,7 +3,7 @@
 //! Each variable is read exactly the way the code that used to read it did (`== "1"`,
 //! `!= "0"`, strict or lenient number parsing), so a config built here behaves like the
 //! environment it came from.
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
 
 use crate::config::*;
 
@@ -89,15 +89,6 @@ pub fn from_env_with(base: SearchConfig, get: Lookup) -> Result<SearchConfig> {
     e.eq1("OBRRT_NEW_ELIGIBLE", &mut sampler.new_eligible);
 
 
-    e.eq1("OBRRT_STARSET_KEY", &mut dedup.starset_key);
-    // (a value that does not parse is ignored, as the tree's setting always did)
-    e.lenient_opt("OBRRT_STAR_WINDOW", &mut dedup.star_window);
-    e.eq1("OBRRT_KEEP_WIP", &mut dedup.keep_wip);
-    match e.get("OBRRT_REPLAY_MAX").as_deref() {
-        Some("off") => dedup.replay_max = ReplayMax::Off,
-        Some(v) => dedup.replay_max = ReplayMax::Frames(v.parse().with_context(|| format!("OBRRT_REPLAY_MAX={v}"))?),
-        None => {}
-    }
     let d = &mut dedup.dense;
     if let Some(a) = e.get("OBRRT_ADD") {
         d.add = (!a.is_empty() && a != "none").then_some(a);
@@ -138,19 +129,6 @@ pub fn from_env_with(base: SearchConfig, get: Lookup) -> Result<SearchConfig> {
 
     // kin
     e.strict("OBRRT_KINSHIP_MULT", &mut kin.mult)?;
-    match e.get("OBRRT_KIN_UNIT").as_deref() {
-        None | Some("") | Some("node") => {}
-        Some("attempt") => kin.unit = KinUnit::Attempt,
-        Some("frames") => kin.unit = KinUnit::Frames,
-        Some(v) => bail!("OBRRT_KIN_UNIT={v}: expected node, attempt or frames"),
-    }
-    e.strict_opt("OBRRT_KIN_FRAMES", &mut kin.frames)?;
-    if let Some(v) = e.get("OBRRT_KIN_SOFT") {
-        let l: f64 = v.parse().with_context(|| format!("OBRRT_KIN_SOFT={v}"))?;
-        anyhow::ensure!(l > 0.0 && l <= 1.0, "OBRRT_KIN_SOFT: 0 < λ <= 1");
-        kin.soft = Some(l);
-    }
-    e.strict_opt("OBRRT_KIN_CAP", &mut kin.cap)?;
 
     e.strict("OBRRT_PINK", &mut ga.pink)?;
     e.lenient("OBRRT_GA_GAMMA", &mut ga.gamma);

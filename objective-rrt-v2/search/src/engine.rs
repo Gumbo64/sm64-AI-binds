@@ -25,6 +25,10 @@ mod manual;
 pub use manual::ManualInsert;
 
 pub struct Config {
+    /// The search's settings (objectives, stop rules, zone lock, dense adds...): what an engine and its threads run
+    /// under, so one process can run searches with different ones. None: the installed config
+    /// ([`obrrt_core::config::install`]) at the engine's construction. `envconfig::from_env` fills it.
+    pub search: Option<&'static obrrt_core::config::SearchConfig>,
     pub out_dir: String,
     pub seed: u64,
     pub minutes: f64,
@@ -119,6 +123,7 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Config {
+            search: None,
             out_dir: "runs/obrrt".into(),
             seed: 1,
             minutes: 30.0,
@@ -295,6 +300,10 @@ fn cell(st: &St) -> Cell {
 }
 
 pub struct Engine {
+    /// The settings this engine's threads run under (`Config::search`).
+    sc: &'static obrrt_core::config::SearchConfig,
+    /// Threads for the goal ranking in `index_frontier` (one per worker).
+    index_pool: Option<rayon::ThreadPool>,
     pub cfg: Config,
     pub tree: Tree,
     pub pool: Pool,
@@ -473,10 +482,26 @@ impl Engine {
         let mut cells = HashMap::new();
         cells.insert(cell(&root), vec![0]);
         let root_zone = root.zone();
-        let mut tree = Tree::new(root);
+        let sc = cfg.search.unwrap_or_else(obrrt_core::config::global);
+        let dense = crate::dense::from_config(sc).map_err(anyhow::Error::msg)?;
+        let tree_cfg = crate::tree::TreeConfig {
+            zone_lock: sc.zone.lock.then_some(root.level),
+            // Every star count stays open under the zone lock.
+            star_window: if sc.zone.lock { 99 } else { 1 },
+            replay_max: dense.map(|_| 150),
+            dense_grid: dense.map_or(0, |d| d.grid as u32),
+        };
+        if sc.zone.lock {
+            println!("zone lock: level {}", root.level);
+        }
+        let n = workers.len().max(1);
+        let index_pool = if n > 1 { rayon::ThreadPoolBuilder::new().num_threads(n).build().ok() } else { None };
+        let mut tree = Tree::new(root, tree_cfg);
         // The root's save: its pages are the base, its perturbation its own.
         tree.nodes[0].save = Delta::new(0, crate::game::plain(&root_save).as_bytes(), &root_save);
         Ok(Engine {
+            sc,
+            index_pool,
             tree,
             pool: Pool::default(),
             diag: Diagnostics { chain_prob: cfg.chain_prob, ..Default::default() },
@@ -511,7 +536,7 @@ impl Engine {
             diag_pre: [0.0; 11],
             route_met: HashMap::new(),
             node_rate: (0.0, 0.0, 0),
-            dense: crate::dense::settings().filter(|d| d.modes.any()),
+            dense,
             dstats: Default::default(),
             road: crate::road::setting().map(crate::road::Road::new),
             road_legs: Vec::new(),
@@ -627,8 +652,8 @@ impl Engine {
         let b_st = &self.tree.nodes[b as usize].st;
         let (b_keys, b_stars, b_lives) = (b_st.keys, b_st.stars, b_st.lives);
         let mut cands: Vec<(u32, f64, f64)> = Vec::new();
-        let kin = self.tree.kin_weighted(b, k);
-        for &(i, kw) in kin.iter() {
+        let kin = self.tree.kin_set(b, k);
+        for &i in kin.iter() {
             let n = &self.tree.nodes[i as usize];
             let s = &n.st;
             // A state kept for its work under way starts whatever b has collected.
@@ -652,7 +677,7 @@ impl Engine {
             let u = (s.wedges() as f64 / 8.0).powf(self.cfg.alpha)
                 * self.cfg.gamma.powi((b_lives as i32 - s.lives as i32).max(0));
             let crowd = 0.5f64.powi(n.stats.crowd as i32);
-            cands.push((i as u32, h, u * self.start_mult(&n.stats) * crowd * kw as f64 * self.manual_start_mult(i)));
+            cands.push((i as u32, h, u * self.start_mult(&n.stats) * crowd * self.manual_start_mult(i)));
         }
         if cands.is_empty() {
             return None;
@@ -688,7 +713,7 @@ impl Engine {
         let mut zones: BTreeMap<(u16, u8), BTreeMap<(i32, i32, i32, i64, i16, u64), Vec<u32>>> = BTreeMap::new();
         // OBRRT_KEEP_WIP: the states kept for their work under way are b
         // candidates too (incomparable with the frontier, not behind it).
-        let wip_kept = if self.tree.keep_wip { self.tree.wip_kept.clone() } else { Vec::new() };
+        let wip_kept = self.tree.wip_kept.clone();
         // OBRRT_GOAL_FOCUS=p: this share of plans is drawn toward a goal, an
         // objective in the pool worth at least OBRRT_GOAL_MIN (a star, a boss,
         // a mission spot). b is otherwise uniform over occupied cells, so in a
@@ -741,7 +766,9 @@ impl Engine {
         let items: Vec<u32> = self.tree.frontier.iter().chain(&wip_kept).copied().collect();
         let pre: Vec<Vec<Option<(f64, Option<[f32; 3]>)>>> = {
             let (tree, road, goals) = (&self.tree, self.road.as_ref(), &goals);
+            let sc = self.sc;
             let one = |&i: &u32| -> Vec<Option<(f64, Option<[f32; 3]>)>> {
+                let _scope = obrrt_core::config::scope(sc);
                 if goals.is_empty() || skip(i) {
                     return Vec::new();
                 }
@@ -780,11 +807,9 @@ impl Engine {
                     })
                     .collect()
             };
-            static POOL: std::sync::OnceLock<Option<rayon::ThreadPool>> = std::sync::OnceLock::new();
-            let n = self.workers.len().max(1);
-            match POOL.get_or_init(|| rayon::ThreadPoolBuilder::new().num_threads(n).build().ok()) {
-                Some(p) if n > 1 => p.install(|| items.par_iter().map(one).collect()),
-                _ => items.iter().map(one).collect(),
+            match self.index_pool.as_ref() {
+                Some(p) => p.install(|| items.par_iter().map(one).collect()),
+                None => items.iter().map(one).collect(),
             }
         };
         self.diag_index_secs += idx_t.elapsed().as_secs_f64();
@@ -2052,7 +2077,7 @@ impl Engine {
             "entry_weights": weights,
         });
         let mut summary = summary;
-        if self.tree.keep_wip {
+        {
             let t = &self.tree;
             summary["frontier"]["wip"] = serde_json::json!({
                 "kept": t.wip_kept.len(), "peak": t.wip_peak, "ever": t.wip_ever.len(), "dropped": t.wip_dropped,
@@ -2095,9 +2120,6 @@ impl Engine {
             );
             summary["dense"] = serde_json::json!(d);
             summary["dense"]["keys"] = serde_json::json!(self.tree.dkeys.len());
-        }
-        if let Some(l) = self.tree.kin_line() {
-            println!("   {l}");
         }
         summary["timing"] =serde_json::json!({"plan_secs": self.diag_plan_secs.0, "merge_secs": self.diag_plan_secs.1});
         {
@@ -2202,6 +2224,7 @@ impl Engine {
     /// before this fix replayed a child of a state retired earlier in the
     /// replay (so a tree made by such a resume replays as it was run).
     pub fn resume(&mut self, dir: &str) -> Result<()> {
+        let _scope = obrrt_core::config::scope(self.sc);
         let data = fs::read(format!("{dir}/tree.bin"))?;
         let csv = fs::read_to_string(format!("{dir}/nodes.csv"))?;
         let header: Vec<&str> = csv.lines().next().unwrap_or("").split(',').collect();
@@ -2336,7 +2359,7 @@ impl Engine {
             // their last child (or with none to come).
             // OBRRT_KEEP_WIP: states with work under way wait for the
             // selection after the replay.
-            let wip_hold = |t: &crate::tree::Tree, n: usize| t.keep_wip && t.wip[n] > 0;
+            let wip_hold = |t: &crate::tree::Tree, n: usize| t.wip[n] > 0;
             if last_child[parent as usize] == i && !self.tree.on_frontier(&self.tree.nodes[parent as usize].st) && !wip_hold(&self.tree, parent as usize) {
                 self.tree.retire_one(parent);
             }
@@ -2413,6 +2436,7 @@ impl Engine {
     /// across goals, then frontier states by progress and sooner frame, at least `sep` units apart from
     /// each other so the offer covers several branches. Imported nodes are never offered back.
     pub fn sync_candidates(&mut self, k: usize, sep: f32) -> Vec<u32> {
+        let _scope = obrrt_core::config::scope(self.sc);
         let mut out: Vec<u32> = Vec::new();
         let ok = |s: &Self, i: u32| i > 0 && (i as usize) < s.tree.nodes.len() && !s.tree.nodes[i as usize].retired && s.tree.nodes[i as usize].via != "sync" && !s.sync_sent.contains(&i);
         let far = |s: &Self, out: &[u32], i: u32| {
@@ -2461,6 +2485,7 @@ impl Engine {
     /// died or has an earlier state at its cell (the usual duplicate check). Added through the same
     /// bookkeeping as `merge_share`'s chain nodes.
     pub fn sync_import(&mut self, pads: &[GamePad], expect: Option<(u16, [f32; 3], (u8, i16))>) -> Result<SyncImport> {
+        let _scope = obrrt_core::config::scope(self.sc);
         use std::hash::{Hash, Hasher};
         let mut h = std::collections::hash_map::DefaultHasher::new();
         for p in pads {
@@ -2557,7 +2582,6 @@ impl Engine {
             self.tree.nodes[id as usize].stats.crowd = crowd;
         }
         self.cells.entry(c).or_default().push(id);
-        self.tree.gen_step[id as usize] = true;
         self.sync_sent.insert(id);
         if adv {
             let (keys, stars) = self.tree.frontier_progress;
@@ -2568,6 +2592,7 @@ impl Engine {
     }
 
     pub fn run(&mut self) -> Result<()> {
+        let _scope = obrrt_core::config::scope(self.sc);
         let begin = Instant::now();
         let mut last_report = Instant::now();
         let mut last_tune = self.total_frames;
@@ -2684,6 +2709,7 @@ impl Engine {
             let tree = &self.tree;
             let seeds: Vec<u64> = plans.iter().map(|_| self.rng.random()).collect();
             let workers = &self.workers;
+            let sc = self.sc;
             let params = crate::ga::GaParams { scale: self.cfg.ga_scale, pink: self.cfg.ga_pink };
             let dense = self.dense;
             let replay_max = self.tree.sparse.as_ref().map_or(0, |sp| sp.cap);
@@ -2693,6 +2719,7 @@ impl Engine {
                 .par_iter()
                 .zip(seeds.par_iter())
                 .map(|(plan, seed)| {
+                    let _scope = obrrt_core::config::scope(sc);
                     let mut w = loop {
                         if let Some(w) = workers.iter().find_map(|w| w.try_lock().ok()) {
                             break w;

@@ -127,14 +127,46 @@ pub fn thinned(rule: (u32, bool), t: usize, len: usize, st: &St, prev: Option<&S
     true
 }
 
-static SETTINGS: OnceLock<Option<Settings>> = OnceLock::new();
-
-pub fn configure(s: Option<Settings>) {
-    let _ = SETTINGS.set(s);
+/// The dense-add settings a config asks for (None: off). An error names the bad switch.
+pub fn from_config(sc: &obrrt_core::config::SearchConfig) -> Result<Option<Settings>, String> {
+    let d = &sc.dedup.dense;
+    let modes = match &d.add {
+        Some(v) => Modes::parse(v)?,
+        None => Modes::default(),
+    };
+    if !modes.any() {
+        return Ok(None);
+    }
+    if !(d.grid >= 64 && d.grid % 64 == 0) {
+        return Err("OBRRT_DENSE_GRID: a multiple of 64".into());
+    }
+    Ok(Some(Settings {
+        modes,
+        grid: d.grid as f32,
+        cap: d.cap.unwrap_or(if modes.all { 256 } else { 0 }),
+        ne: d.ne,
+        mem_objects: true,
+        every: d.every,
+        per_obj: d.per_obj,
+        air: d.air,
+    }))
 }
 
+/// The settings of this thread's config ([`obrrt_core::config::current`]; the engine's, inside its threads);
+/// None: off. Worked out once per config and thread.
 pub fn settings() -> Option<Settings> {
-    *SETTINGS.get_or_init(|| None)
+    thread_local! {
+        static CACHE: std::cell::RefCell<(usize, Option<Settings>)> = const { std::cell::RefCell::new((0, None)) };
+    }
+    let sc = obrrt_core::config::current();
+    let key = sc as *const _ as usize;
+    CACHE.with(|c| {
+        let mut c = c.borrow_mut();
+        if c.0 != key {
+            *c = (key, from_config(sc).ok().flatten());
+        }
+        c.1
+    })
 }
 
 /// The dense key of `st` on a `grid`-unit grid (see the module doc).

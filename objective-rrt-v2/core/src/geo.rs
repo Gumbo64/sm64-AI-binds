@@ -61,16 +61,10 @@ const SIDE: i32 = 2 * HALF + 1;
 // 696, SL: 37 k frames/s, planning 60% of the time, 5 of 16 cores busy; step 695: 222 k).
 const FIELD_BYTES: usize = 1 << 30;
 
-static ENABLED: AtomicBool = AtomicBool::new(false);
-
-/// Turns geodesic distances on (`OBRRT_GEO`); off, [`St::path_dist`] is the
+/// Whether geodesic distances are on (`OBRRT_GEO`, the running config's); off, [`St::path_dist`] is the
 /// straight distance and nothing is built.
-pub fn set_enabled(on: bool) {
-    ENABLED.store(on, Ordering::Relaxed);
-}
-
 pub fn enabled() -> bool {
-    ENABLED.load(Ordering::Relaxed)
+    crate::config::current().objectives.geo
 }
 
 #[derive(Clone, Copy)]

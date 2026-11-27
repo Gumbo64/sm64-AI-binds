@@ -154,7 +154,6 @@ impl Engine {
             self.modal_queue.push(id);
         }
         self.cells.entry(c).or_default().push(id);
-        self.tree.gen_step[id as usize] = true;
         self.sync_sent.insert(id);
         self.manual.boost.insert(id, weight);
         if adv {

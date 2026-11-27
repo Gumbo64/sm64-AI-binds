@@ -63,19 +63,6 @@ impl Default for Sampler {
     }
 }
 
-/// OBRRT_REPLAY_MAX: when a node keeps a save.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum ReplayMax {
-    /// Unset: 150 with dense adds on, every node saved otherwise.
-    #[default]
-    Auto,
-    /// "off": every save kept.
-    Off,
-    /// A node keeps a save only beyond this many frames from its saved ancestor.
-    Frames(u32),
-}
-
 /// Dense adds (OBRRT_ADD, OBRRT_DENSE_*).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -102,23 +89,12 @@ impl Default for Dense {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Dedup {
-    /// OBRRT_STARSET_KEY: dedupe and b cells by the collected set.
-    pub starset_key: bool,
-    /// OBRRT_STAR_WINDOW (None: 1, or 99 with the zone lock).
-    pub star_window: Option<i16>,
-    /// OBRRT_KEEP_WIP / _N / _FRAMES
-    pub keep_wip: bool,
-    pub replay_max: ReplayMax,
     pub dense: Dense,
 }
 
 impl Default for Dedup {
     fn default() -> Self {
         Dedup {
-            starset_key: true,
-            star_window: None,
-            keep_wip: true,
-            replay_max: ReplayMax::Auto,
             dense: Dense::default(),
         }
     }
@@ -163,35 +139,17 @@ impl Default for GoalFocus {
     }
 }
 
-/// OBRRT_KIN_UNIT.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum KinUnit {
-    #[default]
-    Node,
-    Attempt,
-    Frames,
-}
-
 /// Kinship generations.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Kin {
     /// OBRRT_KINSHIP_MULT
     pub mult: f64,
-    /// OBRRT_KIN_UNIT
-    pub unit: KinUnit,
-    /// OBRRT_KIN_FRAMES (None: the tree's 150).
-    pub frames: Option<u32>,
-    /// OBRRT_KIN_SOFT (None: the hard set).
-    pub soft: Option<f64>,
-    /// OBRRT_KIN_CAP (None: 0 = none).
-    pub cap: Option<usize>,
 }
 
 impl Default for Kin {
     fn default() -> Self {
-        Kin { mult: 10.0, unit: KinUnit::Node, frames: None, soft: None, cap: None }
+        Kin { mult: 10.0 }
     }
 }
 

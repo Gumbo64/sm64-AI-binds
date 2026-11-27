@@ -4,14 +4,50 @@
 //! A program builds a config (from the environment with [`from_env`], from a file, or in code) and
 //! [`install`]s it before the search starts. A program that never does gets the environment's, read
 //! once at the first use, so the legacy `OBRRT_*` switches still work for every tool.
+//!
+//! One process can run several searches with different configs: each engine [`scope`]s its own config
+//! on every thread it runs code on (its main thread and its attempts' worker threads), and
+//! [`current`] answers with the scoped config there, the installed one elsewhere.
+use std::cell::Cell;
 use std::sync::atomic::{AtomicPtr, Ordering};
 
 pub use obrrt_env::*;
 
 static CURRENT: AtomicPtr<SearchConfig> = AtomicPtr::new(std::ptr::null_mut());
 
-/// The installed config; before any, the environment's (read once).
+thread_local! {
+    static SCOPED: Cell<Option<&'static SearchConfig>> = const { Cell::new(None) };
+}
+
+/// While alive, [`current`] on this thread answers with the config given to [`scope`].
+pub struct Scope(Option<&'static SearchConfig>);
+
+impl Drop for Scope {
+    fn drop(&mut self) {
+        SCOPED.with(|s| s.set(self.0));
+    }
+}
+
+/// Makes `cfg` this thread's config until the guard drops (scopes nest).
+pub fn scope(cfg: &'static SearchConfig) -> Scope {
+    Scope(SCOPED.with(|s| s.replace(Some(cfg))))
+}
+
+/// A config that lives for the rest of the process (an engine keeps its config this way; they are few and small).
+pub fn leak(cfg: SearchConfig) -> &'static SearchConfig {
+    Box::leak(Box::new(cfg))
+}
+
+/// This thread's scoped config; else the installed one; before any, the environment's (read once).
 pub fn current() -> &'static SearchConfig {
+    if let Some(c) = SCOPED.with(|s| s.get()) {
+        return c;
+    }
+    global()
+}
+
+/// The installed config; before any, the environment's (read once).
+pub fn global() -> &'static SearchConfig {
     let p = CURRENT.load(Ordering::Acquire);
     if !p.is_null() {
         // SAFETY: only ever set to a leaked Box (never freed).

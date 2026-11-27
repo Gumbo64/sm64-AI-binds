@@ -23,7 +23,7 @@
 //! `location,gateclip`. An unknown entry is an error.
 
 use std::collections::HashSet;
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 
 use obrrt_core::{Obj, Objective, St};
 
@@ -325,8 +325,6 @@ pub const TECHNIQUES: &[Technique] = &[Technique {
     course: None,
 }];
 
-static ENABLED: OnceLock<HashSet<&'static str>> = OnceLock::new();
-
 /// Parses an `OBRRT_TECH` value into the set of enabled technique names.
 pub fn parse(spec: &str) -> Result<HashSet<&'static str>, String> {
     let words: Vec<&str> = spec.split(',').map(str::trim).filter(|s| !s.is_empty()).collect();
@@ -367,11 +365,10 @@ pub fn parse(spec: &str) -> Result<HashSet<&'static str>, String> {
     Ok(set)
 }
 
-/// Sets the enabled techniques once, before the search starts. Without a
-/// call every technique is on (`all`).
+/// Checks an `OBRRT_TECH` value (an unknown entry is an error); the techniques themselves come from the
+/// running config ([`obrrt_core::config::current`]).
 pub fn configure(spec: &str) -> Result<(), String> {
-    let set = parse(spec)?;
-    ENABLED.set(set).map_err(|_| "techniques already configured".to_string())
+    parse(spec).map(|_| ())
 }
 
 /// The enabled techniques' names (for the run's log).
@@ -379,12 +376,20 @@ pub fn enabled_names() -> Vec<&'static str> {
     TECHNIQUES.iter().map(|t| t.name).filter(|n| enabled(n)).collect()
 }
 
-/// Whether technique `name` is on.
+/// Whether technique `name` is on in the running config (`OBRRT_TECH`; an unparsable value turns all on).
 pub fn enabled(name: &str) -> bool {
-    match ENABLED.get() {
-        Some(set) => set.contains(name),
-        None => true,
+    thread_local! {
+        static CACHE: std::cell::RefCell<(usize, Option<HashSet<&'static str>>)> = const { std::cell::RefCell::new((0, None)) };
     }
+    let cfg = obrrt_core::config::current();
+    let key = cfg as *const _ as usize;
+    CACHE.with(|c| {
+        let mut c = c.borrow_mut();
+        if c.0 != key {
+            *c = (key, parse(&cfg.objectives.tech).ok());
+        }
+        c.1.as_ref().is_none_or(|set| set.contains(name))
+    })
 }
 
 #[cfg(test)]
