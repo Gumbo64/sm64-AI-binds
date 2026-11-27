@@ -213,7 +213,7 @@ impl Engine {
     /// How strongly the goal pulls: the pool weight of its objective (a regular objective weighs 1) and the share of plans
     /// that start from the tree's state nearest the goal and run it (see `plan_user_goal`).
     pub fn set_pos_goal_strength(&mut self, _weight: f64, share: f64) {
-        obrrt_core::posgoal::set_share(share);
+        self.rt.goal.set_share(share);
     }
 
     /// The bubble's base state (OBRRT_POSGOAL_SHARE, the web miner's bubble strength): with probability `share` and a
@@ -221,8 +221,8 @@ impl Engine {
     /// soft-dedup weighted) but only from the nodes inside the bubble. No nodes inside, no bubble or no share: None,
     /// and no random draw is made when there is no bubble, so a search without one is unchanged.
     pub(super) fn plan_bubble(&mut self) -> Option<u32> {
-        let g = obrrt_core::posgoal::get()?;
-        let share = obrrt_core::posgoal::share();
+        let g = self.rt.goal.get()?;
+        let share = self.rt.goal.share();
         let nodes = &self.tree.nodes;
         let inside = |i: u32| {
             let n = &nodes[i as usize];
@@ -251,7 +251,7 @@ impl Engine {
 
     /// The tree's state in the goal's zone nearest the goal: (distance, node id), or None without a goal or a state there.
     pub fn pos_goal_nearest(&self) -> Option<(f32, u32)> {
-        let g = obrrt_core::posgoal::get()?;
+        let g = self.rt.goal.get()?;
         self.tree.nodes.iter().enumerate().filter(|(_, n)| n.st.zone() == g.zone && !n.retired).map(|(i, n)| (obrrt_core::dist(n.st.pos, g.pos), i as u32)).min_by(|a, b| a.0.total_cmp(&b.0))
     }
 
@@ -259,7 +259,7 @@ impl Engine {
     /// (clamped to 50..20000). None clears it.
     pub fn set_pos_goal(&mut self, goal: Option<((u16, u8), [f32; 3], f32)>) {
         use obrrt_core::posgoal::*;
-        set(goal.map(|(zone, pos, r)| PosGoal { zone, pos, radius: if r.is_finite() { r.clamp(MIN_RADIUS, MAX_RADIUS) } else { DEFAULT_RADIUS } }));
+        self.rt.goal.set(goal.map(|(zone, pos, r)| PosGoal { zone, pos, radius: if r.is_finite() { r.clamp(MIN_RADIUS, MAX_RADIUS) } else { DEFAULT_RADIUS } }));
     }
 }
 
@@ -317,6 +317,6 @@ mod tests {
     #[test]
     fn no_bubble_makes_no_draw() {
         // posgoal unset (the default): plan_bubble returns before touching the rng.
-        assert_eq!(obrrt_core::posgoal::get(), None);
+        assert_eq!(obrrt_core::runtime::Runtime::new().goal.get(), None);
     }
 }

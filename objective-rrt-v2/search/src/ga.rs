@@ -70,9 +70,8 @@ pub fn rh_on() -> bool {
 
 /// [`Rh`] from the environment.
 pub fn rh() -> &'static Rh {
-    static R: OnceLock<Rh> = OnceLock::new();
-    R.get_or_init(|| {
-        let c = &obrrt_core::config::current().research.rh;
+    obrrt_core::per_config!(Rh, |cfg| {
+        let c = &cfg.research.rh;
         Rh {
             pop: c.pop.max(2),
             h: c.h.max(1),
@@ -1813,9 +1812,8 @@ fn ga_gamma() -> f64 {
 /// but at the full budget it cost about five times a move: Boss::Hit from
 /// over 200 frames away was 13,607 attempts, 1 success and 0.96 B frames.
 fn reach_prior() -> &'static std::collections::HashMap<String, f64> {
-    static R: OnceLock<std::collections::HashMap<String, f64>> = OnceLock::new();
-    R.get_or_init(|| {
-        let Some(path) = obrrt_core::config::current().priors.reach_prior.clone() else { return Default::default() };
+    obrrt_core::per_config!(std::collections::HashMap<String, f64>, |cfg| {
+        let Some(path) = cfg.priors.reach_prior.clone() else { return Default::default() };
         let text = obrrt_core::sys::fs::read_to_string(&path).unwrap_or_else(|e| panic!("OBRRT_REACH_PRIOR {path}: {e}"));
         serde_json::from_str(&text).unwrap_or_else(|e| panic!("OBRRT_REACH_PRIOR {path}: {e}"))
     })
@@ -1837,9 +1835,8 @@ fn reach_budget() -> GaBudget {
 /// generation 0 missed stops after 2 more generations unless one has met the objective by then: it still adds its best end
 /// state, as an approach. Returns that number of generations for `o`.
 fn gen0_gate(o: &dyn Objective) -> Option<usize> {
-    static R: OnceLock<(std::collections::HashMap<String, f64>, f64, usize)> = OnceLock::new();
-    let (prior, min, gens) = R.get_or_init(|| {
-        let Some(path) = obrrt_core::config::current().priors.rescue_prior.clone() else { return Default::default() };
+    let (prior, min, gens) = obrrt_core::per_config!((std::collections::HashMap<String, f64>, f64, usize), |cfg| {
+        let Some(path) = cfg.priors.rescue_prior.clone() else { return Default::default() };
         let text = obrrt_core::sys::fs::read_to_string(&path).unwrap_or_else(|e| panic!("OBRRT_RESCUE_PRIOR {path}: {e}"));
         (serde_json::from_str(&text).unwrap_or_else(|e| panic!("OBRRT_RESCUE_PRIOR {path}: {e}")), 0.05, 2usize)
     });
@@ -1852,10 +1849,7 @@ pub fn beyond_reach(o: &dyn Objective, start: &St) -> bool {
 }
 
 fn default_budget() -> GaBudget {
-    static B: OnceLock<GaBudget> = OnceLock::new();
-    *B.get_or_init(|| {
-        GaBudget { population: 16, generations: 5, horizon: 150 }
-    })
+    GaBudget { population: 16, generations: 5, horizon: 150 }
 }
 
 #[derive(Clone)]

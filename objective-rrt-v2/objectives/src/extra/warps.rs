@@ -334,9 +334,8 @@ fn dest_worth(s: &St, dest: u32) -> f64 {
 /// tower of the wing cap, whose entrance is in the lobby: 150 M frames,
 /// 26,841 nodes, 302 of them in the lobby, all at the very end.
 fn zone_path() -> &'static [((u16, u8), (u16, u8), [f32; 3])] {
-    static P: std::sync::OnceLock<Vec<((u16, u8), (u16, u8), [f32; 3])>> = std::sync::OnceLock::new();
-    P.get_or_init(|| {
-        let v = &obrrt_core::config::current().zone.path;
+    obrrt_core::per_config!(Vec<((u16, u8), (u16, u8), [f32; 3])>, |cfg| {
+        let v = &cfg.zone.path;
         if v.is_empty() {
             return Vec::new();
         }

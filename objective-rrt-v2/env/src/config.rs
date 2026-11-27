@@ -220,6 +220,10 @@ pub struct ObjectiveConfig {
     /// OBRRT_BLJ_*
     pub blj_detector: Option<String>,
     pub blj_spots: bool,
+    /// OBRRT_SPEC=<file.json or dir>: declarative objectives (spec crate) added to the pool; OBRRT_SPEC_RUN=<run dir>
+    /// resolves their node targets.
+    pub spec: Option<String>,
+    pub spec_run: Option<String>,
     pub blj_spots_catalog: Option<String>,
     pub twostar: bool,
     /// OBRRT_STATIC_ID (core): objects keyed by their static id.
@@ -241,6 +245,8 @@ impl Default for ObjectiveConfig {
             king_landing: false,
             blj_detector: None,
             blj_spots: false,
+            spec: None,
+            spec_run: None,
             blj_spots_catalog: None,
             twostar: false,
             static_id: false,

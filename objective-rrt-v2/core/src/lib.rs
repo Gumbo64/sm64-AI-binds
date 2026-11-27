@@ -14,6 +14,7 @@ pub mod mover;
 pub mod posgoal;
 mod read;
 pub mod records;
+pub mod runtime;
 pub mod sys;
 
 use std::sync::Arc;
@@ -467,6 +468,16 @@ pub enum Precision {
     Precise,
 }
 
+/// Compatibility only: the search no longer thins dense adds per objective, so nothing reads
+/// [`Objective::dense_keep`] any more. It stays for the SM64Coin miner's objective wrapper
+/// (miner/src/rrt/child.rs), which forwards it; drop both together at the next dependency bump.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DenseKeep {
+    Global,
+    EndOnly,
+    Every { n: u32, air: bool },
+}
+
 /// v1's per-objective GA budget, kept as a hint for the rolling-horizon
 /// controller ([`Objective::ga_budget`]): `population` is its population,
 /// `horizon` the most frames it commits, and `population * generations *
@@ -707,6 +718,10 @@ pub trait Objective: Send + Sync {
     /// ancestor with `b` at most this many generations up.
     fn kinship(&self) -> u32 {
         6
+    }
+    /// Unused (see [`DenseKeep`]).
+    fn dense_keep(&self) -> DenseKeep {
+        DenseKeep::Global
     }
     /// Start ranking only (frames, default 0): a preference among starts
     /// that isn't a distance to go (v1's non-distance `base_heuristic`

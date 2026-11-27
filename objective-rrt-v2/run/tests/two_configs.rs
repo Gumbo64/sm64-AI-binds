@@ -1,15 +1,19 @@
 //! One process runs two searches with different configs and each makes the tree it makes alone.
 //!
 //! The configs differ in what the tree, the engine and the objectives each read (zone lock, dense adds,
-//! kinship, technique set), so a setting that leaked between engines (a process-wide static, the first
-//! engine's thread pool, one config read for the other) changes a tree. Needs the game ROM: SM64_ROM names
-//! it; without it the test says so and passes.
+//! kinship, technique set, the rolling-horizon controller's parameters), and the engines differ in the run-time
+//! state each owns (a position goal; what the mover has published; the door and grid caches), so a setting or
+//! state that leaked between engines (a process-wide static, the first engine's thread pool, one config read
+//! for the other, one engine's publish epoch tagging the other's caches) changes a tree. Not covered: the static
+//! floor snapshots of `obrrt_core::geo`, which are a function of the ROM and the zone (see `obrrt_core::runtime`).
+//! Needs the game ROM: SM64_ROM names it; without it the test says so and passes.
 
 use std::path::Path;
 use std::sync::Arc;
 
 use obrrt_core::buttons::{A_BUTTON, START_BUTTON};
 use obrrt_core::config::{self, SearchConfig};
+use obrrt_core::runtime::Runtime;
 use obrrt_core::{GamePad, check_layout, read_state};
 use obrrt_objectives::Registry;
 use obrrt_search::{Config, Engine};
@@ -31,8 +35,11 @@ fn boot_inputs() -> Vec<GamePad> {
         .collect()
 }
 
-/// Runs one search under `sc` for `frames` emulated frames and returns its tree.bin.
-fn tree_of(rom: &str, sc: &SearchConfig, out: &str, frames: u64) -> Vec<u8> {
+/// A position goal (zone, centre, radius) and the share of plans drawn from inside its bubble.
+type Goal = Option<(((u16, u8), [f32; 3], f32), f64)>;
+
+/// Runs one search under `sc` (its own run-time state, with `goal` set) for `frames` emulated frames and returns its tree.bin.
+fn tree_of(rom: &str, sc: &SearchConfig, goal: Goal, out: &str, frames: u64) -> Vec<u8> {
     let sc = config::leak(sc.clone());
     // What the process's drivers do once from the environment: the steering controller, the movement library.
     obrrt_objectives::setup::from_config(sc).unwrap();
@@ -42,6 +49,7 @@ fn tree_of(rom: &str, sc: &SearchConfig, out: &str, frames: u64) -> Vec<u8> {
     cfg.seed = 1;
     cfg.minutes = 1e9;
     cfg.max_frames = Some(frames);
+    cfg.runtime = Some(Runtime::new());
     let game_gen = SM64GameGenerator::from_file(rom).unwrap();
     let mut game = game_gen.create_game().unwrap();
     let mut boot = boot_inputs();
@@ -64,6 +72,10 @@ fn tree_of(rom: &str, sc: &SearchConfig, out: &str, frames: u64) -> Vec<u8> {
     let save = game.save_state();
     let generator: Arc<dyn obrrt_core::Generator> = Arc::new(Registry);
     let mut engine = Engine::new(cfg, &game_gen, boot, save, root, generator).unwrap();
+    if let Some((g, share)) = goal {
+        engine.set_pos_goal(Some(g));
+        engine.set_pos_goal_strength(0.0, share);
+    }
     engine.run().unwrap();
     std::fs::read(format!("{out}/tree.bin")).unwrap()
 }
@@ -78,8 +90,9 @@ fn two_engines_with_different_configs_in_one_process() {
     let dir = std::env::temp_dir().join(format!("obrrt-two-configs-{}", std::process::id()));
     let d = |n: &str| dir.join(n).to_string_lossy().into_owned();
 
-    // A: the castle's zone-locked tree with dense adds; B: free, no dense adds, no kinship stretch, movement
-    // techniques only.
+    // A: the castle's zone-locked tree with dense adds and a position goal over the castle grounds' bridge; B:
+    // free, no dense adds, no kinship stretch, movement techniques only, the rolling-horizon controller with a
+    // small population (its parameters are derived from the config once per config), no goal.
     let mut a = SearchConfig::default();
     a.zone.lock = true;
     a.dedup.dense_adds = true;
@@ -87,17 +100,20 @@ fn two_engines_with_different_configs_in_one_process() {
     b.dedup.dense_adds = false;
     b.kin.mult = 1.0;
     b.objectives.tech = "movement".into();
+    b.research.rh.on = true;
+    b.research.rh.pop = 16;
+    let goal_a: Goal = Some((((16, 1), [0.0, 811.0, -100.0], 4000.0), 0.4));
 
-    let a_alone = tree_of(&rom, &a, &d("a-alone"), frames);
-    let b_alone = tree_of(&rom, &b, &d("b-alone"), frames);
+    let a_alone = tree_of(&rom, &a, goal_a, &d("a-alone"), frames);
+    let b_alone = tree_of(&rom, &b, None, &d("b-alone"), frames);
     assert_ne!(a_alone, b_alone, "the two configs must make different trees, or the test shows nothing");
 
     // Back to back, then at the same time, in this process.
-    assert_eq!(tree_of(&rom, &b, &d("b-after-a"), frames), b_alone, "B after A");
-    assert_eq!(tree_of(&rom, &a, &d("a-after-b"), frames), a_alone, "A after B");
+    assert_eq!(tree_of(&rom, &b, None, &d("b-after-a"), frames), b_alone, "B after A");
+    assert_eq!(tree_of(&rom, &a, goal_a, &d("a-after-b"), frames), a_alone, "A after B");
     let (a_both, b_both) = std::thread::scope(|s| {
-        let ta = s.spawn(|| tree_of(&rom, &a, &d("a-together"), frames));
-        let tb = s.spawn(|| tree_of(&rom, &b, &d("b-together"), frames));
+        let ta = s.spawn(|| tree_of(&rom, &a, goal_a, &d("a-together"), frames));
+        let tb = s.spawn(|| tree_of(&rom, &b, None, &d("b-together"), frames));
         (ta.join().unwrap(), tb.join().unwrap())
     });
     assert_eq!(a_both, a_alone, "A alongside B");

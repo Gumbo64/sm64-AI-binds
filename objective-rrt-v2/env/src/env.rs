@@ -147,6 +147,8 @@ pub fn from_env_with(base: SearchConfig, get: Lookup) -> Result<SearchConfig> {
     e.eq1("OBRRT_KING_LANDING", &mut objectives.king_landing);
     e.string("OBRRT_BLJ_DETECTOR", &mut objectives.blj_detector);
     e.eq1("OBRRT_BLJ_SPOTS", &mut objectives.blj_spots);
+    e.string("OBRRT_SPEC", &mut objectives.spec);
+    e.string("OBRRT_SPEC_RUN", &mut objectives.spec_run);
     e.string("OBRRT_BLJ_SPOTS_CATALOG", &mut objectives.blj_spots_catalog);
     e.eq1("OBRRT_TWOSTAR", &mut objectives.twostar);
     e.eq1("OBRRT_STATIC_ID", &mut objectives.static_id);

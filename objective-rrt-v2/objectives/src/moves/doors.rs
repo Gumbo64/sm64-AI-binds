@@ -7,7 +7,7 @@
 //! depend on thread timing.
 
 use std::collections::HashMap;
-use std::sync::{OnceLock, RwLock};
+use std::sync::{Arc, RwLock};
 
 use obrrt_core::St;
 use obrrt_core::layout::{INTERACT_DOOR, INTERACT_WARP_DOOR};
@@ -21,9 +21,12 @@ struct Door {
     yaw: i32,
 }
 
-fn doors() -> &'static RwLock<HashMap<Zone, Vec<Door>>> {
-    static D: OnceLock<RwLock<HashMap<Zone, Vec<Door>>>> = OnceLock::new();
-    D.get_or_init(|| RwLock::new(HashMap::new()))
+#[derive(Default)]
+struct Doors(RwLock<HashMap<Zone, Vec<Door>>>);
+
+/// This thread's runtime's doors (the engine's own inside its threads).
+fn doors() -> Arc<Doors> {
+    obrrt_core::runtime::current().ext::<Doors>()
 }
 
 fn same(a: [f32; 3], b: [f32; 3]) -> bool {
@@ -43,11 +46,12 @@ pub fn observe(st: &St) {
     }
     let zone = st.zone();
     let known = |m: &HashMap<Zone, Vec<Door>>, p: [f32; 3]| m.get(&zone).is_some_and(|v| v.iter().any(|d| same(d.pos, p)));
-    if found.iter().all(|(p, _)| known(&doors().read().unwrap(), *p)) {
+    let doors = doors();
+    if found.iter().all(|(p, _)| known(&doors.0.read().unwrap(), *p)) {
         return;
     }
     let epoch = obrrt_core::mover::epoch();
-    let mut m = doors().write().unwrap();
+    let mut m = doors.0.write().unwrap();
     for (p, yaw) in found {
         if !known(&m, p) {
             m.entry(zone).or_default().push(Door { epoch, pos: p, yaw });
@@ -60,7 +64,8 @@ pub fn observe(st: &St) {
 /// distances by position, so the answer doesn't depend on insertion order.
 pub fn door_at(zone: Zone, target: [f32; 3]) -> Option<([f32; 3], i32)> {
     let now = obrrt_core::mover::epoch();
-    let m = doors().read().unwrap();
+    let doors = doors();
+    let m = doors.0.read().unwrap();
     let v = m.get(&zone)?;
     v.iter()
         .filter(|d| d.epoch < now)

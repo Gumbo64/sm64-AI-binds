@@ -26,7 +26,7 @@
 //!   dense collector (obrrt2: extra dense candidates).
 
 use std::collections::BTreeMap;
-use std::sync::{Mutex, OnceLock};
+use std::sync::Mutex;
 
 use obrrt_core::{GamePad, St};
 use rand::Rng;
@@ -44,9 +44,7 @@ pub struct Qd {
 }
 
 pub fn settings() -> Option<&'static Qd> {
-    static S: OnceLock<Option<Qd>> = OnceLock::new();
-    S.get_or_init(|| {
-        let cfg = obrrt_core::config::current();
+    obrrt_core::per_config!(Option<Qd>, |cfg| {
         if !cfg.research.qd {
             return None;
         }
@@ -277,13 +275,14 @@ struct Stats {
     met_bins_by_gamma: Vec<u64>,
 }
 
-fn stats() -> &'static Mutex<Stats> {
-    static S: OnceLock<Mutex<Stats>> = OnceLock::new();
-    S.get_or_init(Default::default)
+/// This thread's runtime's tallies (the engine's own inside its threads).
+fn stats() -> std::sync::Arc<Mutex<Stats>> {
+    obrrt_core::runtime::current().ext::<Mutex<Stats>>()
 }
 
 pub fn note(out: &Out, uniform: u64, elite: u64, added: u64) {
-    let mut s = stats().lock().unwrap();
+    let stats = stats();
+    let mut s = stats.lock().unwrap();
     s.attempts += 1;
     s.bins += out.bins as u64;
     s.picks += out.picks.len() as u64;
@@ -302,7 +301,8 @@ pub fn note(out: &Out, uniform: u64, elite: u64, added: u64) {
 /// summary.json's `ga_qd` block (None when off).
 pub fn summary() -> Option<serde_json::Value> {
     let q = settings()?;
-    let s = stats().lock().unwrap();
+    let stats = stats();
+    let s = stats.lock().unwrap();
     let n = s.attempts.max(1) as f64;
     Some(serde_json::json!({
         "grid": q.grid, "uniform": q.uniform, "k": q.k, "add": q.add, "fields": q.fields, "gammas": q.gammas,

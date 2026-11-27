@@ -204,7 +204,8 @@ pub fn plausible(obj: &dyn Objective, start: &St) -> Vec<usize> {
     let Some(m) = obrrt_core::mover::mover() else { return Vec::new() };
     let Some(target) = obj.steer_target(start) else { return Vec::new() };
     let mut out = Vec::new();
-    let mut s = stats().lock().unwrap();
+    let stats = stats();
+    let mut s = stats.lock().unwrap();
     let only = ONLY.lock().unwrap().clone();
     for p in 0..m.policies() {
         if only.as_ref().is_some_and(|o| !o.contains(&m.policy_name(p))) {
@@ -308,9 +309,9 @@ pub struct Stats {
     pub combo: BTreeMap<String, ComboStat>,
 }
 
-pub fn stats() -> &'static Mutex<Stats> {
-    static S: OnceLock<Mutex<Stats>> = OnceLock::new();
-    S.get_or_init(|| Mutex::new(Stats::default()))
+/// This thread's runtime's tallies (the engine's own inside its threads).
+pub fn stats() -> std::sync::Arc<Mutex<Stats>> {
+    obrrt_core::runtime::current().ext::<Mutex<Stats>>()
 }
 
 /// How a GA attempt's policy rollouts did.
@@ -329,7 +330,8 @@ pub struct Outcome<'a> {
 }
 
 pub fn record(o: &Outcome) {
-    let mut s = stats().lock().unwrap();
+    let stats = stats();
+    let mut s = stats.lock().unwrap();
     s.attempts += 1;
     let labels: Vec<String> = o.plans.iter().map(|p| p.label()).collect();
     for (pl, l) in o.plans.iter().zip(&labels) {
@@ -370,7 +372,8 @@ pub fn record(o: &Outcome) {
 /// The stats as JSON (summary.json's `move_ga`): per policy, and the 40
 /// combinations with the most lineage wins.
 pub fn stats_json() -> serde_json::Value {
-    let s = stats().lock().unwrap();
+    let stats = stats();
+    let s = stats.lock().unwrap();
     let policy: serde_json::Map<String, serde_json::Value> = s
         .policy
         .iter()
@@ -401,7 +404,8 @@ pub fn stats_json() -> serde_json::Value {
 /// One log line: per policy `name sim/pruned g0best/wins/lineage`, by
 /// lineage wins.
 pub fn stats_line() -> String {
-    let s = stats().lock().unwrap();
+    let stats = stats();
+    let s = stats.lock().unwrap();
     let mut v: Vec<(&String, &PolicyStat)> = s.policy.iter().collect();
     v.sort_by(|a, b| b.1.lineage_wins.cmp(&a.1.lineage_wins).then(a.0.cmp(b.0)));
     let parts: Vec<String> = v

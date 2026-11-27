@@ -13,8 +13,7 @@
 //! (when no rollout runs): what a round's rollouts see is then fixed by the
 //! rounds before it.
 
-use std::collections::HashSet;
-use std::sync::{Arc, OnceLock, RwLock};
+use std::sync::{Arc, OnceLock};
 
 use crate::{Arrival, GamePad, St};
 
@@ -86,40 +85,35 @@ pub fn mover() -> Option<&'static dyn Mover> {
     MOVER.get().map(|m| m.as_ref())
 }
 
-fn published_set() -> &'static RwLock<HashSet<(u16, u8)>> {
-    static P: OnceLock<RwLock<HashSet<(u16, u8)>>> = OnceLock::new();
-    P.get_or_init(|| RwLock::new(HashSet::new()))
-}
-
 /// Makes every zone whose static floors are stored so far visible to the
-/// mover ([`published`]). Call it only while no rollout runs (the engine
-/// does at each round's start; a single-threaded tool whenever it likes).
-/// Nothing happens without a registered mover.
+/// mover ([`published`]) in this thread's runtime ([`crate::runtime`]: the
+/// engine's, inside its threads). Call it only while no rollout runs (the
+/// engine does at each round's start; a single-threaded tool whenever it
+/// likes). Nothing happens without a registered mover.
 pub fn publish() {
     if MOVER.get().is_none() {
         return;
     }
     let zones = crate::geo::static_floor_zones();
-    let mut p = published_set().write().unwrap();
-    p.extend(zones);
-    EPOCH.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    crate::runtime::with(|rt| {
+        rt.published.write().unwrap().extend(zones);
+        rt.epoch.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    });
 }
-
-static EPOCH: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 /// How many times [`publish`] has run. A mover's own caches filled from
 /// states it sees can tag entries with the epoch they were added in and
 /// use only those from earlier epochs: the same round-boundary rule.
 pub fn epoch() -> u64 {
-    EPOCH.load(std::sync::atomic::Ordering::SeqCst)
+    crate::runtime::with(|rt| rt.epoch.load(std::sync::atomic::Ordering::SeqCst))
 }
 
 /// Whether `zone`'s cached geometry may be used by the mover.
 pub fn published(zone: (u16, u8)) -> bool {
-    published_set().read().unwrap().contains(&zone)
+    crate::runtime::with(|rt| rt.published.read().unwrap().contains(&zone))
 }
 
 /// Publishes `zone` directly (tests of synthetic geometry).
 pub fn publish_zone(zone: (u16, u8)) {
-    published_set().write().unwrap().insert(zone);
+    crate::runtime::with(|rt| rt.published.write().unwrap().insert(zone));
 }

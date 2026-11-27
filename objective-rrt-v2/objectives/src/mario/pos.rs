@@ -14,9 +14,8 @@ const RADIUS: f32 = 150.0;
 /// deep, and two thirds of them out of the water, so exploration in deep
 /// water (JRB, DDD) only ever pulled Mario along the top or out.
 pub fn swim_targets() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| {
-        let on = obrrt_core::config::current().objectives.swim_targets;
+    *obrrt_core::per_config!(bool, |cfg| {
+        let on = cfg.objectives.swim_targets;
         if on {
             // The floor under a point bounds its depth (geo::floor_below).
             obrrt_core::geo::want_static_floors();

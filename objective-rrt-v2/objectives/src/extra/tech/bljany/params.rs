@@ -6,8 +6,6 @@
 //! a `"changes"` log, and names the registry no longer reads are ignored).
 //! Names: the fields of [`Detector`].
 
-use std::sync::OnceLock;
-
 /// The thresholds [`super::spots`] classifies observed chain starts with.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Detector {
@@ -81,10 +79,9 @@ impl Detector {
 
 /// The run's thresholds (OBRRT_BLJ_DETECTOR, else the defaults).
 pub fn get() -> &'static Detector {
-    static D: OnceLock<Detector> = OnceLock::new();
-    D.get_or_init(|| {
+    obrrt_core::per_config!(Detector, |cfg| {
         let mut d = Detector::default();
-        if let Some(path) = &obrrt_core::config::current().objectives.blj_detector {
+        if let Some(path) = &cfg.objectives.blj_detector {
             match obrrt_core::sys::fs::read_to_string(path) {
                 Ok(t) => {
                     let used = d.apply(&parse_numbers(&t));

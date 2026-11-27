@@ -46,6 +46,37 @@ pub fn current() -> &'static SearchConfig {
     global()
 }
 
+/// A value derived from the running config ([`current`]), built once per config and call site and
+/// then served by reference: the engine-aware replacement for a `static OnceLock` that caches
+/// something parsed from a setting. Two engines with different configs each get their own value;
+/// a thread keeps the last one it asked for, so the hot path is a pointer compare.
+///
+/// `per_config!(T, |cfg| expr)`: `expr` builds the `T` from `cfg` (a `&SearchConfig`; `return` ends it); the result
+/// is `&'static T` (leaked, once per config: configs are few).
+#[macro_export]
+macro_rules! per_config {
+    ($t:ty, |$c:ident| $init:expr) => {{
+        static SITE: ::std::sync::OnceLock<::std::sync::Mutex<::std::collections::HashMap<usize, &'static $t>>> = ::std::sync::OnceLock::new();
+        ::std::thread_local! {
+            static LAST: ::std::cell::Cell<(usize, Option<&'static $t>)> = const { ::std::cell::Cell::new((0, None)) };
+        }
+        let cfg: &'static $crate::config::SearchConfig = $crate::config::current();
+        let key = cfg as *const $crate::config::SearchConfig as usize;
+        LAST.with(|l| match l.get() {
+            (k, Some(v)) if k == key => v,
+            _ => {
+                let mut m = SITE.get_or_init(Default::default).lock().unwrap();
+                let v: &'static $t = *m.entry(key).or_insert_with(|| {
+                    let $c: &$crate::config::SearchConfig = cfg;
+                    ::std::boxed::Box::leak(::std::boxed::Box::new((|| -> $t { $init })()))
+                });
+                l.set((key, Some(v)));
+                v
+            }
+        })
+    }};
+}
+
 /// The installed config; before any, the environment's (read once).
 pub fn global() -> &'static SearchConfig {
     let p = CURRENT.load(Ordering::Acquire);

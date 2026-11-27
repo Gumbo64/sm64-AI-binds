@@ -29,6 +29,10 @@ pub struct Config {
     /// under, so one process can run searches with different ones. None: the installed config
     /// ([`obrrt_core::config::install`]) at the engine's construction. `envconfig::from_env` fills it.
     pub search: Option<&'static obrrt_core::config::SearchConfig>,
+    /// The run-time state this engine owns (its position goal, what its mover has published, its door and
+    /// grid caches: [`obrrt_core::runtime`]); its threads run under it. None: the process-wide runtime, which
+    /// everything shared before. Give each of two engines in one process a [`obrrt_core::runtime::Runtime::new`].
+    pub runtime: Option<Arc<obrrt_core::runtime::Runtime>>,
     pub out_dir: String,
     pub seed: u64,
     pub minutes: f64,
@@ -109,6 +113,7 @@ impl Default for Config {
     fn default() -> Self {
         Config {
             search: None,
+            runtime: None,
             out_dir: "runs/obrrt".into(),
             seed: 1,
             minutes: 30.0,
@@ -169,10 +174,7 @@ fn goal_explore() -> bool {
 }
 
 fn goal_focus() -> (f64, f64, f64, f64) {
-    static S: std::sync::OnceLock<(f64, f64, f64, f64)> = std::sync::OnceLock::new();
-    *S.get_or_init(|| {
-        (obrrt_core::config::current().goal_focus.share.clamp(0.0, 1.0), 10.0, 0.5, 20.0)
-    })
+    (obrrt_core::config::current().goal_focus.share.clamp(0.0, 1.0), 10.0, 0.5, 20.0)
 }
 
 /// How far along the walkable path an approach move aims.
@@ -277,9 +279,16 @@ fn cell(st: &St) -> Cell {
     (st.level, st.area, st.stars, st.keys, st.coins, c(st.pos[0]), c(st.pos[1]), c(st.pos[2]), modal, fp)
 }
 
+/// Runs the calling thread under an engine's settings and run-time state until the guard drops.
+fn enter(sc: &'static obrrt_core::config::SearchConfig, rt: &Arc<obrrt_core::runtime::Runtime>) -> (obrrt_core::config::Scope, obrrt_core::runtime::Scope) {
+    (obrrt_core::config::scope(sc), obrrt_core::runtime::scope(rt.clone()))
+}
+
 pub struct Engine {
     /// The settings this engine's threads run under (`Config::search`).
     sc: &'static obrrt_core::config::SearchConfig,
+    /// The run-time state this engine's threads run under (`Config::runtime`).
+    rt: Arc<obrrt_core::runtime::Runtime>,
     /// Threads for the goal ranking in `index_frontier` (one per worker).
     index_pool: Option<rayon::ThreadPool>,
     pub cfg: Config,
@@ -461,6 +470,7 @@ impl Engine {
         cells.insert(cell(&root), vec![0]);
         let root_zone = root.zone();
         let sc = cfg.search.unwrap_or_else(obrrt_core::config::global);
+        let rt = cfg.runtime.clone().unwrap_or_else(|| obrrt_core::runtime::Runtime::global().clone());
         let dense = sc.dedup.dense_adds;
         let tree_cfg = crate::tree::TreeConfig {
             zone_lock: sc.zone.lock.then_some(root.level),
@@ -479,6 +489,7 @@ impl Engine {
         tree.nodes[0].save = Delta::new(0, crate::game::plain(&root_save).as_bytes(), &root_save);
         Ok(Engine {
             sc,
+            rt,
             index_pool,
             tree,
             pool: Pool::default(),
@@ -744,9 +755,9 @@ impl Engine {
         let items: Vec<u32> = self.tree.frontier.iter().chain(&wip_kept).copied().collect();
         let pre: Vec<Vec<Option<(f64, Option<[f32; 3]>)>>> = {
             let (tree, road, goals) = (&self.tree, self.road.as_ref(), &goals);
-            let sc = self.sc;
+            let (sc, rt) = (self.sc, &self.rt);
             let one = |&i: &u32| -> Vec<Option<(f64, Option<[f32; 3]>)>> {
-                let _scope = obrrt_core::config::scope(sc);
+                let _scope = enter(sc, rt);
                 if goals.is_empty() || skip(i) {
                     return Vec::new();
                 }
@@ -2170,7 +2181,7 @@ impl Engine {
     /// before this fix replayed a child of a state retired earlier in the
     /// replay (so a tree made by such a resume replays as it was run).
     pub fn resume(&mut self, dir: &str) -> Result<()> {
-        let _scope = obrrt_core::config::scope(self.sc);
+        let _scope = enter(self.sc, &self.rt);
         let data = fs::read(format!("{dir}/tree.bin"))?;
         let csv = fs::read_to_string(format!("{dir}/nodes.csv"))?;
         let header: Vec<&str> = csv.lines().next().unwrap_or("").split(',').collect();
@@ -2380,7 +2391,7 @@ impl Engine {
     /// across goals, then frontier states by progress and sooner frame, at least `sep` units apart from
     /// each other so the offer covers several branches. Imported nodes are never offered back.
     pub fn sync_candidates(&mut self, k: usize, sep: f32) -> Vec<u32> {
-        let _scope = obrrt_core::config::scope(self.sc);
+        let _scope = enter(self.sc, &self.rt);
         let mut out: Vec<u32> = Vec::new();
         let ok = |s: &Self, i: u32| i > 0 && (i as usize) < s.tree.nodes.len() && !s.tree.nodes[i as usize].retired && s.tree.nodes[i as usize].via != "sync" && !s.sync_sent.contains(&i);
         let far = |s: &Self, out: &[u32], i: u32| {
@@ -2429,7 +2440,7 @@ impl Engine {
     /// died or has an earlier state at its cell (the usual duplicate check). Added through the same
     /// bookkeeping as `merge_share`'s chain nodes.
     pub fn sync_import(&mut self, pads: &[GamePad], expect: Option<(u16, [f32; 3], (u8, i16))>) -> Result<SyncImport> {
-        let _scope = obrrt_core::config::scope(self.sc);
+        let _scope = enter(self.sc, &self.rt);
         use std::hash::{Hash, Hasher};
         let mut h = std::collections::hash_map::DefaultHasher::new();
         for p in pads {
@@ -2534,7 +2545,7 @@ impl Engine {
     }
 
     pub fn run(&mut self) -> Result<()> {
-        let _scope = obrrt_core::config::scope(self.sc);
+        let _scope = enter(self.sc, &self.rt);
         let begin = Instant::now();
         let mut last_report = Instant::now();
         let mut last_tune = self.total_frames;
@@ -2651,7 +2662,7 @@ impl Engine {
             let tree = &self.tree;
             let seeds: Vec<u64> = plans.iter().map(|_| self.rng.random()).collect();
             let workers = &self.workers;
-            let sc = self.sc;
+            let (sc, rt) = (self.sc, &self.rt);
             let params = crate::ga::GaParams { scale: self.cfg.ga_scale, pink: self.cfg.ga_pink };
             let dense = self.dense;
             let replay_max = self.tree.sparse.as_ref().map_or(0, |sp| sp.cap);
@@ -2661,7 +2672,7 @@ impl Engine {
                 .par_iter()
                 .zip(seeds.par_iter())
                 .map(|(plan, seed)| {
-                    let _scope = obrrt_core::config::scope(sc);
+                    let _scope = enter(sc, rt);
                     let mut w = loop {
                         if let Some(w) = workers.iter().find_map(|w| w.try_lock().ok()) {
                             break w;

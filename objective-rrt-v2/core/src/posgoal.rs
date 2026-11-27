@@ -3,6 +3,7 @@
 //! (`Engine::plan_bubble`). Without nodes inside, or without a bubble, nothing changes.
 
 use std::sync::RwLock;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PosGoal {
@@ -18,57 +19,99 @@ pub const MIN_RADIUS: f32 = 50.0;
 pub const MAX_RADIUS: f32 = 20000.0;
 pub const DEFAULT_RADIUS: f32 = 300.0;
 
-static GOAL: RwLock<Option<PosGoal>> = RwLock::new(None);
+/// One position goal and its strength: what a [`crate::runtime::Runtime`] holds.
+pub struct GoalState {
+    goal: RwLock<Option<PosGoal>>,
+    // The goal's strength, set by the page (SM64Coin web miner: the Mine page's settings). Without a goal nothing here is read, so
+    // native miners are unchanged.
+    weight: AtomicU64,
+    share: AtomicU64,
+}
+
+impl Default for GoalState {
+    fn default() -> Self {
+        GoalState { goal: RwLock::new(None), weight: AtomicU64::new(0), share: AtomicU64::new(0) }
+    }
+}
+
+impl GoalState {
+    /// Sets (or clears) the goal.
+    pub fn set(&self, g: Option<PosGoal>) {
+        *self.goal.write().unwrap() = g;
+    }
+
+    /// The current goal, if any.
+    pub fn get(&self) -> Option<PosGoal> {
+        *self.goal.read().unwrap()
+    }
+
+    /// The pool weight of the goal's objective (`Mario::UserGoal`) among the pool's entries (a regular objective weighs 1):
+    /// 0 (unset) reads `OBRRT_POSGOAL_WEIGHT`, default 10.
+    pub fn weight(&self) -> f64 {
+        let w = f64::from_bits(self.weight.load(Ordering::Relaxed));
+        if w > 0.0 {
+            w
+        } else {
+            crate::sys::env::var("OBRRT_POSGOAL_WEIGHT").ok().and_then(|v| v.parse().ok()).unwrap_or(10.0)
+        }
+    }
+
+    pub fn set_weight(&self, w: f64) {
+        self.weight.store(w.max(0.0).to_bits(), Ordering::Relaxed);
+    }
+
+    /// The share of plans (0..1) whose base state is drawn from inside the bubble (when it holds nodes);
+    /// `OBRRT_POSGOAL_SHARE`, default 0 (the web miner sets it from its bubble-strength setting).
+    pub fn share(&self) -> f64 {
+        let w = f64::from_bits(self.share.load(Ordering::Relaxed));
+        if w > 0.0 {
+            w.min(1.0)
+        } else {
+            crate::sys::env::var("OBRRT_POSGOAL_SHARE").ok().and_then(|v| v.parse().ok()).unwrap_or(0.0f64).clamp(0.0, 1.0)
+        }
+    }
+
+    pub fn set_share(&self, s: f64) {
+        self.share.store(s.clamp(0.0, 1.0).to_bits(), Ordering::Relaxed);
+    }
+}
+
+// The module-level functions are thin wrappers over this thread's runtime's goal ([`crate::runtime::with`]): the engine's inside
+// its threads, the process-wide one elsewhere.
 
 /// Sets (or clears) the goal.
 pub fn set(g: Option<PosGoal>) {
-    *GOAL.write().unwrap() = g;
+    crate::runtime::with(|rt| rt.goal.set(g));
 }
 
 /// The current goal, if any.
 pub fn get() -> Option<PosGoal> {
-    *GOAL.read().unwrap()
+    crate::runtime::with(|rt| rt.goal.get())
 }
 
-// The goal's strength, set by the page (SM64Coin web miner: the Mine page's settings). Without a goal nothing here is read, so
-// native miners are unchanged.
-use std::sync::atomic::{AtomicU64, Ordering};
-static WEIGHT: AtomicU64 = AtomicU64::new(0);
-static SHARE: AtomicU64 = AtomicU64::new(0);
-
-/// The pool weight of the goal's objective (`Mario::UserGoal`) among the pool's entries (a regular objective weighs 1):
-/// 0 (unset) reads `OBRRT_POSGOAL_WEIGHT`, default 10.
+/// See [`GoalState::weight`].
 pub fn weight() -> f64 {
-    let w = f64::from_bits(WEIGHT.load(Ordering::Relaxed));
-    if w > 0.0 {
-        w
-    } else {
-        crate::sys::env::var("OBRRT_POSGOAL_WEIGHT").ok().and_then(|v| v.parse().ok()).unwrap_or(10.0)
-    }
-}
-pub fn set_weight(w: f64) {
-    WEIGHT.store(w.max(0.0).to_bits(), Ordering::Relaxed);
+    crate::runtime::with(|rt| rt.goal.weight())
 }
 
-/// The share of plans (0..1) whose base state is drawn from inside the bubble (when it holds nodes);
-/// `OBRRT_POSGOAL_SHARE`, default 0 (the web miner sets it from its bubble-strength setting).
-pub fn share() -> f64 {
-    let w = f64::from_bits(SHARE.load(Ordering::Relaxed));
-    if w > 0.0 {
-        w.min(1.0)
-    } else {
-        crate::sys::env::var("OBRRT_POSGOAL_SHARE").ok().and_then(|v| v.parse().ok()).unwrap_or(0.0f64).clamp(0.0, 1.0)
-    }
+pub fn set_weight(w: f64) {
+    crate::runtime::with(|rt| rt.goal.set_weight(w));
 }
+
+/// See [`GoalState::share`].
+pub fn share() -> f64 {
+    crate::runtime::with(|rt| rt.goal.share())
+}
+
 pub fn set_share(s: f64) {
-    SHARE.store(s.clamp(0.0, 1.0).to_bits(), Ordering::Relaxed);
+    crate::runtime::with(|rt| rt.goal.set_share(s));
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// One test (the goal is a process-wide static): no goal and no setting change nothing; the strength is what was set.
+    /// One test (it uses the process-wide runtime): no goal and no setting change nothing; the strength is what was set.
     #[test]
     fn goal_and_strength() {
         assert_eq!(get(), None);

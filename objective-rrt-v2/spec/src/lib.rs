@@ -22,7 +22,7 @@ pub mod model;
 
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 
 use anyhow::{Context, Result, anyhow, bail};
 use obrrt_core::{Arrival, Eta, GaBudget, Generator, Mem, Objective, Precision, St};
@@ -562,23 +562,24 @@ pub fn load(path: &str, run_dir: Option<&str>) -> Result<Vec<Spec>> {
     Ok(out)
 }
 
-/// The specs named by `OBRRT_SPEC` (node targets from `OBRRT_SPEC_RUN`),
-/// loaded once; None when unset.
+/// The specs the running config names (`OBRRT_SPEC`, node targets from `OBRRT_SPEC_RUN`),
+/// loaded once per config; None when unset.
 pub fn from_env() -> Result<Option<&'static [Arc<Spec>]>> {
-    static SPECS: OnceLock<Option<Vec<Arc<Spec>>>> = OnceLock::new();
-    if SPECS.get().is_none() {
-        let v = match obrrt_core::sys::env::var("OBRRT_SPEC") {
-            Ok(p) if !p.is_empty() => {
-                let run = obrrt_core::sys::env::var("OBRRT_SPEC_RUN").ok();
-                let specs = load(&p, run.as_deref())?;
-                eprintln!("OBRRT_SPEC: {} spec objectives from {p}: {}", specs.len(), specs.iter().map(|s| s.label()).collect::<Vec<_>>().join(", "));
-                Some(specs.into_iter().map(Arc::new).collect())
-            }
-            _ => None,
-        };
-        let _ = SPECS.set(v);
+    let loaded = obrrt_core::per_config!(std::result::Result<Option<Vec<Arc<Spec>>>, String>, |cfg| {
+        match cfg.objectives.spec.as_deref().filter(|p| !p.is_empty()) {
+            Some(p) => load(p, cfg.objectives.spec_run.as_deref())
+                .map(|specs| {
+                    eprintln!("OBRRT_SPEC: {} spec objectives from {p}: {}", specs.len(), specs.iter().map(|s| s.label()).collect::<Vec<_>>().join(", "));
+                    Some(specs.into_iter().map(Arc::new).collect())
+                })
+                .map_err(|e| format!("{e:#}")),
+            None => Ok(None),
+        }
+    });
+    match loaded {
+        Ok(v) => Ok(v.as_deref()),
+        Err(e) => Err(anyhow::anyhow!("{e}")),
     }
-    Ok(SPECS.get().unwrap().as_deref())
 }
 
 /// The specs that apply at `b` (empty with `OBRRT_SPEC` unset). For oss2's

@@ -8,7 +8,7 @@
 //! `None` and moves fall back to state-only rules.
 
 use std::collections::HashMap;
-use std::sync::{Arc, OnceLock, RwLock};
+use std::sync::{Arc, RwLock};
 
 use obrrt_core::St;
 use obrrt_core::geo::Tri;
@@ -194,9 +194,12 @@ impl Grid {
 
 type Zone = (u16, u8);
 
-fn grids() -> &'static RwLock<HashMap<Zone, Option<Arc<Grid>>>> {
-    static G: OnceLock<RwLock<HashMap<Zone, Option<Arc<Grid>>>>> = OnceLock::new();
-    G.get_or_init(|| RwLock::new(HashMap::new()))
+#[derive(Default)]
+struct Grids(RwLock<HashMap<Zone, Option<Arc<Grid>>>>);
+
+/// This thread's runtime's grids (the engine's own inside its threads).
+fn grids() -> Arc<Grids> {
+    obrrt_core::runtime::current().ext::<Grids>()
 }
 
 /// Installs a grid for a zone (tests).
@@ -206,7 +209,7 @@ pub fn insert(zone: Zone, tris: &[Tri]) {
 
 /// Installs a grid with walls for a zone (tests).
 pub fn insert_with_walls(zone: Zone, tris: &[Tri], walls: &[Tri]) {
-    grids().write().unwrap().insert(zone, Some(Arc::new(Grid::build(tris, walls))));
+    grids().0.write().unwrap().insert(zone, Some(Arc::new(Grid::build(tris, walls))));
     obrrt_core::mover::publish_zone(zone);
 }
 
@@ -214,9 +217,10 @@ pub fn insert_with_walls(zone: Zone, tris: &[Tri], walls: &[Tri]) {
 /// first time one is there.
 pub fn with_grid<R>(zone: Zone, f: impl FnOnce(&Grid) -> R) -> Option<R> {
     thread_local! {
-        static LAST: std::cell::RefCell<Option<(Zone, Arc<Grid>)>> = const { std::cell::RefCell::new(None) };
+        static LAST: std::cell::RefCell<Option<(usize, Zone, Arc<Grid>)>> = const { std::cell::RefCell::new(None) };
     }
-    let hit = LAST.with(|l| l.borrow().as_ref().filter(|(z, _)| *z == zone).map(|(_, g)| g.clone()));
+    let rt = obrrt_core::runtime::with(|rt| rt.id());
+    let hit = LAST.with(|l| l.borrow().as_ref().filter(|(r, z, _)| *r == rt && *z == zone).map(|(_, _, g)| g.clone()));
     let g = match hit {
         Some(g) => g,
         None => {
@@ -226,17 +230,18 @@ pub fn with_grid<R>(zone: Zone, f: impl FnOnce(&Grid) -> R) -> Option<R> {
             if !obrrt_core::mover::published(zone) {
                 return None;
             }
-            let known = grids().read().unwrap().get(&zone).cloned().flatten();
+            let grids = grids();
+            let known = grids.0.read().unwrap().get(&zone).cloned().flatten();
             let g = match known {
                 Some(g) => g,
                 None => {
                     let tris = obrrt_core::geo::static_floors(zone)?;
                     let walls = obrrt_core::geo::static_walls(zone).unwrap_or_else(|| Vec::new().into());
                     let g = Arc::new(Grid::build(&tris, &walls));
-                    grids().write().unwrap().entry(zone).or_insert_with(|| Some(g.clone())).clone().unwrap_or(g)
+                    grids.0.write().unwrap().entry(zone).or_insert_with(|| Some(g.clone())).clone().unwrap_or(g)
                 }
             };
-            LAST.with(|l| *l.borrow_mut() = Some((zone, g.clone())));
+            LAST.with(|l| *l.borrow_mut() = Some((rt, zone, g.clone())));
             g
         }
     };
