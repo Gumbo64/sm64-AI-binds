@@ -5,7 +5,7 @@
 //! that needs the root state.
 use anyhow::Result;
 use obrrt_core::St;
-use obrrt_core::config::{FitnessKind, KinUnit, ReplayMax, SearchConfig};
+use obrrt_core::config::{KinUnit, ReplayMax, SearchConfig};
 use std::sync::atomic::Ordering::Relaxed;
 
 use crate::Config;
@@ -17,14 +17,12 @@ pub fn from_env(cfg: &mut Config) -> Result<()> {
     apply_globals(obrrt_core::config::install(sc), cfg)
 }
 
-/// Puts `sc` into `cfg` and the search's global switches (tree and engine statics, dense adds,
-/// near seeds, backward chaining). Call before the engine is built.
+/// Puts `sc` into `cfg` and the search's global switches (tree and engine statics, dense adds).
+/// Call before the engine is built.
 pub fn apply_globals(sc: &SearchConfig, cfg: &mut Config) -> Result<()> {
-    let (b, s, ch, d, z, g, k, ga, p) = (&sc.budget, &sc.sampler, &sc.chain, &sc.dedup, &sc.zone, &sc.goal_focus, &sc.kin, &sc.ga, &sc.priors);
-    let _ = (g, p);
+    let (b, s, d, k, ga) = (&sc.budget, &sc.sampler, &sc.dedup, &sc.kin, &sc.ga);
 
     // budget
-    cfg.ga_scale = b.ga_scale;
     cfg.max_frames = b.max_frames;
     if let Some(mb) = b.mem_mb {
         cfg.mem_budget = mb * 1_000_000;
@@ -32,53 +30,14 @@ pub fn apply_globals(sc: &SearchConfig, cfg: &mut Config) -> Result<()> {
     cfg.round_plans = b.round_plans;
 
     // GA
-    cfg.fitness = match ga.fitness {
-        FitnessKind::Met => crate::ga::Fitness::Met,
-        FitnessKind::Steps => crate::ga::Fitness::Steps,
-    };
-    cfg.ga_new_ops = ga.new_ops;
     cfg.ga_pink = ga.pink;
-    cfg.ga_per_objective_budget = ga.per_objective_budget;
 
     // sampler
-    cfg.sampler_rate = s.rate_sampler;
-    cfg.rate = crate::pool::RateParams {
-        floor: 0.15,
-        cap: 4.0,
-        tau: 50_000_000.0,
-        prior_frames: s.rate.prior_frames,
-        nostart_frames: 5_000.0,
-        hier: s.rate.hier,
-        kind_scale: s.rate.kind_scale,
-        nostart_skip: s.rate.nostart_skip,
-        skip_budget: s.rate.skip_budget,
-        route: s.rate.route,
-        novel: s.rate.novel,
-    };
     cfg.pick_by_b = s.pick_by_b;
     cfg.new_eligible = s.new_eligible;
-    cfg.rrt_star = s.rrt_star;
-    cfg.arrival = s.arrival.on;
-    cfg.arrival_pace = s.arrival.pace;
-    cfg.arrival_band = s.arrival.band;
-
-    // chain
-    cfg.chain_route = ch.route;
-
-    // dedup, kinship
-    cfg.soft_dedup = d.soft_dedup;
-    cfg.rebuild_check = d.sparse_check;
     cfg.kinship_mult = k.mult;
 
-    // zones, grafts, replays
-    cfg.reroute = z.reroute;
-    cfg.reroute_schema = z.reroute_schema.clone();
-    cfg.polish = z.polish;
-    cfg.zone_share = z.share;
-    cfg.replay_budget = z.replay_budget;
-
     // The tree's and the engine's process-wide switches.
-    crate::engine::STARSET.store(d.starset_key, Relaxed);
     if let Some(w) = d.star_window {
         crate::tree::STAR_WINDOW.store(w.max(1), Relaxed);
     }
@@ -130,9 +89,6 @@ pub fn apply_globals(sc: &SearchConfig, cfg: &mut Config) -> Result<()> {
     if let Some(c) = k.cap {
         crate::tree::KIN_CAP.store(c, Relaxed);
     }
-    if d.near.seed {
-        crate::near::configure(Some(crate::near::Settings { radius: d.near.radius, p: d.near.p, per_key: 32 }));
-    }
     Ok(())
 }
 
@@ -154,30 +110,5 @@ pub fn after_root(root: &St) {
             crate::tree::STAR_WINDOW.store(99, Relaxed);
         }
         println!("zone lock: level {}", root.level);
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// `SearchConfig::default()` carries the engine's defaults: applying it changes nothing.
-    #[test]
-    fn default_config_is_the_engines_default() {
-        let before = Config::default();
-        let mut cfg = Config::default();
-        apply_globals(&SearchConfig::default(), &mut cfg).unwrap();
-        // Config has no PartialEq: compare field by field through a debug-like projection.
-        macro_rules! same { ($($f:ident),*) => { $( assert_eq!(format!("{:?}", before.$f), format!("{:?}", cfg.$f), stringify!($f)); )* } }
-        same!(ga_scale, ga_new_ops, ga_pink, ga_per_objective_budget, rrt_star, arrival, arrival_pace, arrival_band,
-            round_plans, max_frames, soft_dedup,
-            mem_budget, pick_by_b, new_eligible,
-            reroute, reroute_schema, polish, zone_share, zone_share_k,
-            replay_budget, chain_route, chain_follow, sampler_rate, node_cap,
-            kinship_mult, rebuild_check);
-        assert_eq!(format!("{:?}", before.fitness), format!("{:?}", cfg.fitness));
-        let (a, b) = (before.rate, cfg.rate);
-        assert_eq!((a.floor, a.cap, a.tau, a.prior_frames, a.nostart_frames, a.hier, a.kind_scale, a.nostart_skip, a.skip_budget, a.route, a.novel),
-            (b.floor, b.cap, b.tau, b.prior_frames, b.nostart_frames, b.hier, b.kind_scale, b.nostart_skip, b.skip_budget, b.route, b.novel));
     }
 }

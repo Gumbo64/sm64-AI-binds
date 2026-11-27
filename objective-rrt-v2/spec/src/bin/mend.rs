@@ -1468,7 +1468,7 @@ fn main() -> Result<()> {
     if obrrt_core::sys::env::var_os("OBRRT_MOVE_GA_N").is_none() {
         obrrt_search::movegenome::set_budget(6);
     }
-    let params = GaParams { scale: 1.0, fitness: obrrt_search::ga::Fitness::Steps, new_ops: true, pink: 0.0, per_objective_budget: false };
+    let params = GaParams { scale: 1.0, pink: 0.0 };
     let slots: Vec<Mutex<(Worker, SM64Game)>> = (0..threads).map(|_| Ok(Mutex::new((Worker::new(&gen_)?, gen_.create_game()?)))).collect::<Result<_>>()?;
     if let Some(e) = probe_rep {
         return probe_repair(&slots, &route, first, e, params, cam, seed, &out);

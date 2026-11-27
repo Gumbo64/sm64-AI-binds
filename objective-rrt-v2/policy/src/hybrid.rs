@@ -536,8 +536,8 @@ pub fn worker_seeded(
     pink: f64,
     seed_it: bool,
 ) -> Result<Vec<Vec<crate::bench::Res>>> {
-    use obrrt_search::ga::{Fitness, GaParams, Worker};
-    let params = GaParams { scale, fitness: Fitness::Steps, new_ops: true, pink, per_objective_budget: false };
+    use obrrt_search::ga::{GaParams, Worker};
+    let params = GaParams { scale, pink };
     let n = pb.cases.len() * seeds as usize;
     let next = std::sync::atomic::AtomicUsize::new(0);
     let out: Vec<std::sync::Mutex<Option<crate::bench::Res>>> = (0..n).map(|_| std::sync::Mutex::new(None)).collect();

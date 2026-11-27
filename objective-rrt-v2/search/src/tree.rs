@@ -162,10 +162,6 @@ pub struct NodeStats {
     pub rate_y: f64,
     pub rate_f: f64,
     pub rate_t: u64,
-    /// The learned model's view of the state (`OBRRT_MODEL`, model.rs): its
-    /// own when its attempt's worker scored it, else its parent's. None
-    /// when the model is off.
-    pub model: Option<std::sync::Arc<crate::model::NodeModel>>,
 }
 
 pub struct Node {
@@ -364,7 +360,7 @@ impl Tree {
             st,
             save,
             via,
-            stats: NodeStats { backoff: 1.0, model: self.nodes[parent as usize].stats.model.clone(), ..Default::default() },
+            stats: NodeStats { backoff: 1.0, ..Default::default() },
             retired: false,
             made_by: None,
             dominated: false,

@@ -42,7 +42,7 @@ pub fn summarize(pb: &Problem, label: &str, rs: &[Res]) -> serde_json::Value {
 #[cfg(feature = "ga")]
 pub mod ga {
     use super::*;
-    use obrrt_search::ga::{Fitness, GaParams, Worker};
+    use obrrt_search::ga::{GaParams, Worker};
     use rand::SeedableRng;
     use rand::rngs::SmallRng;
     use sm64_binds::SM64GameGenerator;
@@ -50,7 +50,7 @@ pub mod ga {
     /// One GA search per (case, seed): `scale` multiplies the generations,
     /// `pink` = 1 is the pure pink-noise GA, 0 the overlay GA (gabase).
     pub fn baseline(gg: &SM64GameGenerator, pb: &Problem, threads: usize, seeds: u64, scale: f64, pink: f64) -> Result<Vec<Vec<Res>>> {
-        let params = GaParams { scale, fitness: Fitness::Steps, new_ops: true, pink, per_objective_budget: false };
+        let params = GaParams { scale, pink };
         let n = pb.cases.len() * seeds as usize;
         let next = std::sync::atomic::AtomicUsize::new(0);
         let out: Vec<std::sync::Mutex<Option<Res>>> = (0..n).map(|_| std::sync::Mutex::new(None)).collect();

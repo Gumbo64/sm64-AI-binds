@@ -1035,7 +1035,7 @@ fn main() -> Result<()> {
     let threads = rayon::current_num_threads();
     let workers: Vec<Mutex<Worker>> = (0..threads).map(|_| Ok(Mutex::new(Worker::new(&game_gen)?))).collect::<Result<_>>()?;
     let games: Vec<Mutex<sm64_binds::SM64Game>> = (0..threads).map(|_| Ok(Mutex::new(game_gen.create_game()?))).collect::<Result<_>>()?;
-    let params = GaParams { scale: 1.0, fitness: obrrt_search::ga::Fitness::Steps, new_ops: true, pink: 0.0, per_objective_budget: false };
+    let params = GaParams { scale: 1.0, pink: 0.0 };
 
     // The start.
     let mut game = game_gen.create_game()?;

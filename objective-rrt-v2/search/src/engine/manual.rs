@@ -154,9 +154,6 @@ impl Engine {
             self.modal_queue.push(id);
         }
         self.cells.entry(c).or_default().push(id);
-        if let Some(rr) = self.rr.as_mut() {
-            rr.note(id, &self.tree.nodes[id as usize].st, &c, &self.tree, &self.hot, self.cfg.reroute_margin, 0);
-        }
         self.tree.gen_step[id as usize] = true;
         self.sync_sent.insert(id);
         self.manual.boost.insert(id, weight);

@@ -6,7 +6,7 @@
 //! `OBRRT_GA_SCALE`, `OBRRT_GA_NEW`, `OBRRT_PINK`, `OBRRT_GA_BUDGET`
 //! (read as obrrt2 and goalbench read them, same defaults).
 
-use obrrt_search::ga::{Fitness, GaParams};
+use obrrt_search::ga::GaParams;
 use objective_scattershot::noise::Variant;
 
 /// Which states of a GA expansion are offered to the archive.
@@ -87,14 +87,7 @@ fn env<T: std::str::FromStr>(name: &str) -> Option<T> {
 /// obrrt2's GA parameters: `Config::default` in search/src/engine.rs with
 /// run/src/main.rs's environment switches (as run/src/goalbench.rs reads them).
 pub fn obrrt2_ga_params() -> GaParams {
-    let get = |k: &str| std::env::var(k).ok();
-    GaParams {
-        scale: env("OBRRT_GA_SCALE").unwrap_or(3.0),
-        fitness: Fitness::Steps,
-        new_ops: get("OBRRT_GA_NEW").is_none_or(|v| v == "1"),
-        pink: env("OBRRT_PINK").unwrap_or(0.0),
-        per_objective_budget: get("OBRRT_GA_BUDGET").is_some_and(|v| v == "1"),
-    }
+    GaParams { scale: 3.0, pink: env("OBRRT_PINK").unwrap_or(0.0) }
 }
 
 impl Config {

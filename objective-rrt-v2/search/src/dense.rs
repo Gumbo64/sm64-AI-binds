@@ -141,16 +141,12 @@ pub fn settings() -> Option<Settings> {
 pub fn dkey(st: &St, grid: f32) -> u64 {
     let c = |v: f32| (v / grid).floor() as i32;
     let modal = if st.in_dialog() { st.dialog } else if st.in_save_menu() { -2 } else if st.act_select { -3 } else { -1 };
-    let set = if crate::engine::STARSET.load(std::sync::atomic::Ordering::Relaxed) { st.progress_set() } else { 0 };
+    let set = st.progress_set();
     let mut h = std::collections::hash_map::DefaultHasher::new();
     std::hash::Hash::hash(
         &(st.level, st.area, st.stars, st.keys, st.coins, c(st.pos[0]), c(st.pos[1]), c(st.pos[2]), modal, st.red_coins, st.holding, set),
         &mut h,
     );
-    // OBRRT_CELL_MOTION (engine::motion): off, the key is unchanged.
-    if let Some(m) = crate::engine::motion(st) {
-        std::hash::Hash::hash(&m, &mut h);
-    }
     std::hash::Hasher::finish(&h)
 }
 

@@ -4,7 +4,7 @@
 
 use anyhow::Result;
 use obrrt_gp::problems::load;
-use obrrt_search::ga::{Fitness, GaParams, Worker};
+use obrrt_search::ga::{GaParams, Worker};
 use rand::SeedableRng;
 use rand::rngs::SmallRng;
 use sm64_binds::SM64GameGenerator;
@@ -20,7 +20,7 @@ fn main() -> Result<()> {
     let pb = load(&args[2], ".", &gg, false)?;
     let threads: usize = args.get(3).map_or(Ok(4), |s| s.parse())?;
     let seeds: u64 = args.get(4).map_or(Ok(1), |s| s.parse())?;
-    let params = GaParams { scale: 3.0, fitness: Fitness::Steps, new_ops: true, pink: 0.0, per_objective_budget: false };
+    let params = GaParams { scale: 3.0, pink: 0.0 };
     let n = pb.cases.len() * seeds as usize;
     let next = std::sync::atomic::AtomicUsize::new(0);
     let out: Vec<std::sync::Mutex<Option<(Option<usize>, u64)>>> = (0..n).map(|_| std::sync::Mutex::new(None)).collect();

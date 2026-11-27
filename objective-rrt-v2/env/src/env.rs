@@ -79,62 +79,25 @@ impl E<'_> {
 pub fn from_env_with(base: SearchConfig, get: Lookup) -> Result<SearchConfig> {
     let e = E(get);
     let mut c = base;
-    let SearchConfig { budget, sampler, chain, dedup, zone, goal_focus, kin, ga, priors, objectives, stop, research } = &mut c;
+    let SearchConfig { budget, sampler, dedup, zone, goal_focus, kin, ga, priors, objectives, stop, research } = &mut c;
 
-    // budget
-    e.strict("OBRRT_GA_SCALE", &mut budget.ga_scale)?;
     e.strict_opt("OBRRT_MAX_FRAMES", &mut budget.max_frames)?;
     e.strict_opt("OBRRT_MEM_MB", &mut budget.mem_mb)?;
     e.strict("OBRRT_ROUND", &mut budget.round_plans)?;
 
-    // sampler
-    match e.get("OBRRT_SAMPLER").as_deref() {
-        Some("rate") => sampler.rate_sampler = true,
-        Some("decay") => sampler.rate_sampler = false,
-        None => {}
-        Some(v) => bail!("OBRRT_SAMPLER: rate or decay, not {v}"),
-    }
-    let r = &mut sampler.rate;
-    e.strict("OBRRT_RATE_PRIOR", &mut r.prior_frames)?;
-    e.strict("OBRRT_RATE_KIND_SCALE", &mut r.kind_scale)?;
-    e.strict("OBRRT_RATE_ROUTE", &mut r.route)?;
-    e.strict("OBRRT_RATE_NOVEL", &mut r.novel)?;
-    match e.get("OBRRT_RATE_MODE").as_deref() {
-        Some("hier") => r.hier = true,
-        Some("flat") | None => {}
-        Some(v) => bail!("OBRRT_RATE_MODE: hier or flat, not {v}"),
-    }
-    e.eq1("OBRRT_RATE_NOSTART_SKIP", &mut r.nostart_skip);
-    e.strict("OBRRT_RATE_SKIP_BUDGET", &mut r.skip_budget)?;
     e.eq1("OBRRT_PICK_BY_B", &mut sampler.pick_by_b);
     e.eq1("OBRRT_NEW_ELIGIBLE", &mut sampler.new_eligible);
-    e.on("OBRRT_STAR", &mut sampler.rrt_star);
-    let a = &mut sampler.arrival;
-    e.on("OBRRT_ARRIVAL", &mut a.on);
-    e.strict("OBRRT_ARRIVAL_PACE", &mut a.pace)?;
-    e.strict_opt("OBRRT_ARRIVAL_BAND", &mut a.band)?;
 
-    // chain
-    match e.get("OBRRT_CHAIN").as_deref() {
-        Some("route") => chain.route = true,
-        Some("stack") => chain.route = false,
-        None => {}
-        Some(v) => bail!("OBRRT_CHAIN: route or stack, not {v}"),
-    }
 
-    // dedup
-    e.eq1("OBRRT_SOFT_DEDUP", &mut dedup.soft_dedup);
     e.eq1("OBRRT_STARSET_KEY", &mut dedup.starset_key);
     // (a value that does not parse is ignored, as the tree's setting always did)
     e.lenient_opt("OBRRT_STAR_WINDOW", &mut dedup.star_window);
     e.eq1("OBRRT_KEEP_WIP", &mut dedup.keep_wip);
-    e.on("OBRRT_CELL_MOTION", &mut dedup.cell_motion);
     match e.get("OBRRT_REPLAY_MAX").as_deref() {
         Some("off") => dedup.replay_max = ReplayMax::Off,
         Some(v) => dedup.replay_max = ReplayMax::Frames(v.parse().with_context(|| format!("OBRRT_REPLAY_MAX={v}"))?),
         None => {}
     }
-    e.strict("OBRRT_SPARSE_CHECK", &mut dedup.sparse_check)?;
     let d = &mut dedup.dense;
     if let Some(a) = e.get("OBRRT_ADD") {
         d.add = (!a.is_empty() && a != "none").then_some(a);
@@ -158,27 +121,11 @@ pub fn from_env_with(base: SearchConfig, get: Lookup) -> Result<SearchConfig> {
     if let Some(v) = e.get("OBRRT_DENSE_AIR") {
         d.air = v != "0";
     }
-    let n = &mut dedup.near;
-    e.on("OBRRT_NEAR_SEED", &mut n.seed);
-    e.strict("OBRRT_NEAR_R", &mut n.radius)?;
-    e.strict("OBRRT_NEAR_P", &mut n.p)?;
 
     // zone
     e.eq1("OBRRT_ZONE_LOCK", &mut zone.lock);
     if let Some(v) = e.get("OBRRT_ZONE_PATH") {
         zone.path = v;
-    }
-    e.on("OBRRT_ZONE_SHARE", &mut zone.share);
-    zone.donor_sample = e.get("OBRRT_ZONE_SHARE_DONOR").is_some_and(|v| v == "sample");
-    e.eq1("OBRRT_ZONE_SHARE_STATS", &mut zone.share_stats);
-    e.on("OBRRT_REROUTE", &mut zone.reroute);
-    e.string("OBRRT_REROUTE_SCHEMA", &mut zone.reroute_schema);
-    e.strict("OBRRT_POLISH", &mut zone.polish)?;
-    if let Some(v) = e.get("OBRRT_REPLAY_BUDGET") {
-        let f: f64 = v.parse().with_context(|| format!("OBRRT_REPLAY_BUDGET={v}"))?;
-        if f > 0.0 {
-            zone.replay_budget = Some(f);
-        }
     }
 
     // goal focus
@@ -188,14 +135,6 @@ pub fn from_env_with(base: SearchConfig, get: Lookup) -> Result<SearchConfig> {
     if let Some(f) = e.get("OBRRT_STALL_ETA").and_then(|v| v.parse::<f64>().ok()).filter(|&f| f > 0.0) {
         goal_focus.stall_eta = Some(f);
     }
-    let p = &mut goal_focus.parent_window;
-    if let Some(v) = e.get("OBRRT_PARENT_WINDOW").and_then(|v| v.parse::<f64>().ok()) {
-        p.share = Some(v);
-    }
-    e.lenient("OBRRT_PARENT_WINDOW_MAX", &mut p.max);
-    e.lenient("OBRRT_PARENT_WINDOW_FRAMES", &mut p.frames);
-    e.lenient("OBRRT_PARENT_WINDOW_POP", &mut p.pop);
-    e.lenient("OBRRT_PARENT_WINDOW_HORIZONS", &mut p.horizons);
 
     // kin
     e.strict("OBRRT_KINSHIP_MULT", &mut kin.mult)?;
@@ -213,22 +152,10 @@ pub fn from_env_with(base: SearchConfig, get: Lookup) -> Result<SearchConfig> {
     }
     e.strict_opt("OBRRT_KIN_CAP", &mut kin.cap)?;
 
-    // ga
-    match e.get("OBRRT_FITNESS").as_deref() {
-        Some("met") => ga.fitness = FitnessKind::Met,
-        Some("steps") => ga.fitness = FitnessKind::Steps,
-        _ => {}
-    }
-    if let Some(v) = e.get("OBRRT_GA_NEW") {
-        ga.new_ops = v == "1";
-    }
     e.strict("OBRRT_PINK", &mut ga.pink)?;
-    e.on("OBRRT_GA_BUDGET", &mut ga.per_objective_budget);
     e.lenient("OBRRT_GA_GAMMA", &mut ga.gamma);
     e.lenient("OBRRT_GA_REGRET", &mut ga.regret);
-    e.lenient("OBRRT_GA_CBUTTONS", &mut ga.cbuttons);
     e.eq1("OBRRT_GA_KEEP_SEED", &mut ga.keep_seed);
-    e.eq1("OBRRT_TAIL", &mut ga.tail);
     e.eq1("OBRRT_CALM", &mut ga.calm);
     e.eq1("OBRRT_MOVE_GA", &mut ga.move_ga);
     e.eq1("OBRRT_MOVE_GA_EXTRA", &mut ga.move_ga_extra);
@@ -236,16 +163,7 @@ pub fn from_env_with(base: SearchConfig, get: Lookup) -> Result<SearchConfig> {
     // priors
     e.string("OBRRT_REACH_PRIOR", &mut priors.reach_prior);
     e.string("OBRRT_RESCUE_PRIOR", &mut priors.rescue_prior);
-    e.string("OBRRT_KIND_WEIGHTS", &mut priors.kind_weights);
     e.string("OBRRT_ROAD", &mut priors.road);
-    e.eq1("OBRRT_ETA_LEARN", &mut priors.eta_learn);
-    e.lenient("OBRRT_ETA_LEARN_N0", &mut priors.eta_learn_n0);
-    if let Some(s) = e.get("OBRRT_MODEL").filter(|s| !s.is_empty()) {
-        priors.model = Some(s);
-    }
-    e.lenient("OBRRT_MODEL_START_T", &mut priors.model_start_t);
-    e.lenient("OBRRT_MODEL_SERVERS", &mut priors.model_servers);
-    e.string("OBRRT_MODEL_ZONES", &mut priors.model_zones);
 
     // stop
     e.eq1("OBRRT_ANY_EXIT", &mut stop.any_exit);
@@ -304,10 +222,6 @@ pub fn from_env_with(base: SearchConfig, get: Lookup) -> Result<SearchConfig> {
     e.eq1("OBRRT_STATIC_ID", &mut objectives.static_id);
     e.eq1("OBRRT_GEO", &mut objectives.geo);
 
-    // research
-    e.eq1("OBRRT_FASTER_ONLY", &mut research.speed.faster_only);
-    e.eq1("OBRRT_BEAT", &mut research.speed.beat);
-    e.eq1("OBRRT_BNB", &mut research.speed.bnb);
     let rh = &mut research.rh;
     e.eq1("OBRRT_RH", &mut rh.on);
     e.lenient("OBRRT_RH_POP", &mut rh.pop);
@@ -323,13 +237,5 @@ pub fn from_env_with(base: SearchConfig, get: Lookup) -> Result<SearchConfig> {
     e.lenient("OBRRT_RH_MAXLEN", &mut rh.maxlen);
     e.eq1("OBRRT_GA_QD", &mut research.qd);
     e.string("OBRRT_GA_GAMMAS", &mut research.qd_gammas);
-    match e.get("OBRRT_PICK") {
-        None => {}
-        Some(v) => research.pick = Some(v),
-    }
-    e.string("OBRRT_PICK_SCHEMA", &mut research.pick_schema);
-    e.strict("OBRRT_PICK_RAND", &mut research.pick_rand)?;
-    e.strict("OBRRT_PICK_KIN_W", &mut research.pick_kin_w)?;
-    e.eq1("OBRRT_SAMPLE_CHECK", &mut research.sample_check);
     Ok(c)
 }

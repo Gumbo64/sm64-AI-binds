@@ -135,8 +135,6 @@ pub struct Segment<S = SaveState> {
     pub success: bool,
     /// Minus the objective's ETA (frames) at the end: 0 for a success.
     pub progress: f64,
-    /// The end state as the learned model scored it (`OBRRT_MODEL`).
-    pub model: Option<std::sync::Arc<crate::model::NodeModel>>,
     /// The controller's plan beyond the end: the best plan's inputs not yet
     /// committed when the segment ended (seeds the next attempt from the
     /// node made of it; empty for fixed plays and after an automatic tail).
@@ -179,18 +177,6 @@ pub const MOVES: [(&str, u32); 7] = [
     ("slide_kick", 0x018008AA),
 ];
 
-/// How rollouts were ranked in v1 (`OBRRT_FITNESS`). Moot in v2: the
-/// fitness is the discounted ETA decrease; parsed, ignored.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum Fitness {
-    /// Goals met, then progress on the next (or the last's success heuristic).
-    Met,
-    /// Frames to goal 1 (sooner is better, unmet is worst), then frames to
-    /// goal 2, ...; at the first goal neither met, progress on it; all met,
-    /// the last's success heuristic.
-    Steps,
-}
-
 pub const ORIGINS: [&str; 16] = [
     "seeded", "random", "span", "turn", "a-toggle", "resteer", "press", "pink", "key", "backseed", "policy", "repolicy", "model",
     "repair", "crossover", "tail",
@@ -205,27 +191,6 @@ const ORIGIN_POLICY: u8 = 10;
 const ORIGIN_REPOLICY: u8 = 11;
 const ORIGIN_CROSSOVER: u8 = 14;
 const ORIGIN_TAIL: u8 = 15;
-
-/// [`ORIGINS`] index of a first-generation rollout from the learned policy
-/// (`OBRRT_MODEL_POLICY`) and of one from inverse-dynamics repair toward a
-/// recorded route (`OBRRT_MODEL_REPAIR`), model.rs.
-const ORIGIN_MODEL: u8 = 12;
-const ORIGIN_REPAIR: u8 = 13;
-
-/// A recorded route's states as repair targets: frames after the attempt's
-/// start, and their model data.
-pub type RepairTargets = std::sync::Arc<Vec<(u32, std::sync::Arc<crate::model::NodeModel>)>>;
-
-thread_local! {
-    /// The next attempt's repair targets (`OBRRT_MODEL_REPAIR`), set by the
-    /// engine for seeded attempts that have them.
-    static REPAIR: std::cell::RefCell<Option<RepairTargets>> = const { std::cell::RefCell::new(None) };
-}
-
-/// Sets the repair targets for the next attempt on this thread.
-pub fn set_repair_targets(t: Option<RepairTargets>) {
-    REPAIR.with(|r| *r.borrow_mut() = t);
-}
 
 thread_local! {
     /// The next attempt's carried plan (the start node's [`Segment::tail`]),
@@ -272,23 +237,6 @@ fn sink_met(genome: &[GamePad], end: &St) {
         v.insert(at, MetRollout { genome: genome.to_vec(), end });
         v.truncate(*cap);
     });
-}
-
-thread_local! {
-    /// OBRRT_PARENT_WINDOW: inputs every first-generation rollout starts with.
-    static WINDOW: std::cell::RefCell<Vec<GamePad>> = const { std::cell::RefCell::new(Vec::new()) };
-    /// Its length for the whole attempt: those frames are played as recorded,
-    /// without overlays, in later generations too.
-    static WINDOW_LEN: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-}
-
-/// OBRRT_PARENT_WINDOW: the next attempt on this thread starts from the
-/// selected node's parent; every first-generation genome begins with the
-/// recorded inputs from the parent to that node, so the GA optimises both
-/// segments together.
-pub fn set_window(w: Vec<GamePad>) {
-    WINDOW_LEN.with(|l| l.set(w.len()));
-    WINDOW.with(|r| *r.borrow_mut() = w);
 }
 
 /// Sets the carried plan for the next attempt on this thread.
@@ -433,25 +381,16 @@ const KEY_P: f64 = 0.5;
 /// The steps' standard deviation, in raw stick units.
 const KEY_SIGMA: f32 = 20.0;
 
-/// The GA's settings (experiment knobs included). `fitness` is moot in v2.
+/// The GA's settings.
 #[derive(Debug, Clone, Copy)]
 pub struct GaParams {
     /// Multiplies generations.
     pub scale: f64,
-    pub fitness: Fitness,
-    /// New input operators (per-button spans in random segments, a mutation
-    /// that inserts A/B/Z presses) and no stopping after the first success.
-    pub new_ops: bool,
     /// Share of the starting population made of full-length pink-noise
     /// inputs (the pre-tree GAs' inputs). At 1, the GA is purely the old
     /// kind: no steering controller anywhere, and mutations splice and
     /// refill with pink noise.
     pub pink: f64,
-    /// Per-objective budgets: an attempt whose stages are all
-    /// [`Precision::Explore`] runs 1x generations and stops one generation
-    /// after a full success (new operators and fitness unchanged); one with
-    /// any `Precise` stage gets `scale` and no early stop as usual.
-    pub per_objective_budget: bool,
 }
 
 /// An attempt's budget class for diagnostics: `"macro"` (a fixed play,
@@ -604,7 +543,6 @@ impl Attempt {
                 end: s.end.map(|(st, save)| (st, f(save))),
                 success: s.success,
                 progress: s.progress,
-                model: s.model,
                 tail: s.tail,
                 played: s.played,
             })
@@ -1326,29 +1264,6 @@ pub(crate) fn random_segment_v2(rng: &mut SmallRng, out: &mut Vec<GamePad>, len:
             }
         }
     }
-    c_turn(rng, out, at, len);
-}
-
-/// `OBRRT_GA_CBUTTONS=<p>`: the chance per random segment of a C-left or
-/// C-right span (default 0: off, no extra draws). The stick is read
-/// relative to the camera's yaw, which a held C button turns (~310 a
-/// frame), so a fixed stick then steers along a turning line, and
-/// directions between the 8-bit stick's become reachable.
-fn c_buttons_p() -> f64 {
-    obrrt_core::config::current().ga.cbuttons
-}
-
-fn c_turn(rng: &mut SmallRng, out: &mut [GamePad], at: usize, len: usize) {
-    let p = c_buttons_p();
-    if p <= 0.0 || len == 0 || !rng.random_bool(p.min(1.0)) {
-        return;
-    }
-    let button = if rng.random_bool(0.5) { sm64_binds::buttons::L_CBUTTONS } else { sm64_binds::buttons::R_CBUTTONS };
-    let from = rng.random_range(0..len);
-    let n = if rng.random_bool(0.5) { rng.random_range(1..4) } else { rng.random_range(1..=len - from) };
-    for pad in &mut out[at + from..(at + from + n).min(at + len)] {
-        pad.button |= button;
-    }
 }
 
 fn random_segment(rng: &mut SmallRng, out: &mut Vec<GamePad>, len: usize) {
@@ -1366,12 +1281,10 @@ fn random_segment(rng: &mut SmallRng, out: &mut Vec<GamePad>, len: usize) {
         button |= Z_TRIG;
     }
     let tap = rng.random_bool(0.5);
-    let at = out.len();
     for i in 0..len {
         let b = if tap && i > 0 { button & !A_BUTTON & !B_BUTTON } else { button };
         out.push(GamePad::new(b, sx, sy));
     }
-    c_turn(rng, out, at, len);
 }
 
 /// `n` frames of random held inputs (v1's new operators' segments).
@@ -1479,10 +1392,9 @@ impl Worker {
         }
         let mut dc = dense.filter(|d| d.modes.any()).map(Collector::new);
         let out = if rh_on() {
-            set_window(Vec::new());
             self.attempt_rh(&mut dc, stages, start, save, rng, params, seed, tail)
         } else {
-            self.attempt_open(&mut dc, stages, start, save, rng, params, seed, tail)
+            self.attempt_open(&mut dc, stages, start, save, rng, params, seed)
         };
         A_MULT.with(|a| a.set(1.0));
         EXTRA_SEEDS.with(|e| e.borrow_mut().clear());
@@ -1602,28 +1514,6 @@ impl Worker {
                 let mut c = child(&parent, rng, &b, 0, &mut Vec::new());
                 c.origin = ORIGIN_TAIL;
                 pop.push(c);
-            }
-        }
-        // OBRRT_MODEL (model.rs): plans from the learned model on top of
-        // the first generation (none when the model is off).
-        if let Some(ms) = crate::model::settings() {
-            let goal = if seed.is_none() && !pure { stages[0].steer_target(start) } else { None };
-            if let Some(goal) = goal.filter(|_| ms.policy > 0) {
-                for _ in 0..ms.policy {
-                    self.tmp.sync_from(&self.cur)?;
-                    let g = crate::model::policy_genome(&mut self.tmp, start, goal, h, rng)?;
-                    pop.push(Gen::new(g, None, ORIGIN_MODEL));
-                }
-            }
-            let targets = REPAIR.with(|r| r.borrow_mut().take());
-            if let Some(t) = targets.filter(|t| ms.repair > 0 && seed.is_some() && !t.is_empty()) {
-                for _ in 0..ms.repair {
-                    self.tmp.sync_from(&self.cur)?;
-                    let g = crate::model::repair_genome(&mut self.tmp, start, &t, h.max(seed.map_or(0, |s| s.len())))?;
-                    let mut pl = Gen::new(g, None, ORIGIN_REPAIR);
-                    pl.full = true;
-                    pop.push(pl);
-                }
             }
         }
         let mut m = makeup().lock().unwrap();
@@ -1838,7 +1728,7 @@ impl Worker {
         for (i, (at, success, progress, tail)) in bounds.into_iter().enumerate() {
             if at <= played {
                 // Met where the previous one was (or at the start): nothing to add.
-                segments.push(Segment { inputs: Vec::new(), end: None, success, progress, model: None, tail: Vec::new(), played: 0 });
+                segments.push(Segment { inputs: Vec::new(), end: None, success, progress, tail: Vec::new(), played: 0 });
                 continue;
             }
             let mut inputs = genome[played..at].to_vec();
@@ -1850,8 +1740,7 @@ impl Worker {
             played = at;
             if i != nb - 1 {
                 let st = read_state(&self.tmp, start.frame + played as u32, true);
-                let model = crate::model::node(&self.tmp, &st, inputs.last().copied().unwrap_or_default());
-                segments.push(Segment { inputs, end: Some((st, self.tmp.save_state())), success, progress, model, tail, played: committed });
+                segments.push(Segment { inputs, end: Some((st, self.tmp.save_state())), success, progress, tail, played: committed });
                 continue;
             }
             // Universal tail: press A through cutscenes and warps until the
@@ -1872,14 +1761,13 @@ impl Worker {
             // fade-out still counts, and the death warp is just the way out.
             let gained = st.progress() > start.progress();
             if !(st.controllable() || st.modal() || st.ending()) || (!gained && (!st.alive() || st.lives < start.lives)) {
-                segments.push(Segment { inputs: Vec::new(), end: None, success: false, progress, model: None, tail: Vec::new(), played: 0 });
+                segments.push(Segment { inputs: Vec::new(), end: None, success: false, progress, tail: Vec::new(), played: 0 });
                 return Ok(Attempt { segments, frames, died: true, ga, dense });
             }
             let st = read_state(&self.tmp, start.frame + (played + extra) as u32, true);
-            let model = crate::model::node(&self.tmp, &st, inputs.last().copied().unwrap_or_default());
             // The plan was for the state before the automatic tail.
             let tail = if extra == 0 { tail } else { Vec::new() };
-            segments.push(Segment { inputs, end: Some((st, self.tmp.save_state())), success, progress, model, tail, played: committed });
+            segments.push(Segment { inputs, end: Some((st, self.tmp.save_state())), success, progress, tail, played: committed });
         }
         Ok(Attempt { segments, frames, died, ga, dense })
     }
@@ -1945,11 +1833,11 @@ impl Worker {
 
 /// v1's random inputs: `new` (the new operators) uses
 /// [`random_segment_v2`]'s per-button spans.
-fn random_inputs_v1(rng: &mut SmallRng, n: usize, new: bool) -> Vec<GamePad> {
+fn random_inputs_v1(rng: &mut SmallRng, n: usize) -> Vec<GamePad> {
     let mut out = Vec::with_capacity(n + 32);
     while out.len() < n {
         let len = rng.random_range(3..30);
-        if new { random_segment_v2(rng, &mut out, len) } else { random_segment(rng, &mut out, len) }
+        random_segment_v2(rng, &mut out, len);
     }
     out.truncate(n);
     out
@@ -1998,18 +1886,7 @@ fn regret_best(rec: &[(f64, f64, usize, f64)], gamma: f64, n: usize, death: f64)
 }
 
 fn ga_gamma() -> f64 {
-    // OBRRT_GAMMA_SET: the attempt's drawn γ (gammaset.rs; None when off).
-    if let Some(i) = crate::gammaset::current() {
-        return crate::gammaset::gamma(i);
-    }
     obrrt_core::config::current().ga.gamma
-}
-
-/// `OBRRT_TAIL=1`: winners' inputs after their cut are kept on the node
-/// made of it ([`Segment::tail`]) and seed attempts from there. Off by
-/// default (v1 plus the ETA fitness).
-fn tail_on() -> bool {
-    obrrt_core::config::current().ga.tail
 }
 
 /// The GA budget of objectives without [`Objective::ga_budget`]:
@@ -2178,13 +2055,7 @@ impl Worker {
         // which play their own inputs).
         let overlays: Vec<Option<PadOverlay>> =
             if policy.is_some() { Vec::new() } else { stages.iter().map(|o| o.pad_overlay()).collect() };
-        let joined = WINDOW.with(|w| {
-            let w = w.borrow();
-            (!w.is_empty()).then(|| [&w[..], prefix].concat())
-        });
-        let prefix = joined.as_deref().unwrap_or(prefix);
-        // A window's copy is recorded as played, like a seed.
-        let raw = if RAW_PREFIX.with(|r| r.get()) { prefix.len() } else { WINDOW_LEN.with(|l| l.get()).min(prefix.len()) };
+        let raw = if RAW_PREFIX.with(|r| r.get()) { prefix.len() } else { 0 };
         traj.push(start.clone());
         let mut ends = Vec::new();
         let mut key = Vec::new();
@@ -2214,11 +2085,6 @@ impl Worker {
         // OBRRT_GA_GAMMAS (qd.rs): the same rewards under the extra γ's.
         let qx = crate::qd::extra_gammas();
         let (mut qx_sum, mut qx_disc, mut qx_best, mut qx_at) = (vec![0.0; qx.len()], vec![1.0; qx.len()], vec![0.0; qx.len()], vec![0usize; qx.len()]);
-        // OBRRT_BNB: the current stage's best meet of its key from its start's
-        // context (see speed), looked up when the stage changes.
-        let bnb = crate::speed::bounds();
-        let mut bnb_stop = false;
-        let (mut bnb_k, mut bnb_b) = (usize::MAX, None);
         'frames: for f in 0..horizon {
             if ends.len() == stages.len() || cut {
                 break;
@@ -2281,19 +2147,6 @@ impl Worker {
                     }
                 }
                 break;
-            }
-            // OBRRT_BNB: this stage can no longer beat its best known meet,
-            // even at the optimism factor: stop, scored as it stands.
-            if let Some(bi) = bnb.as_ref() {
-                if bnb_k != k {
-                    (bnb_k, bnb_b) = (k, bi.get(k, &traj[seg]));
-                }
-                if let Some(b) = bnb_b {
-                    let sp = crate::speed::settings();
-                    if !eta.done() && st.frame as f64 + bi.opt(k) * eta.frames() >= b as f64 + sp.slack {
-                        bnb_stop = true;
-                    }
-                }
             }
             genome.push(pad);
             // Dense adds, `all`: candidates as they are played (objects
@@ -2366,13 +2219,9 @@ impl Worker {
                     (qx_best[i], qx_at[i]) = (qx_sum[i], traj.len() - 1);
                 }
             }
-            if cut || bnb_stop {
+            if cut {
                 break 'frames;
             }
-        }
-        if bnb.is_some() {
-            let planned = if steer_to.is_some() || policy.is_some() { horizon } else { prefix.len().min(horizon) };
-            crate::speed::bnb_note(bnb_stop, planned.saturating_sub(genome.len()) as u64);
         }
         if let Some(c) = dc.as_mut().filter(|c| c.req.modes.all) {
             c.cur_save = None;
@@ -2454,10 +2303,9 @@ impl Worker {
         rng: &mut SmallRng,
         params: GaParams,
         seed: Option<&[GamePad]>,
-        tail: Option<Vec<GamePad>>,
     ) -> Result<Attempt> {
         RAW_PREFIX.with(|r| r.set(seed.is_some()));
-        let out = self.attempt_open_inner(dc, stages, start, save, rng, params, seed, tail.filter(|_| tail_on()));
+        let out = self.attempt_open_inner(dc, stages, start, save, rng, params, seed);
         RAW_PREFIX.with(|r| r.set(false));
         out
     }
@@ -2472,13 +2320,8 @@ impl Worker {
         rng: &mut SmallRng,
         params: GaParams,
         seed: Option<&[GamePad]>,
-        tail: Option<Vec<GamePad>>,
     ) -> Result<Attempt> {
-        // Per-objective budgets: all-Explore attempts get the cheap GA (1x,
-        // early stop); everything else is unchanged.
-        let explore = params.per_objective_budget && stages.iter().all(|o| o.precision() == Precision::Explore);
-        let ga_scale = if explore { 1.0 } else { params.scale };
-        let early_stop = !params.new_ops || explore;
+        let ga_scale = params.scale;
         if let Some(save) = save {
             self.base.load_state(save)?;
         }
@@ -2517,7 +2360,6 @@ impl Worker {
             if let Some(s) = seed {
                 horizon = horizon.max(s.len());
             }
-            horizon += WINDOW.with(|w| w.borrow().len());
             let generations = ((generations as f64 * ga_scale).round() as usize).max(1);
             let pure = params.pink >= 1.0;
             let target = if pure { None } else { stages[0].steer_target(start).map(|_| ()) };
@@ -2576,7 +2418,7 @@ impl Worker {
                                 if target.is_some() {
                                     steer_every = Some([2, 4, 8, 16, 30][rng.random_range(0..5)]);
                                 } else {
-                                    g.extend(random_inputs_v1(rng, horizon - a, params.new_ops));
+                                    g.extend(random_inputs_v1(rng, horizon - a));
                                 }
                             }
                         }
@@ -2602,11 +2444,11 @@ impl Worker {
                     Some(()) if i % 2 == 0 => {
                         let every = [2, 4, 8, 16, 30][rng.random_range(0..5)];
                         let n = rng.random_range(0..horizon / 4 + 1);
-                        let noise = random_inputs_v1(rng, n, params.new_ops);
+                        let noise = random_inputs_v1(rng, n);
                         self.rollout(dc, stages, start, &noise, Some(every), horizon)?
                     }
                     _ => {
-                        let mut r = self.rollout(dc, stages, start, &random_inputs_v1(rng, horizon, params.new_ops), None, horizon)?;
+                        let mut r = self.rollout(dc, stages, start, &random_inputs_v1(rng, horizon), None, horizon)?;
                         r.origin = ORIGIN_RANDOM;
                         r
                     }
@@ -2614,20 +2456,6 @@ impl Worker {
                 r.generation = 0;
                 frames += r.genome.len() as u64;
                 pop.push(r);
-            }
-            // OBRRT_TAIL: the start node's leftover plan on top of the first
-            // generation (played as recorded, then steered).
-            if let Some(t) = tail {
-                let mut g = t;
-                g.truncate(horizon);
-                RAW_PREFIX.with(|r| r.set(true));
-                let mut r = self.rollout(dc, stages, start, &g, target.map(|_| 4), horizon);
-                RAW_PREFIX.with(|r| r.set(seed.is_some()));
-                if let Ok(r) = r.as_mut() {
-                    r.origin = ORIGIN_TAIL;
-                    frames += r.genome.len() as u64;
-                }
-                pop.push(r?);
             }
             // OBRRT_POLICY_SEED (+_EXTRA): further source plans, played as given.
             for x in EXTRA_SEEDS.with(|e| std::mem::take(&mut *e.borrow_mut())) {
@@ -2641,33 +2469,6 @@ impl Worker {
                 frames += r.genome.len() as u64;
                 pop.push(r);
             }
-            // OBRRT_MODEL (model.rs): rollouts from the learned model on top
-            // of the first generation (none when the model is off).
-            if let Some(ms) = crate::model::settings() {
-                let goal = if seed.is_none() && !pure { stages[0].steer_target(start) } else { None };
-                if let Some(goal) = goal.filter(|_| ms.policy > 0) {
-                    for _ in 0..ms.policy {
-                        self.tmp.sync_from(&self.base)?;
-                        let g = crate::model::policy_genome(&mut self.tmp, start, goal, horizon, rng)?;
-                        let mut r = self.rollout(dc, stages, start, &g, None, horizon)?;
-                        r.origin = ORIGIN_MODEL;
-                        frames += r.genome.len() as u64;
-                        pop.push(r);
-                    }
-                }
-                let targets = REPAIR.with(|r| r.borrow_mut().take());
-                if let Some(t) = targets.filter(|t| ms.repair > 0 && seed.is_some() && !t.is_empty()) {
-                    for _ in 0..ms.repair {
-                        self.tmp.sync_from(&self.base)?;
-                        let g = crate::model::repair_genome(&mut self.tmp, start, &t, horizon)?;
-                        let mut r = self.rollout(dc, stages, start, &g, None, horizon)?;
-                        r.origin = ORIGIN_REPAIR;
-                        frames += r.genome.len() as u64;
-                        pop.push(r);
-                    }
-                }
-            }
-            WINDOW.with(|w| w.borrow_mut().clear());
             for r in &pop {
                 gen0_origins[r.origin as usize] += 1;
             }
@@ -2681,7 +2482,6 @@ impl Worker {
             let gen0_best = pop.iter().max_by(|a, b| a.better(b)).unwrap();
             let gen0 = (gen0_best.ends.len(), gen0_best.fitness);
             let gen0_plan = (gen0_best.origin == ORIGIN_POLICY).then_some(gen0_best.plan as usize);
-            let mut found_at = None;
             let mut made = [0u64; ORIGINS.len()];
             let mut breeds = 0u64;
             // OBRRT_POLICY_REPOLICY: the policy breeding operator (single stage only).
@@ -2709,12 +2509,6 @@ impl Worker {
                 if let (Some(q), Some(a)) = (qd, arch.as_mut()) {
                     for r in &pop {
                         qd_insert(a, q, r, stages.len(), start, qd_target);
-                    }
-                }
-                if pop[0].ends.len() == stages.len() && early_stop {
-                    match found_at {
-                        None => found_at = Some(generation),
-                        Some(_) => break,
                     }
                 }
                 // OBRRT_POLICY_REPOLICY_MARKET: credit of the last breed's children.
@@ -2866,7 +2660,7 @@ impl Worker {
                     let len = g.len().max(1);
                     let a = rng.random_range(0..len);
                     // The "press" mutation is new; the pure old GA doesn't have it.
-                    let op = rng.random_range(0..if params.new_ops && !pure { 5 } else { 4 });
+                    let op = rng.random_range(0..if pure { 4 } else { 5 });
                     let mut child = match op {
                         0 => {
                             let b = (a + rng.random_range(3..40)).min(horizon);
@@ -2928,7 +2722,7 @@ impl Worker {
                                     self.rollout(dc, stages, start, &g, None, horizon)?
                                 }
                                 None => {
-                                    let rest = random_inputs_v1(rng, horizon - a, params.new_ops);
+                                    let rest = random_inputs_v1(rng, horizon - a);
                                     g.extend(rest);
                                     self.rollout(dc, stages, start, &g, None, horizon)?
                                 }
@@ -3067,7 +2861,7 @@ impl Worker {
         for (i, (at, success, progress)) in bounds.into_iter().enumerate() {
             if at <= played {
                 // Met where the previous one was (or at the start): nothing to add.
-                segments.push(Segment { inputs: Vec::new(), end: None, success, progress, model: None, tail: Vec::new(), played: 0 });
+                segments.push(Segment { inputs: Vec::new(), end: None, success, progress, tail: Vec::new(), played: 0 });
                 continue;
             }
             let mut inputs = best.genome[played..at].to_vec();
@@ -3077,12 +2871,10 @@ impl Worker {
             }
             frames += committed as u64;
             played = at;
-            // OBRRT_TAIL: the winner's inputs after the last segment's end.
-            let tail = if tail_on() && i == nb - 1 { best.genome[at.min(best.genome.len())..].to_vec() } else { Vec::new() };
+            let tail: Vec<GamePad> = Vec::new();
             if i != nb - 1 {
                 let st = read_state(&self.tmp, start.frame + played as u32, true);
-                let model = crate::model::node(&self.tmp, &st, inputs.last().copied().unwrap_or_default());
-                segments.push(Segment { inputs, end: Some((st, self.tmp.save_state())), success, progress, model, tail, played: committed });
+                segments.push(Segment { inputs, end: Some((st, self.tmp.save_state())), success, progress, tail, played: committed });
                 continue;
             }
             // Universal tail: press A through cutscenes and warps until the
@@ -3103,14 +2895,13 @@ impl Worker {
             // fade-out still counts, and the death warp is just the way out.
             let gained = st.progress() > start.progress();
             if !(st.controllable() || st.modal() || st.ending()) || (!gained && (!st.alive() || st.lives < start.lives)) {
-                segments.push(Segment { inputs: Vec::new(), end: None, success: false, progress, model: None, tail: Vec::new(), played: 0 });
+                segments.push(Segment { inputs: Vec::new(), end: None, success: false, progress, tail: Vec::new(), played: 0 });
                 return Ok(Attempt { segments, frames, died: true, ga, dense });
             }
             let st = read_state(&self.tmp, start.frame + (played + extra) as u32, true);
-            let model = crate::model::node(&self.tmp, &st, inputs.last().copied().unwrap_or_default());
             // The plan was for the state before the automatic tail.
             let tail = if extra == 0 { tail } else { Vec::new() };
-            segments.push(Segment { inputs, end: Some((st, self.tmp.save_state())), success, progress, model, tail, played: committed });
+            segments.push(Segment { inputs, end: Some((st, self.tmp.save_state())), success, progress, tail, played: committed });
         }
         Ok(Attempt { segments, frames, died: best.died, ga, dense })
     }

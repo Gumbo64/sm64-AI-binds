@@ -1,44 +1,35 @@
 //! The objective pool: objectives keyed by identity, each with its weight
-//! from creation and its failure decay.
+//! from creation and its rate multiplier (the rate sampler).
 
 use std::collections::HashMap;
 use std::sync::Arc;
 
 use obrrt_core::{Objective, St};
-use rand::Rng;
 
 pub struct Entry {
     pub obj: Arc<dyn Objective>,
     /// `obj_weight(b)` when it entered the pool.
     pub base_weight: f64,
-    /// ×`decay` per failed attempt; back to 1 on success or when a new state
-    /// is added where it is attemptable.
+    /// The rate sampler's multiplier (the entry's rate over the median entry's, clamped), set each round.
     pub decay: f64,
     pub attempts: u32,
     pub successes: u32,
     /// Rounds since any state could attempt it.
     pub unattemptable: u32,
-    /// Best (lowest) base_heuristic of any start it was attempted from: its
-    /// decay only resets for a start meaningfully better than this.
+    /// Best (lowest) start rank of any start it was attempted from.
     pub best_start: f64,
-    /// Arrival ranking: best (soonest) estimated arrival of any start.
-    pub best_arrival: f64,
-    /// Rate sampler (`Config::sampler_rate`): improvement and frames spent,
+    /// Rate sampler: improvement and frames spent,
     /// both faded by exp(-Δ/tau) in emulated frames since `rate_t`.
     pub rate_i: f64,
     pub rate_f: f64,
     pub rate_t: u64,
     /// Rate sampler: the soonest frame any success (or credited arrival) of
-    /// it ended at, and the best (h, arrival) any kept end reached.
+    /// it ended at, and the best start rank any kept end reached.
     pub best_hit: u32,
-    pub best_end: (f64, Option<f64>),
-    /// OBRRT_RATE_NOSTART_SKIP: nonzero when no live state with id below it
-    /// could start this entry (whatever b): it is left out of sampling until
-    /// a newer state can (`Engine::nostart_recheck`).
-    pub ns_upto: u32,
+    pub best_end: f64,
 }
 
-/// Rate sampler settings (`Config::sampler_rate`, OBRRT_SAMPLER=rate).
+/// Rate sampler settings.
 #[derive(Debug, Clone, Copy)]
 pub struct RateParams {
     /// Multiplier bounds around the median entry's rate.
@@ -52,24 +43,7 @@ pub struct RateParams {
     pub prior_frames: f64,
     /// Frames charged (with no improvement) for a pick that found no start.
     pub nostart_frames: f64,
-    /// OBRRT_RATE_MODE=hier: an entry's prior mean is its kind's rate (kind
-    /// evidence pooled over its entries, no-start charges left out), whose
-    /// own prior is `kind_scale × prior_frames` frames at the pool's rate.
-    /// A no-start charge is `nostart_frames × prior_frames / 2e5`, so a prior
-    /// sweep doesn't change how many no-starts it takes to halve a weight.
-    pub hier: bool,
-    pub kind_scale: f64,
-    /// OBRRT_RATE_NOSTART_SKIP=1: entries no live state could start are
-    /// left out of sampling (see `Entry::ns_upto`), not charged.
-    pub nostart_skip: bool,
-    /// Base-criteria checks per round for re-checking skipped entries.
-    pub skip_budget: u64,
-    /// OBRRT_RATE_ROUTE=c: a new or sooner best time for a milestone
-    /// (keys, stars) credits c × (5 if first, else seconds saved, at most 5)
-    /// to the entries that made the states on its path since the previous
-    /// star, split evenly; 0 = off.
-    pub route: f64,
-    /// OBRRT_RATE_NOVEL: improvement for a new state (default 1).
+    /// Improvement for a new state (default 1).
     pub novel: f64,
 }
 
@@ -94,18 +68,11 @@ pub struct RateStats {
     pub p90: f64,
     pub at_floor: usize,
     pub at_cap: usize,
-    /// OBRRT_RATE_MODE=hier: kinds with a rate, and the spread of their
-    /// rates over the median entry's.
-    pub kinds: usize,
-    pub kind_min: f64,
-    pub kind_p50: f64,
-    pub kind_max: f64,
     /// Improvement credited so far, by source.
     pub imp_novel: f64,
     pub imp_first: f64,
     pub imp_sooner: f64,
     pub imp_closer: f64,
-    pub imp_route: f64,
     pub nostart_charges: u64,
     /// Planning diagnostics (wall time, diagnostics only): seconds in picks
     /// that started / found no start, and in `sample_entry` alone; plans
@@ -114,24 +81,6 @@ pub struct RateStats {
     pub nostart_secs: f64,
     pub sample_secs: f64,
     pub plans_none: u64,
-    /// OBRRT_RATE_NOSTART_SKIP: no-starts with no live start anywhere (the
-    /// entry is then skipped) vs. only none in b's kin set; entries skipped
-    /// now, released by a re-check, and the re-checks' seconds.
-    pub nostart_global: u64,
-    pub nostart_kin: u64,
-    pub skipped: usize,
-    pub released: u64,
-    pub recheck_secs: f64,
-}
-
-/// OBRRT_RATE_MODE=hier: one kind's pooled evidence (faded like an
-/// entry's) and its rate at the last refresh.
-#[derive(Debug, Clone, Default)]
-pub struct KindRate {
-    pub i: f64,
-    pub f: f64,
-    pub t: u64,
-    pub r: f64,
 }
 
 impl Entry {
@@ -147,10 +96,8 @@ impl Entry {
 pub struct Pool {
     pub entries: Vec<Entry>,
     index: HashMap<String, usize>,
-    /// Rate sampler state (unused when off).
+    /// Rate sampler state.
     pub rate: RateStats,
-    /// OBRRT_RATE_MODE=hier: per kind.
-    pub kind_rate: std::collections::BTreeMap<&'static str, KindRate>,
     /// `Engine::sample_entry`'s per-kind tables (b-independent eligibility):
     /// built at a round's first pick, dropped when its planning ends.
     pub sidx: Option<SampleIdx>,
@@ -173,7 +120,7 @@ pub struct KindTab {
 }
 
 /// Per-kind sampling tables for `Engine::sample_entry` when eligibility is
-/// `!modal && ns_upto == 0` (no b). Within a round's planning an entry's
+/// `!modal` (no b). Within a round's planning an entry's
 /// weight or eligibility changes only through a no-start pick (`touch`)
 /// and entries are only appended (`sync`); everything else changes between
 /// rounds, when the tables are dropped.
@@ -191,7 +138,7 @@ pub struct SampleIdx {
 
 impl SampleIdx {
     fn weight(e: &Entry, modal: bool) -> (f64, bool) {
-        let elig = !modal && e.ns_upto == 0;
+        let elig = !modal;
         (if elig { e.base_weight * e.decay } else { 0.0 }, elig)
     }
 
@@ -330,25 +277,16 @@ impl Pool {
         if self.index.contains_key(&key) {
             return false;
         }
-        let base_weight = obj.obj_weight(b).max(0.0) * kind_weight(obj.kind());
+        let base_weight = obj.obj_weight(b).max(0.0);
         self.index.insert(key, self.entries.len());
-        self.entries.push(Entry { obj, base_weight, decay: 1.0, attempts: 0, successes: 0, unattemptable: 0, best_start: f64::INFINITY, best_arrival: f64::INFINITY, rate_i: 0.0, rate_f: 0.0, rate_t: 0, best_hit: u32::MAX, best_end: (f64::INFINITY, None), ns_upto: 0 });
+        self.entries.push(Entry { obj, base_weight, decay: 1.0, attempts: 0, successes: 0, unattemptable: 0, best_start: f64::INFINITY, rate_i: 0.0, rate_f: 0.0, rate_t: 0, best_hit: u32::MAX, best_end: f64::INFINITY });
         true
     }
 
     /// Rate sampler: adds `imp` improvement and `frames` frames to entry `i`
     /// (and the pool's totals) at emulated frame `now`, older evidence faded.
-    /// `nostart`: a no-start charge (hier: scaled, and not the kind's).
-    pub fn rate_note(&mut self, i: usize, imp: f64, frames: f64, now: u64, p: &RateParams, nostart: bool) {
+    pub fn rate_note(&mut self, i: usize, imp: f64, frames: f64, now: u64, p: &RateParams) {
         let fade = |t: u64| (-(now.saturating_sub(t) as f64) / p.tau).exp();
-        let frames = if p.hier && nostart { frames * p.prior_frames / 200_000.0 } else { frames };
-        if p.hier && !nostart {
-            let kr = self.kind_rate.entry(self.entries[i].obj.kind()).or_default();
-            let k = fade(kr.t);
-            kr.i = kr.i * k + imp;
-            kr.f = kr.f * k + frames;
-            kr.t = now;
-        }
         let g = &mut self.rate;
         let k = fade(g.g_t);
         g.g_i = g.g_i * k + imp;
@@ -373,9 +311,6 @@ impl Pool {
     /// non-modal entry's, clamped to [floor, cap] (modal entries: 1). Called
     /// at the start of each round; deterministic (entries in pool order).
     pub fn rate_refresh(&mut self, now: u64, p: &RateParams) {
-        if p.hier {
-            return self.rate_refresh_hier(now, p);
-        }
         let r0 = self.r0(now, p);
         let mut rates: Vec<f64> = self.entries.iter().filter(|e| !e.obj.modal()).map(|e| e.rate(now, r0, p)).collect();
         rates.sort_by(f64::total_cmp);
@@ -404,45 +339,11 @@ impl Pool {
         g.at_cap = mults.iter().filter(|&&m| m >= p.cap).count();
     }
 
-    /// OBRRT_RATE_MODE=hier: the pool's rate from its kinds' evidence (no
-    /// no-start charges), each kind's rate shrunk toward it, each entry's
-    /// toward its kind's; multipliers over the median entry's as before.
-    fn rate_refresh_hier(&mut self, now: u64, p: &RateParams) {
-        let fade = |t: u64| (-(now.saturating_sub(t) as f64) / p.tau).exp();
-        let (si, sf) = self.kind_rate.values().fold((0.0, 0.0), |(a, b), k| (a + k.i * fade(k.t), b + k.f * fade(k.t)));
-        let r0 = if sf > 0.0 { (si / sf).max(1e-9) } else { 1e-5 };
-        let pk = p.prior_frames * p.kind_scale;
-        for k in self.kind_rate.values_mut() {
-            let f = fade(k.t);
-            k.r = (k.i * f + r0 * pk) / (k.f * f + pk);
-        }
-        let kind_r = |kr: &std::collections::BTreeMap<&'static str, KindRate>, k: &str| kr.get(k).map_or(r0, |k| k.r);
-        let mut rates: Vec<f64> =
-            self.entries.iter().filter(|e| !e.obj.modal()).map(|e| e.rate(now, kind_r(&self.kind_rate, e.obj.kind()), p)).collect();
-        rates.sort_by(f64::total_cmp);
-        let median = if rates.is_empty() { r0 } else { rates[rates.len() / 2] }.max(1e-12);
-        let mut mults = Vec::with_capacity(rates.len());
-        for e in &mut self.entries {
-            e.decay = if e.obj.modal() { 1.0 } else { (e.rate(now, kind_r(&self.kind_rate, e.obj.kind()), p) / median).clamp(p.floor, p.cap) };
-            if !e.obj.modal() {
-                mults.push(e.decay);
-            }
-        }
-        let mut km: Vec<f64> = self.kind_rate.values().map(|k| k.r / median).collect();
-        km.sort_by(f64::total_cmp);
-        let g = &mut self.rate;
-        g.kinds = km.len();
-        (g.kind_min, g.kind_p50, g.kind_max) =
-            if km.is_empty() { (0.0, 0.0, 0.0) } else { (km[0], km[km.len() / 2], km[km.len() - 1]) };
-        self.rate_spread(mults, r0, median, p);
-    }
-
     /// Rate sampler: recomputes one entry's multiplier against the last
     /// refresh's median (after a no-start charge, so a round's later picks
     /// see it).
     pub fn rate_one(&mut self, i: usize, now: u64, p: &RateParams) {
         let (r0, median) = (self.rate.r0.max(1e-9), self.rate.median.max(1e-12));
-        let r0 = if p.hier { self.kind_rate.get(self.entries[i].obj.kind()).filter(|k| k.r > 0.0).map_or(r0, |k| k.r) } else { r0 };
         let e = &mut self.entries[i];
         if !e.obj.modal() {
             e.decay = (e.rate(now, r0, p) / median).clamp(p.floor, p.cap);
@@ -463,39 +364,5 @@ impl Pool {
         before - self.entries.len()
     }
 
-    /// Samples an entry by `base_weight × decay × kind_multiplier(kind)`.
-    pub fn sample(&self, rng: &mut impl Rng, kind_multiplier: impl Fn(&str) -> f64) -> Option<usize> {
-        let weights: Vec<f64> =
-            self.entries.iter().map(|e| e.base_weight * e.decay * kind_multiplier(e.obj.kind())).collect();
-        let total: f64 = weights.iter().sum();
-        if total <= 0.0 {
-            return None;
-        }
-        let mut x = rng.random_range(0.0..total);
-        for (i, w) in weights.iter().enumerate() {
-            if x < *w {
-                return Some(i);
-            }
-            x -= w;
-        }
-        Some(weights.len() - 1)
-    }
-}
-
-/// `OBRRT_KIND_WEIGHTS=<path>`: a JSON object {kind: multiplier} read once;
-/// each entry's base weight is × its kind's multiplier (1 for kinds not in
-/// it, or when unset). It feeds everything base_weight feeds: sampling, the
-/// chain/zone values and the progress-only gate (weight >= 1).
-pub(crate) fn kind_weight(kind: &str) -> f64 {
-    static T: std::sync::OnceLock<Option<HashMap<String, f64>>> = std::sync::OnceLock::new();
-    T.get_or_init(|| {
-        let path = obrrt_core::config::current().priors.kind_weights.clone()?;
-        let txt = obrrt_core::sys::fs::read_to_string(&path).unwrap_or_else(|e| panic!("OBRRT_KIND_WEIGHTS {path}: {e}"));
-        let t: HashMap<String, f64> = serde_json::from_str(&txt).unwrap_or_else(|e| panic!("OBRRT_KIND_WEIGHTS {path}: {e}"));
-        eprintln!("kind weights: {} kinds from {path}", t.len());
-        Some(t)
-    })
-    .as_ref()
-    .map_or(1.0, |t| t.get(kind).copied().unwrap_or(1.0))
 }
 
