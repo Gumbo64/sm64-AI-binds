@@ -20,7 +20,7 @@ Files: `objective-rrt/objectives/src/extra/tech/lakituskip.rs` and the v2 copy `
 - FREEFALL_LAND bridge branch: DJ press (release-first only if the state after the release frame still has a clear DJ); at n >= 4, z > 300: Z only if the slide kick (after the crouch frame, `after_crouch_frame`) lands clear of the box (+-30), else the jump kick if A is held and clear, else the double jump if it lands past the box at all (margin 2), else Z (as before).
 - Unchanged: the unconditional `kick()` arm at the landing stop (no alternative exists there: a rollout landing gives a single jump only, doubleJumpTimer is set only by landing actions, moving.c:1804), the ramp branch, everything with z > 2500, the run-up.
 
-## Results (hill_fuzz, seed 11, 1500+1500 starts, `OBRRT_LAKITU_ARC=1`)
+## Results (hill_fuzz, seed 11, 1500+1500 starts, Lakitu arc on)
 | | before | after |
 |---|---|---|
 | A: spawn, random pos/yaw | 1272 (84.8%) | 1340 (89.3%) |

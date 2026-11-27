@@ -78,7 +78,7 @@ Switch "on" means always on.
 | `Menu::SaveAndContinue` | modal | Save menu, option 1 | on (`OBRRT_FAST_MODAL`) |
 | `Menu::ContinueNoSave` | modal | Save menu, option 3 | on (`OBRRT_FAST_MODAL`) |
 | `Menu::SelectAct` | modal | Pick an act | on (`OBRRT_FAST_MODAL`) |
-| `Star::Collect` | star | Touch a star or key | on (`OBRRT_GP_CATCH`; `gateclip` softens the BoB-6 block) |
+| `Star::Collect` | star | Touch a star or key | on (ground-pound catch; `gateclip` softens the BoB-6 block) |
 | `Coin::Collect` | coll | Touch a coin | on |
 | `Object::Break` | coll | Break a box or ! box | on |
 | `HiddenBlueCoin::Collect` | coll | Collect a switch's blue coin | on |
@@ -559,31 +559,27 @@ An unknown word panics.
 
 `Chest::Open` facing mode (`chestfacing`, tag location) is listed under Rides.
 
-## 4. Env switches that change objective behaviour
+## 4. Switches that change objective behaviour
 
-| Variable | Read at | Default | Effect |
-|---|---|---|---|
-| `OBRRT_TECH` | run/src/main.rs:136 -> tech/mod.rs:290 | `all` | Which technique objectives (section 3.12) exist. It is a comma list over names and tags (`movement`, `location`, `star`), read left to right. `none` clears it, `-x` removes. A list starting with `-x` starts from `all`. An unknown word is an error |
-| `OBRRT_FAST_MODAL` | run/src/main.rs:77 -> menu.rs:58 `set_fast` | on (`FAST = true`); `0` turns it off | Dialog, Menu and GoToCastle use frame-optimal Policies (on) or the old A-every-4th-frame Macros (off). It also sets `obrrt_core::set_early_dialog_end` |
-| `OBRRT_GP_CATCH` | star.rs:35 | off (`1` turns it on) | Star::Collect: a Z (ground pound) hint just below the star; success ranked by the landing frame |
-| `OBRRT_POSTIME_MARGIN` | mario/time.rs | 1 frame | How much sooner than its record Mario::PosTime must arrive |
-| `OBRRT_POSTIME` | mario/time.rs | near | `near`: PosTime at points near b, before the tree's record there; `self`: the old PosTime at b (byte-identical to builds/v2g) |
-| `OBRRT_POSTIME_N` | mario/time.rs | 2 | PosTime candidate points per b (near) |
-| `OBRRT_POSTIME_BUCKET` | mario/time.rs | 10 frames | Deadline bucket in a near PosTime's key |
-| `OBRRT_KICKS_OFF` | tech/kicks.rs:71 | empty (all fixes on) | Turns off the `jk`, `hop`, `high` and `boost` fixes (or `all`) in SlideKick, JumpKick and DiveRollout |
-| `OBRRT_DEATHFADE` | extra/enemies/clip.rs:123 | off | Bobomb::GateClip succeeds on star 6 only, not on "behind the bars" |
-| `OBRRT_BLJ_ALIGN_SUCCESS` | tech/blj.rs:235 | off | Blj, BljRun and Lblj speed success also needs travel within 30 degrees of the goal bearing. **blj.rs is being edited (BLJ alignment reward); see the note in 3.12** |
-| `OBRRT_SWIM_HOLD` | search/src/steer.rs:140 | off | The steering controller strokes with the TAS's held-A cadence. This is engine-side, but it changes every swimming objective's seeded genomes |
-| `OBRRT_NEW_ELIGIBLE` | search/src/engine.rs:174 | off | A state that newly enables a weight > 1 objective is queued and planned first. This changes which objectives get attempted, not their definitions |
-| `OBRRT_GA_BUDGET` | run/src/main.rs:64 | off | Per-objective GA budgets: attempts whose objective is Explore get 1x generations and an early stop. Precise ones get the full scaled GA |
-| `OBRRT_KIND_CAP` | run/src/main.rs:89 | 0 (off) | Caps any one kind's share of picks |
-| `OBRRT_KIND_BANDIT` / `OBRRT_KIND_GAMMA` | run/src/main.rs:107/110 | off / 0.995 | Per-kind multipliers on `obj_weight` come from a bandit instead of the yield EMA |
+Every setting is a field of `SearchConfig` (`env/src/config.rs`, the source of truth: each field's doc names its `OBRRT_*` variable and its default; `obrrt-env` fills it from the environment or a TOML file). Production settings are the defaults: the movement library, the move GA, calm jumping, the Lakitu arc, fast painting entries, the swim hold cadence, the ground-pound catch, soft dedup, route chains and the rate sampler are always on and have no switch.
+
+| Variable | Effect on objectives |
+|---|---|
+| `OBRRT_TECH` | Which technique objectives (section 3.12) exist: a comma list over names and tags (`movement`, `location`, `star`), read left to right; `all` by default |
+| `OBRRT_MOVES_EXTRA`, `OBRRT_MOVES_MODES` | The GA also offers the extra movement policies (extra.rs) and the control modes' and speed techniques' policies (cannon, water_air, slide, pole, tech) |
+| `OBRRT_MOVE_WEIGHT` | The 0.5-weight techniques weigh this much (0.75) |
+| `OBRRT_SWIM_TARGETS` | One more `PosDist` per `b` in water, in the water column |
+| `OBRRT_LAKITU_THROUGH_DOOR`, `OBRRT_GROUNDS_FIX`, `OBRRT_KING_LANDING`, `OBRRT_TWOSTAR`, `OBRRT_STATIC_ID`, `OBRRT_GEO` | Lakitu skip through the door; the castle-grounds fixes; the king bob-omb landing; the two-star missions; objects keyed by static id; walkable distances over the level's floors |
+| `OBRRT_BLJ_SPOTS`, `OBRRT_BLJ_SPOTS_CATALOG`, `OBRRT_BLJ_DETECTOR` | The BLJ spot registry (tech/bljany/spots.rs): record the spots a run meets and where chains start; the catalogue to seed it from; the clause thresholds file |
+| `OBRRT_SPEC`, `OBRRT_SPEC_RUN` | Declarative objectives (spec crate) added to the pool; the run their node targets resolve in |
+| `OBRRT_GOAL_FOCUS`, `OBRRT_GOAL_WIDE`, `OBRRT_GOAL_EXPLORE`, `OBRRT_STALL_ETA` | Share of plans drawn toward a goal; far objects still give goals; stalled goals explore; the stall stop |
+| `OBRRT_POSGOAL_WEIGHT`, `OBRRT_POSGOAL_SHARE` | The web miner's position goal (`Mario::UserGoal`): its pool weight and the share of plans from inside its bubble |
 
 Constants that act as switches:
-- `OFFER_COUNTERS = false` (missions.rs:507) keeps RedCoins::CollectNext and Secrets::FindNext off.
-- `OBJECT_RADIUS = 5000` (lib.rs:32) is the object radius for generation.
+- `OFFER_COUNTERS = false` (missions.rs) keeps RedCoins::CollectNext and Secrets::FindNext off.
+- `OBJECT_RADIUS = 5000` (lib.rs) is the object radius for generation.
 
-The other `OBRRT_*` variables in run/src/main.rs control the search, the GA, memory and resuming. They don't change objectives.
+The other `OBRRT_*` variables control the search, the GA, memory, stopping and resuming; see `env/src/config.rs`. Switches that earlier logs (RUNS.md, GOALS.md) name and that are gone were deleted by the condense refactor; the tag `archive/pre-condense` has them.
 
 ## 5. Conventions the code follows
 

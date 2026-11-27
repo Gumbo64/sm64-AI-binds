@@ -2,6 +2,8 @@
 
 v2 = v1's engine and open-loop GA, with per-state ETA objectives (GOALS.md) and a fitness of discounted ETA decrease (γ 0.99 per frame). v1's log is ../objective-rrt/RUNS.md.
 
+> Switches named in this log that no longer exist (`OBRRT_FREE_SETUP`, `_BLJ_FAST`, `_BLJ_SCAN`, `_SOFT_DEDUP`, `_CHAIN`, `_SAMPLER`, `_ADD` modes other than `last_gen`, `_MOVES`, `_CALM`, ... and the `PACE`/`POSTIME`/RRT\*/learned-model experiments) were deleted by the condense refactor; the production values are the defaults. The code is at the git tag `archive/pre-condense`.
+
 - **Times** are game time from power-on, at 30 frames/s.
 - **Screens:**
   - `tools/screen.sh BIN FRAMES PREFIX name="ENV" ... -- seeds` runs 2 seeds in parallel at 8 threads each, on v1's best-config base (soft dedup, `BASE`, `CD` as in v1's tools/arm_eval.sh).

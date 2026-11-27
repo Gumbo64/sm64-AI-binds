@@ -18,7 +18,7 @@ Code: `hill` in `objective-rrt-v2/objectives/src/extra/tech/lakituskip.rs` (and 
 3. `ACT_DIVE_SLIDE` with fv <= 52 on the bridge approach: A at once (rollout). (A variant that pressed A on every dive slide below z 2500 changed nothing: 0 of 3002 starts differ.)
 After the dive Mario is at ~48 u/f, outside the fast-chain conditions; the objective's own steering (`target`, speed < 50) takes him back to the run-up line and the whole hill run starts again. So a dive is an "abort and retry", not a continuation.
 
-## Results (hill_fuzz, seed 11, 1500 + 1500 starts, `OBRRT_LAKITU_ARC=1`)
+## Results (hill_fuzz, seed 11, 1500 + 1500 starts, Lakitu arc on)
 | | flag off | dive on | gained | lost |
 |---|---|---|---|---|
 | A spawn | 1340 (89.3%) | 1344 (89.6%) | 5 | 1 |

@@ -13,14 +13,14 @@ A separate experiment for a Eureka-style loop: an LLM writes objective specs (JS
 | One loop round (validate + screen + feedback; LLM stub) | `tools/spec/loop.py` |
 | Example specs (BoB) | `tools/spec/examples/bob/*.json` |
 | Example landmark routes | `tools/spec/routes/bob-chomp.json`, `tools/spec/routes/bob-king.json` |
-| GA breadth: QD archive, several γ | `search/src/qd.rs` (`OBRRT_GA_QD`, `OBRRT_GA_GAMMAS`), `search/src/gammaset.rs` (`OBRRT_GAMMA_SET`) |
+| GA breadth: QD archive, several γ | `search/src/qd.rs` (`OBRRT_GA_QD`, `OBRRT_GA_GAMMAS`) |
 
 Build: `nice -n 10 cargo build --release -p obrrt-spec` (binaries `spec-validate`, `legs`); obrrt2 and oss2 as before. `spec` is a workspace member but not a default member.
 
 ## Hooks (all off by default; off = byte-identical)
 
 - `OBRRT_SPEC=<file.json or dir>`: obrrt2 (`run/src/main.rs`: `obrrt_spec::wrap(Arc::new(Registry))`) adds the specs to what `Registry` generates; oss2's GA eligible list (`oss2/src/ga.rs`) gets them too (`obrrt_spec::extra`), loaded and checked at oss2's start. A spec is generated from every b in a listed zone, outside dialogs and menus, whose gate holds (one pool entry per spec and variant). `OBRRT_SPEC_RUN=<run dir>` resolves `{"node": id}` targets for obrrt2.
-- `OBRRT_GA_QD=1`, `OBRRT_GA_GAMMAS=...`, `OBRRT_GA_QD_ADD=1`, `OBRRT_GAMMA_SET=...`: see "GA breadth" below.
+- `OBRRT_GA_QD=1`, `OBRRT_GA_GAMMAS=...`, `OBRRT_GA_QD_ADD=1`: see "GA breadth" below.
 - Checked: nodes.csv and tree.bin byte-identical to builds/v2h/obrrt2 with all of them unset (2 threads, 2 M frames, tools/screen.sh's env with the P arm, OBRRT_MEM_MB=1500, seed 1).
 
 ## The validator
@@ -87,7 +87,7 @@ A landmark route is a start and an ordered list of legs; each leg is a spec (FOR
 legs <route.json> [--out DIR] [--seed S] [--beam K] [--pop N] [--gens N] [--horizon-mult X] [--retry-mult X]
 ```
 
-`legs` does obrrt2's own domain set-up (`obrrt_objectives::setup::from_env`, shared with run/src/main.rs: the steering controller, the movement library for `OBRRT_MOVES`, its policies for `OBRRT_MOVE_GA`, `OBRRT_FAST_MODAL`, `OBRRT_TECH`), and defaults unset switches to the P arm's movement set: `OBRRT_MOVES=1 OBRRT_MOVE_GA=1 OBRRT_MOVE_GA_EXTRA=1 OBRRT_MOVES_MODES=1 OBRRT_MOVES_EXTRA=1 OBRRT_MOVES_SEEDED=1 OBRRT_CALM=1 OBRRT_LAKITU_ARC=1 OBRRT_PAINTING_FAST=1 OBRRT_GP_CATCH=1 OBRRT_SWIM_HOLD=1 OBRRT_TECH=all` (set one to 0 to turn it off). `OBRRT_MOVES_SEEDED=1`: legs seeded from a reference play the move policies too (the GA turns them off under a seed otherwise, so on `seed_ref` routes none ever played), and each leg's first generation has `OBRRT_MOVE_GA_N` = population / 2 rollouts unless that is set: every plausible policy alone, then combinations. `move_ga.json` and the log's `move-ga:` line say what played and won. `MODES=0 EXTRA=0 SEEDED=0` is the old behaviour (lakitu-through reproduces its 620 frames byte for byte). `RAYON_NUM_THREADS` sets the beam's parallelism. (Before this, legs installed only the steering controller: no movement library or move policies, whatever the env said; the runs in the first results tables are from then.)
+`legs` does obrrt2's own domain set-up (`obrrt_objectives::setup::from_env`, shared with run/src/main.rs: the steering controller, the movement library, `OBRRT_TECH`), and defaults unset switches to the P arm's movement set: `OBRRT_MOVE_GA_EXTRA=1 OBRRT_MOVES_MODES=1 OBRRT_MOVES_EXTRA=1 OBRRT_MOVES_SEEDED=1 OBRRT_TECH=all` (set one to 0 to turn it off; the movement library, the move GA, calm jumping and the other production settings are always on). `OBRRT_MOVES_SEEDED=1`: legs seeded from a reference play the move policies too (the GA turns them off under a seed otherwise, so on `seed_ref` routes none ever played), and each leg's first generation has `OBRRT_MOVE_GA_N` = population / 2 rollouts unless that is set: every plausible policy alone, then combinations. `move_ga.json` and the log's `move-ga:` line say what played and won. `MODES=0 EXTRA=0 SEEDED=0` is the old behaviour (lakitu-through reproduces its 620 frames byte for byte). `RAYON_NUM_THREADS` sets the beam's parallelism. (Before this, legs installed only the steering controller: no movement library or move policies, whatever the env said; the runs in the first results tables are from then.)
 
 `route-stats <route.m64> [regions.json] [--json OUT]` replays a route from power-on and counts the frames in long jumps, dives, dive slides, rollouts, wall kicks, triple jumps, side flips, backflips, jump kicks (A+B), slide kicks, butt/stomach/crouch slides and ground pounds, per region and in total, plus King Bob-omb's throws and returns (act 5 entries).
 
@@ -156,7 +156,6 @@ The open GA keeps one mode: γ decides which path is better, but nothing keeps t
 
 - **`OBRRT_GA_QD=1`**: a MAP-Elites archive inside `attempt_open_inner`. Each rollout's descriptor at its cut (the γ's argmax frame, or the Done frame when met): the 128-unit cell (`OBRRT_GA_QD_GRID`), facing octant, |forward speed| / 16 (≤ 7), action group (ground, air, swim, slide, other), the met flag; fields from `OBRRT_GA_QD_FIELDS` (default `pos,yaw,speed,action,done`; `side`: which side of the start → target line the midpoint passed). The archive keeps the best per bin by fitness, then the earlier end. Parents: with probability `OBRRT_GA_QD_UNIFORM` (0.5) a uniform archive pick (a γ, then a bin), else the fitness-ranked elite as before; the elite, population size, operators and the winner (best under the primary γ: the Attempt's segments) are unchanged. After the attempt, the K (`OBRRT_GA_QD_K`, 4) best distinct-bin rollouts, met ones first and at least the best met one per γ, are left for the caller (`qd::take_picks`, `legs`' beam) and, with `OBRRT_GA_QD_ADD=1`, offered to the dense collector (obrrt2 with `OBRRT_ADD`). summary.json `ga_qd`: bins and picks per attempt, met bins per γ, parents uniform/elite, dense offered.
 - **`OBRRT_GA_GAMMAS=0.98,0.99,0.995,0.999`** (with QD): each rollout folds one discounted sum per γ over the same rewards (one fitness and argmax each); the archive bins by (γ, descriptor), ranked by that γ's fitness; γ 0 is `OBRRT_GA_GAMMA`.
-- **`OBRRT_GAMMA_SET=0.98,0.99,0.995,0.999`** (obrrt2): each attempt's γ is drawn per kind with probability ∝ (paid + 1) / (tried + 2) for that (kind, γ), "paid" = the kind bandit's signal (a success that added a state, or an improvement); the draw uses the attempt's seed and the counts as of the round's start, so it is deterministic. summary.json `gamma_set`: per kind and γ paid, tried and the current share.
 
 ## Throws and regret (`OBRRT_KING_LANDING`, `OBRRT_GA_REGRET`)
 
@@ -167,13 +166,13 @@ The open GA's fitness is the best prefix of the discounted ETA decrease, so what
 
 ## Results (2026-11-02; 2 threads, scratchpad spec/)
 
-**Identity.** With `OBRRT_SPEC`, `OBRRT_GA_QD*`, `OBRRT_GA_GAMMAS` and `OBRRT_GAMMA_SET` unset, obrrt2 built from this source gives nodes.csv and tree.bin byte-identical to builds/v2h/obrrt2 (2 M frames, seed 1, P arm, OBRRT_MEM_MB=1500; checked before and after the GA changes).
+**Identity.** With `OBRRT_SPEC`, `OBRRT_GA_QD*`, and `OBRRT_GA_GAMMAS` unset, obrrt2 built from this source gives nodes.csv and tree.bin byte-identical to builds/v2h/obrrt2 (2 M frames, seed 1, P arm, OBRRT_MEM_MB=1500; checked before and after the GA changes).
 
 **`OBRRT_SPEC` smoke** (obrrt2, 5 M frames from q6-p-s1's BoB spawn node 2333 as the start .m64, `OBRRT_BOOT_NOWAIT=1`, the four example specs): the specs are generated and attempted: BobRamp 1 success / 2 attempts, ChompGate 0 / 9 (9 states added, mean ETA gain 185 frames per failed attempt), EnterBob 0 / 3 (after returning to the lobby); 144 of 898 nodes were made by spec objectives. No star in 5 M frames with or without specs (without: 1378 nodes). `tools/spec/loop.py --screen` runs the same per candidate.
 
 **QD in obrrt2** (5 M frames from the grounds root, P arm): off 1286 nodes, `OBRRT_GA_QD=1 OBRRT_GA_QD_ADD=1` 2048 nodes. `ga_qd`: 50.7 bins per attempt, 3.7 picks (0.51 met) per attempt, 874 picks offered to the dense collector, parents half uniform half elite. Technique nodes (via, 128-unit cells): LakituSkip 266 nodes in 177 cells → 409 in 259; WallKick::Climb 47 / 37 → 78 / 65; JumpKick 36 / 20 → 83 / 64; SlideKick 27 / 22 → 58 / 44 (BljAny 21 / 15 → none in this run). Neither run left the grounds/lobby in 5 M frames.
 
-**`OBRRT_GAMMA_SET=0.98,0.99,0.995,0.999`** (5 M frames, grounds): first-stage outcomes paid/tried per γ: 0.98 37/45, 0.99 35/47, 0.995 39/46, 0.999 27/45 (0.999 pays least so far; per kind the counts are still a handful each, e.g. Tech::JumpKick 0.999 0/3 → share 0.09, WarpHole::Enter 0.995 5/5 → 0.32).
+**`OBRRT_GAMMA_SET`** (removed by the condense refactor: a per-kind γ draw that did not pay; the five-γ archive of `OBRRT_GA_GAMMAS` stays).
 
 **legs on bob-chomp** (tools/spec/routes/bob-chomp.json: 8 legs from the TAS-boot root to BoB star 6 by the posts; budget 64 / 30 / ETA×2+120, beam 4, seed 1; reference runs/q2-star-s2, the obrrt2 route that pounds the post, star at 3316):
 
