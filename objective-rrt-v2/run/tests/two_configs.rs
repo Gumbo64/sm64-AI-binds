@@ -82,9 +82,9 @@ fn two_engines_with_different_configs_in_one_process() {
     // techniques only.
     let mut a = SearchConfig::default();
     a.zone.lock = true;
-    a.dedup.dense.add = Some("last_gen".into());
+    a.dedup.dense_adds = true;
     let mut b = SearchConfig::default();
-    b.dedup.dense.add = None;
+    b.dedup.dense_adds = false;
     b.kin.mult = 1.0;
     b.objectives.tech = "movement".into();
 

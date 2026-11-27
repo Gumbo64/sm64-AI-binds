@@ -817,10 +817,6 @@ impl Blj {
 }
 
 impl Objective for Blj {
-    /// Dense adds (`OBRRT_DENSE_EVERY=obj`): technique setups are frame-precise: every state, mid-air too.
-    fn dense_keep(&self) -> obrrt_core::DenseKeep {
-        obrrt_core::DenseKeep::Every { n: 1, air: true }
-    }
     fn kind(&self) -> &'static str {
         if self.run { "Tech::BljRun" } else { "Tech::Blj" }
     }

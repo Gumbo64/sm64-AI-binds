@@ -194,10 +194,6 @@ impl Enter {
 }
 
 impl Objective for Enter {
-    /// Dense adds (`OBRRT_DENSE_EVERY=obj`): paintings: only the end matters.
-    fn dense_keep(&self) -> obrrt_core::DenseKeep {
-        obrrt_core::DenseKeep::EndOnly
-    }
     fn kind(&self) -> &'static str {
         "Painting::Enter"
     }

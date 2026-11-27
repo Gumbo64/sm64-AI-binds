@@ -63,40 +63,18 @@ impl Default for Sampler {
     }
 }
 
-/// Dense adds (OBRRT_ADD, OBRRT_DENSE_*).
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(default)]
-pub struct Dense {
-    /// OBRRT_ADD=winner|winner_all|last_gen|all (comma-separated); None: off.
-    pub add: Option<String>,
-    pub grid: u32,
-    /// OBRRT_DENSE_CAP (None: 256 with `all`, else 0).
-    pub cap: Option<usize>,
-    pub ne: bool,
-    pub every: u32,
-    /// OBRRT_DENSE_EVERY=obj[:n]
-    pub per_obj: bool,
-    pub air: bool,
-}
-
-impl Default for Dense {
-    fn default() -> Self {
-        Dense { add: Some("last_gen".into()), grid: 64, cap: None, ne: true, every: 1, per_obj: false, air: true }
-    }
-}
-
 /// What counts as the same state, and what the tree retires.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Dedup {
-    pub dense: Dense,
+    /// Dense adds (OBRRT_ADD=last_gen): the final state of every rollout of an attempt's last
+    /// generation is a candidate node too, kept when new by the 64-unit dense key.
+    pub dense_adds: bool,
 }
 
 impl Default for Dedup {
     fn default() -> Self {
-        Dedup {
-            dense: Dense::default(),
-        }
+        Dedup { dense_adds: true }
     }
 }
 

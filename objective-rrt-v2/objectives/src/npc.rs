@@ -27,10 +27,6 @@ impl Talk {
 }
 
 impl Objective for Talk {
-    /// Dense adds (`OBRRT_DENSE_EVERY=obj`): talking: only the end matters.
-    fn dense_keep(&self) -> obrrt_core::DenseKeep {
-        obrrt_core::DenseKeep::EndOnly
-    }
     fn kind(&self) -> &'static str {
         "Npc::Talk"
     }

@@ -46,9 +46,6 @@ impl TouchTail {
 }
 
 impl Objective for TouchTail {
-    fn dense_keep(&self) -> obrrt_core::DenseKeep {
-        obrrt_core::DenseKeep::Every { n: 15, air: false }
-    }
     fn kind(&self) -> &'static str {
         "Eel::TouchTail"
     }

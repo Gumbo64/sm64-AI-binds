@@ -339,10 +339,6 @@ impl Switch {
 }
 
 impl Objective for Switch {
-    /// Dense adds (`OBRRT_DENSE_EVERY=obj`): collecting and fighting: a state every 15 frames, none mid-arc.
-    fn dense_keep(&self) -> obrrt_core::DenseKeep {
-        obrrt_core::DenseKeep::Every { n: 15, air: false }
-    }
     fn precision(&self) -> obrrt_core::Precision {
         if matches!(self.kind(), "Post::Pound" | "Pillar::Pound" | "IslandTop::Pound" | "BlueCoinSwitch::Pound") { obrrt_core::Precision::Precise } else { obrrt_core::Precision::Explore }
     }

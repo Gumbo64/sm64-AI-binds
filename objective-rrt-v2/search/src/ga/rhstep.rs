@@ -464,7 +464,7 @@ impl RhController {
                         let l = if pl.full { pl.pads.len().max(len) } else { len };
                         w.tmp.sync_from(&w.cur)?;
                         let src = Src::Plan { pads: &pl.pads, raw: pl.raw, steer: pl.steer, policy: pl.policy.as_ref() };
-                        let e = play(&mut w.tmp, &mut None, stages, start, ctx, src, l, false, rh)?;
+                        let e = play(&mut w.tmp, stages, start, ctx, src, l, false, rh)?;
                         out.push((i, e));
                     }
                     Ok(out)
@@ -693,7 +693,7 @@ impl RhController {
         let rh_c = self.rh;
         let (e0, others): (Result<Eval>, Vec<Result<()>>) = self.pool.install(|| {
             rayon::join(
-                || play(&mut first[0].cur, &mut None, stages, start, ctx, Src::Replay(&pads), pads.len(), true, &rh_c),
+                || play(&mut first[0].cur, stages, start, ctx, Src::Replay(&pads), pads.len(), true, &rh_c),
                 || {
                     rest.par_iter_mut()
                         .map(|w| {

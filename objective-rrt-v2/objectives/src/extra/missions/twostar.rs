@@ -333,9 +333,6 @@ impl CoinRun {
 }
 
 impl Objective for CoinRun {
-    fn dense_keep(&self) -> obrrt_core::DenseKeep {
-        obrrt_core::DenseKeep::Every { n: 15, air: false }
-    }
     fn kind(&self) -> &'static str {
         "TwoStar::CoinRun"
     }
@@ -419,9 +416,6 @@ fn ring_target(s: &St) -> Option<[f32; 3]> {
 }
 
 impl Objective for WingRing {
-    fn dense_keep(&self) -> obrrt_core::DenseKeep {
-        obrrt_core::DenseKeep::Every { n: 15, air: true }
-    }
     fn kind(&self) -> &'static str {
         "TwoStar::WingRing"
     }

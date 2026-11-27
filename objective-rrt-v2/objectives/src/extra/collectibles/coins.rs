@@ -81,10 +81,6 @@ impl Sweep {
 }
 
 impl Objective for Sweep {
-    /// Dense adds (`OBRRT_DENSE_EVERY=obj`): collecting and fighting: a state every 15 frames, none mid-arc.
-    fn dense_keep(&self) -> obrrt_core::DenseKeep {
-        obrrt_core::DenseKeep::Every { n: 15, air: false }
-    }
     fn kind(&self) -> &'static str {
         "CoinFormation::Sweep"
     }
@@ -172,10 +168,6 @@ impl RedNext {
 const RED_HAD_BIAS_FRAMES: f64 = 2.0 * obrrt_core::V1_UNIT_FRAMES;
 
 impl Objective for RedNext {
-    /// Dense adds (`OBRRT_DENSE_EVERY=obj`): collecting and fighting: a state every 15 frames, none mid-arc.
-    fn dense_keep(&self) -> obrrt_core::DenseKeep {
-        obrrt_core::DenseKeep::Every { n: 15, air: false }
-    }
     fn kind(&self) -> &'static str {
         "RedCoin::Next"
     }
@@ -356,10 +348,6 @@ impl RedRide {
 }
 
 impl Objective for RedRide {
-    /// Dense adds (`OBRRT_DENSE_EVERY=obj`): a state every 15 frames, none mid-arc.
-    fn dense_keep(&self) -> obrrt_core::DenseKeep {
-        obrrt_core::DenseKeep::Every { n: 15, air: false }
-    }
     fn kind(&self) -> &'static str {
         "RedCoin::Ride"
     }
@@ -428,10 +416,6 @@ impl CrazyBox {
 }
 
 impl Objective for CrazyBox {
-    /// Dense adds (`OBRRT_DENSE_EVERY=obj`): collecting and fighting: a state every 15 frames, none mid-arc.
-    fn dense_keep(&self) -> obrrt_core::DenseKeep {
-        obrrt_core::DenseKeep::Every { n: 15, air: false }
-    }
     fn kind(&self) -> &'static str {
         "CrazyBox::Bounce"
     }

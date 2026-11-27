@@ -193,9 +193,6 @@ impl WarpFloorEnter {
 }
 
 impl Objective for WarpFloorEnter {
-    fn dense_keep(&self) -> obrrt_core::DenseKeep {
-        obrrt_core::DenseKeep::EndOnly
-    }
     fn kind(&self) -> &'static str {
         "WarpFloor::Enter"
     }
@@ -389,9 +386,6 @@ impl ZoneGo {
 }
 
 impl Objective for ZoneGo {
-    fn dense_keep(&self) -> obrrt_core::DenseKeep {
-        obrrt_core::DenseKeep::EndOnly
-    }
     fn kind(&self) -> &'static str {
         "Zone::Go"
     }
@@ -525,10 +519,6 @@ impl WarpEnter {
 }
 
 impl Objective for WarpEnter {
-    /// Dense adds (`OBRRT_DENSE_EVERY=obj`): warps and entrances: only the end matters.
-    fn dense_keep(&self) -> obrrt_core::DenseKeep {
-        obrrt_core::DenseKeep::EndOnly
-    }
     fn kind(&self) -> &'static str {
         self.kind
     }
@@ -640,10 +630,6 @@ impl BbhEnter {
 }
 
 impl Objective for BbhEnter {
-    /// Dense adds (`OBRRT_DENSE_EVERY=obj`): warps and entrances: only the end matters.
-    fn dense_keep(&self) -> obrrt_core::DenseKeep {
-        obrrt_core::DenseKeep::EndOnly
-    }
     fn kind(&self) -> &'static str {
         "BbhEntrance::Enter"
     }
@@ -703,10 +689,6 @@ impl TornadoEnter {
 }
 
 impl Objective for TornadoEnter {
-    /// Dense adds (`OBRRT_DENSE_EVERY=obj`): warps and entrances: only the end matters.
-    fn dense_keep(&self) -> obrrt_core::DenseKeep {
-        obrrt_core::DenseKeep::EndOnly
-    }
     fn kind(&self) -> &'static str {
         "Tornado::Enter"
     }
@@ -788,10 +770,6 @@ impl StarDoor {
 }
 
 impl Objective for StarDoor {
-    /// Dense adds (`OBRRT_DENSE_EVERY=obj`): warps and entrances: only the end matters.
-    fn dense_keep(&self) -> obrrt_core::DenseKeep {
-        obrrt_core::DenseKeep::EndOnly
-    }
     fn kind(&self) -> &'static str {
         "StarDoor::Enter"
     }
@@ -850,10 +828,6 @@ impl KeyDoor {
 }
 
 impl Objective for KeyDoor {
-    /// Dense adds (`OBRRT_DENSE_EVERY=obj`): warps and entrances: only the end matters.
-    fn dense_keep(&self) -> obrrt_core::DenseKeep {
-        obrrt_core::DenseKeep::EndOnly
-    }
     fn kind(&self) -> &'static str {
         "KeyDoor::Enter"
     }
@@ -934,10 +908,6 @@ impl CannonEnter {
 }
 
 impl Objective for CannonEnter {
-    /// Dense adds (`OBRRT_DENSE_EVERY=obj`): warps and entrances: only the end matters.
-    fn dense_keep(&self) -> obrrt_core::DenseKeep {
-        obrrt_core::DenseKeep::EndOnly
-    }
     fn precision(&self) -> obrrt_core::Precision {
         obrrt_core::Precision::Precise
     }
@@ -1128,10 +1098,6 @@ impl CannonFire {
 const CANNON_FRESH_BIAS: f64 = 1e-6;
 
 impl Objective for CannonFire {
-    /// Dense adds (`OBRRT_DENSE_EVERY=obj`): warps and entrances: only the end matters.
-    fn dense_keep(&self) -> obrrt_core::DenseKeep {
-        obrrt_core::DenseKeep::EndOnly
-    }
     fn precision(&self) -> obrrt_core::Precision {
         obrrt_core::Precision::Precise
     }
@@ -1219,10 +1185,6 @@ impl PillarPound {
 }
 
 impl Objective for PillarPound {
-    /// Dense adds (`OBRRT_DENSE_EVERY=obj`): warps and entrances: only the end matters.
-    fn dense_keep(&self) -> obrrt_core::DenseKeep {
-        obrrt_core::DenseKeep::EndOnly
-    }
     fn precision(&self) -> obrrt_core::Precision {
         obrrt_core::Precision::Precise
     }
@@ -1302,10 +1264,6 @@ fn on_sun_spot(s: &St) -> bool {
 pub struct SunStand;
 
 impl Objective for SunStand {
-    /// Dense adds (`OBRRT_DENSE_EVERY=obj`): warps and entrances: only the end matters.
-    fn dense_keep(&self) -> obrrt_core::DenseKeep {
-        obrrt_core::DenseKeep::EndOnly
-    }
     fn kind(&self) -> &'static str {
         "SunSpot::Stand"
     }
@@ -1353,10 +1311,6 @@ impl Objective for SunStand {
 pub struct SunLookUp;
 
 impl Objective for SunLookUp {
-    /// Dense adds (`OBRRT_DENSE_EVERY=obj`): warps and entrances: only the end matters.
-    fn dense_keep(&self) -> obrrt_core::DenseKeep {
-        obrrt_core::DenseKeep::EndOnly
-    }
     fn kind(&self) -> &'static str {
         "SecretEntrance::Enter"
     }

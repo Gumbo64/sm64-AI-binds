@@ -331,7 +331,6 @@ impl Objective for LegObj<'_> {
     fn fixed(&self) -> Option<obrrt_core::Budget> { self.obj.fixed() }
     fn temperature(&self) -> f64 { self.obj.temperature() }
     fn kinship(&self) -> u32 { self.obj.kinship() }
-    fn dense_keep(&self) -> obrrt_core::DenseKeep { self.obj.dense_keep() }
     fn success_value(&self) -> f64 { self.obj.success_value() }
     fn modal(&self) -> bool { self.obj.modal() }
 }

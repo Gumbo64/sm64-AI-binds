@@ -173,9 +173,6 @@ impl TopHole {
 }
 
 impl obrrt_core::Objective for TopHole {
-    fn dense_keep(&self) -> obrrt_core::DenseKeep {
-        obrrt_core::DenseKeep::Every { n: 15, air: false }
-    }
     fn kind(&self) -> &'static str {
         "Pyramid::TopHole"
     }

@@ -32,10 +32,6 @@ impl Settle {
 }
 
 impl Objective for Settle {
-    /// Dense adds (`OBRRT_DENSE_EVERY=obj`): waiting in place: nothing new along the way.
-    fn dense_keep(&self) -> obrrt_core::DenseKeep {
-        obrrt_core::DenseKeep::EndOnly
-    }
     fn kind(&self) -> &'static str {
         "Mario::Settle"
     }
@@ -77,10 +73,6 @@ impl Wait {
 }
 
 impl Objective for Wait {
-    /// Dense adds (`OBRRT_DENSE_EVERY=obj`): waiting in place: nothing new along the way.
-    fn dense_keep(&self) -> obrrt_core::DenseKeep {
-        obrrt_core::DenseKeep::EndOnly
-    }
     fn kind(&self) -> &'static str {
         "Mario::Wait"
     }

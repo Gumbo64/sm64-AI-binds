@@ -21,9 +21,6 @@ pub fn from_env(cfg: &mut Config) -> Result<()> {
 pub fn apply_globals(sc: &'static SearchConfig, cfg: &mut Config) -> Result<()> {
     let (b, s, k, ga) = (&sc.budget, &sc.sampler, &sc.kin, &sc.ga);
     cfg.search = Some(sc);
-    // The dense-add settings are checked here too, so a bad one fails before the engine is built.
-    crate::dense::from_config(sc).map_err(anyhow::Error::msg)?;
-
     // budget
     cfg.max_frames = b.max_frames;
     if let Some(mb) = b.mem_mb {
@@ -35,7 +32,6 @@ pub fn apply_globals(sc: &'static SearchConfig, cfg: &mut Config) -> Result<()> 
     cfg.ga_pink = ga.pink;
 
     // sampler
-    cfg.pick_by_b = s.pick_by_b;
     cfg.new_eligible = s.new_eligible;
     cfg.kinship_mult = k.mult;
     Ok(())

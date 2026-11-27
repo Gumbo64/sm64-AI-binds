@@ -184,10 +184,6 @@ impl Ride {
 }
 
 impl Objective for Ride {
-    /// Dense adds (`OBRRT_DENSE_EVERY=obj`): a state every 15 frames, none mid-arc.
-    fn dense_keep(&self) -> obrrt_core::DenseKeep {
-        obrrt_core::DenseKeep::Every { n: 15, air: false }
-    }
     fn kind(&self) -> &'static str {
         "RrCarpet::Ride"
     }
@@ -336,9 +332,6 @@ pub struct RrRoute {
 }
 
 impl Objective for RrRoute {
-    fn dense_keep(&self) -> obrrt_core::DenseKeep {
-        obrrt_core::DenseKeep::Every { n: 15, air: false }
-    }
     fn kind(&self) -> &'static str {
         match self.r {
             Route::Triangles => "RrTriangles::Climb",

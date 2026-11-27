@@ -79,28 +79,15 @@ pub fn from_env_with(base: SearchConfig, get: Lookup) -> Result<SearchConfig> {
     e.eq1("OBRRT_NEW_ELIGIBLE", &mut sampler.new_eligible);
 
 
-    let d = &mut dedup.dense;
     if let Some(a) = e.get("OBRRT_ADD") {
-        d.add = (!a.is_empty() && a != "none").then_some(a);
-    }
-    e.strict("OBRRT_DENSE_GRID", &mut d.grid)?;
-    e.strict_opt("OBRRT_DENSE_CAP", &mut d.cap)?;
-    if let Some(v) = e.get("OBRRT_DENSE_NE") {
-        d.ne = v != "0";
-    }
-    match e.get("OBRRT_DENSE_EVERY").as_deref() {
-        None => {}
-        Some("obj") => {
-            d.every = 15;
-            d.per_obj = true;
+        dedup.dense_adds = false;
+        for t in a.split(',').map(str::trim).filter(|t| !t.is_empty()) {
+            match t {
+                "none" | "winner" => {}
+                "last_gen" => dedup.dense_adds = true,
+                _ => anyhow::bail!("OBRRT_ADD: last_gen (or empty, none, winner: off), not {t}"),
+            }
         }
-        Some(v) => {
-            d.per_obj = v.starts_with("obj:");
-            d.every = v.strip_prefix("obj:").unwrap_or(v).parse().with_context(|| format!("OBRRT_DENSE_EVERY={v}"))?;
-        }
-    }
-    if let Some(v) = e.get("OBRRT_DENSE_AIR") {
-        d.air = v != "0";
     }
 
     // zone

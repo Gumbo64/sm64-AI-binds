@@ -45,10 +45,6 @@ impl GoToCastle {
 }
 
 impl Objective for GoToCastle {
-    /// Dense adds (`OBRRT_DENSE_EVERY=obj`): a menu macro: nothing to start from along the way.
-    fn dense_keep(&self) -> obrrt_core::DenseKeep {
-        obrrt_core::DenseKeep::EndOnly
-    }
     fn kind(&self) -> &'static str {
         "Mario::GoToCastle"
     }

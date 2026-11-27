@@ -467,20 +467,6 @@ pub enum Precision {
     Precise,
 }
 
-/// Which states along an attempt's winning rollout become dense nodes
-/// (`OBRRT_ADD=winner_all|all` with `OBRRT_DENSE_EVERY=obj`), chosen by the
-/// objective each stretch of the rollout was working on.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DenseKeep {
-    /// The search's default (`OBRRT_DENSE_EVERY=obj:<n>`, `OBRRT_DENSE_AIR`).
-    Global,
-    /// None between the rollout's end and its met goals.
-    EndOnly,
-    /// Every `n`-th frame (1 = all), and mid-air states only with `air`
-    /// (else just take-off frames).
-    Every { n: u32, air: bool },
-}
-
 /// v1's per-objective GA budget, kept as a hint for the rolling-horizon
 /// controller ([`Objective::ga_budget`]): `population` is its population,
 /// `horizon` the most frames it commits, and `population * generations *
@@ -721,11 +707,6 @@ pub trait Objective: Send + Sync {
     /// ancestor with `b` at most this many generations up.
     fn kinship(&self) -> u32 {
         6
-    }
-    /// Dense adds with `OBRRT_DENSE_EVERY=obj`: which of the states its
-    /// stretch of a winning rollout passes through become nodes.
-    fn dense_keep(&self) -> DenseKeep {
-        DenseKeep::Global
     }
     /// Start ranking only (frames, default 0): a preference among starts
     /// that isn't a distance to go (v1's non-distance `base_heuristic`

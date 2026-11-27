@@ -100,9 +100,6 @@ fn overlay(traj: &[St], played: &[GamePad], g: GamePad) -> GamePad {
 }
 
 impl Objective for SpeedChain {
-    fn dense_keep(&self) -> obrrt_core::DenseKeep {
-        obrrt_core::DenseKeep::Every { n: 1, air: true }
-    }
     fn kind(&self) -> &'static str {
         "Tech::SpeedChain"
     }

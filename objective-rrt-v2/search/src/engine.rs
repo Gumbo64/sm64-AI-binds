@@ -362,8 +362,8 @@ pub struct Engine {
     /// Rate sampler: the tree's new states and frames over all starts
     /// (faded like each node's), and when last faded.
     node_rate: (f64, f64, u64),
-    /// Dense adds (OBRRT_ADD, see dense.rs): settings and totals.
-    dense: Option<crate::dense::Settings>,
+    /// Dense adds (OBRRT_ADD, see dense.rs) on, and their totals.
+    dense: bool,
     dstats: crate::dense::MergeStats,
     /// OBRRT_ROAD: the experience roadmap (road.rs).
     road: Option<crate::road::Road>,
@@ -483,13 +483,13 @@ impl Engine {
         cells.insert(cell(&root), vec![0]);
         let root_zone = root.zone();
         let sc = cfg.search.unwrap_or_else(obrrt_core::config::global);
-        let dense = crate::dense::from_config(sc).map_err(anyhow::Error::msg)?;
+        let dense = sc.dedup.dense_adds;
         let tree_cfg = crate::tree::TreeConfig {
             zone_lock: sc.zone.lock.then_some(root.level),
             // Every star count stays open under the zone lock.
             star_window: if sc.zone.lock { 99 } else { 1 },
-            replay_max: dense.map(|_| 150),
-            dense_grid: dense.map_or(0, |d| d.grid as u32),
+            replay_max: dense.then_some(150),
+            dense_grid: if dense { crate::dense::GRID as u32 } else { 0 },
         };
         if sc.zone.lock {
             println!("zone lock: level {}", root.level);
@@ -1859,7 +1859,7 @@ impl Engine {
         let n = out.cands.iter().map(|c| c.chain as usize + 1).max().unwrap_or(0);
         let mut last = vec![plan.start; n];
         let mut carry: Vec<Vec<GamePad>> = vec![Vec::new(); n];
-        let ne = self.cfg.new_eligible && self.dense.is_none_or(|d| d.ne);
+        let ne = self.cfg.new_eligible;
         for c in out.cands {
             let ci = c.chain as usize;
             carry[ci].extend(c.inputs);
@@ -1930,12 +1930,9 @@ impl Engine {
     }
 
     /// Bytes the soft-dedupe memory budget is checked against: saves, and
-    /// with dense adds (OBRRT_DENSE_MEMOBJ, on) the nodes' object lists too.
+    /// with dense adds the nodes' object lists too.
     fn mem_used(&self) -> usize {
-        match self.dense {
-            Some(d) if d.mem_objects => self.tree.delta_bytes + self.tree.obj_bytes,
-            _ => self.tree.delta_bytes,
-        }
+        if self.dense { self.tree.delta_bytes + self.tree.obj_bytes } else { self.tree.delta_bytes }
     }
 
     /// Automatic tuning, tier 1: each kind's multiplier follows its yield
@@ -2112,11 +2109,11 @@ impl Engine {
                 "mem_bytes": self.tree.mem_bytes(), "delta_bytes": self.tree.delta_bytes, "obj_bytes": self.tree.obj_bytes,
             });
         }
-        if self.dense.is_some() {
+        if self.dense {
             let d = &self.dstats;
             println!(
-                "   dense adds: {} attempts, {} added ({} frontier), {} dup at merge, {} no anchor, {} pruned; worker seen {} novel {} beaten {} capped {} returned {} saves {} replay {} frames; keys {}",
-                d.attempts, d.added, d.frontier, d.dup, d.no_anchor, d.pruned, d.worker.seen, d.worker.novel, d.worker.beaten, d.worker.capped, d.worker.returned, d.worker.saves, d.worker.replay_frames, self.tree.dkeys.len()
+                "   dense adds: {} attempts, {} added ({} frontier), {} dup at merge, {} no anchor, {} pruned; worker seen {} novel {} beaten {} returned {} saves {} replay {} frames; keys {}",
+                d.attempts, d.added, d.frontier, d.dup, d.no_anchor, d.pruned, d.worker.seen, d.worker.novel, d.worker.beaten, d.worker.returned, d.worker.saves, d.worker.replay_frames, self.tree.dkeys.len()
             );
             summary["dense"] = serde_json::json!(d);
             summary["dense"]["keys"] = serde_json::json!(self.tree.dkeys.len());
@@ -2407,7 +2404,7 @@ impl Engine {
         // then the lowest start weight, the latest first among equals), not
         // on the best routes or kept for work under way. Their object lists
         // are most of the memory (about 10 KB a node).
-        if self.dense.is_some() && self.mem_used() > target {
+        if self.dense && self.mem_used() > target {
             let mut cands: Vec<(bool, f64, std::cmp::Reverse<u32>)> = self
                 .tree
                 .nodes
@@ -2737,10 +2734,7 @@ impl Engine {
                     let base = tree.base_of(plan.start);
                     let pack = |s: &crate::game::GameSave| Delta::new(base, &bases[base as usize], s);
                     let novel = |k: u64, f: u32| tree.dense_novel(k, f);
-                    let req = dense.map(|d| crate::ga::DenseReq {
-                        modes: d.modes,
-                        grid: d.grid,
-                        cap: d.cap,
+                    let req = dense.then_some(crate::ga::DenseReq {
                         novel: &novel,
                         replay_max,
                         start_dist: tree.dist(plan.start),
@@ -2816,7 +2810,7 @@ impl Engine {
                 self.total_frames += f - self.rebuild_counted;
                 self.rebuild_counted = f;
             }
-            if self.dense.is_some() {
+            if self.dense {
                 let mark = (self.dstats.curve.len() as u64 + 1) * 10_000_000;
                 if self.total_frames >= mark {
                     self.dstats.curve.push((self.total_frames, self.tree.nodes.len(), self.dstats.added));

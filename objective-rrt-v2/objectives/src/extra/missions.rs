@@ -127,10 +127,6 @@ impl ReachSpot {
 }
 
 impl Objective for ReachSpot {
-    /// Dense adds (`OBRRT_DENSE_EVERY=obj`): collecting and fighting: a state every 15 frames, none mid-arc.
-    fn dense_keep(&self) -> obrrt_core::DenseKeep {
-        obrrt_core::DenseKeep::Every { n: 15, air: false }
-    }
     fn precision(&self) -> obrrt_core::Precision {
         obrrt_core::Precision::Precise
     }
@@ -205,10 +201,6 @@ impl ReachLoadedStar {
 }
 
 impl Objective for ReachLoadedStar {
-    /// Dense adds (`OBRRT_DENSE_EVERY=obj`): collecting and fighting: a state every 15 frames, none mid-arc.
-    fn dense_keep(&self) -> obrrt_core::DenseKeep {
-        obrrt_core::DenseKeep::Every { n: 15, air: false }
-    }
     fn precision(&self) -> obrrt_core::Precision {
         obrrt_core::Precision::Precise
     }
@@ -290,10 +282,6 @@ impl Counter {
 }
 
 impl Objective for Counter {
-    /// Dense adds (`OBRRT_DENSE_EVERY=obj`): collecting and fighting: a state every 15 frames, none mid-arc.
-    fn dense_keep(&self) -> obrrt_core::DenseKeep {
-        obrrt_core::DenseKeep::Every { n: 15, air: false }
-    }
     fn kind(&self) -> &'static str {
         match self.count {
             Count::RedCoins => "RedCoins::CollectNext",
@@ -393,10 +381,6 @@ fn nearest_coin(s: &St) -> Option<[f32; 3]> {
 }
 
 impl Objective for Coins {
-    /// Dense adds (`OBRRT_DENSE_EVERY=obj`): collecting and fighting: a state every 15 frames, none mid-arc.
-    fn dense_keep(&self) -> obrrt_core::DenseKeep {
-        obrrt_core::DenseKeep::Every { n: 15, air: false }
-    }
     fn kind(&self) -> &'static str {
         if self.target >= 100 { "Coins::Reach100" } else { "Coins::Milestone" }
     }
@@ -539,10 +523,6 @@ impl SecretTour {
 }
 
 impl Objective for SecretTour {
-    /// Dense adds (`OBRRT_DENSE_EVERY=obj`): collecting and fighting: a state every 15 frames, none mid-arc.
-    fn dense_keep(&self) -> obrrt_core::DenseKeep {
-        obrrt_core::DenseKeep::Every { n: 15, air: false }
-    }
     fn kind(&self) -> &'static str {
         "Secrets::Tour"
     }
@@ -631,10 +611,6 @@ impl PssUnder21 {
 }
 
 impl Objective for PssUnder21 {
-    /// Dense adds (`OBRRT_DENSE_EVERY=obj`): collecting and fighting: a state every 15 frames, none mid-arc.
-    fn dense_keep(&self) -> obrrt_core::DenseKeep {
-        obrrt_core::DenseKeep::Every { n: 15, air: false }
-    }
     fn precision(&self) -> obrrt_core::Precision {
         obrrt_core::Precision::Precise
     }

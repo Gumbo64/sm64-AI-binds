@@ -30,7 +30,6 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use obrrt_core::{Generator, Objective, St, read_state, start_eta};
-use obrrt_search::dense::Modes;
 use obrrt_search::ga::DenseReq;
 use obrrt_search::store::Delta;
 use rand::Rng;
@@ -154,9 +153,6 @@ pub(crate) fn expand(w: &mut Worker, archive: &Archive, tree: &Tree, cfg: &Confi
     let novel = |_: u64, _: u32| true;
     let pack = |_: &SaveState| Delta::none();
     let req = DenseReq {
-        modes: Modes { last_gen: true, ..Default::default() },
-        grid: 64.0,
-        cap: 0,
         novel: &novel,
         // No saves: the harvest replays the inputs itself.
         replay_max: u32::MAX,

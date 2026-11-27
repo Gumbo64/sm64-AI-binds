@@ -478,10 +478,6 @@ impl WhompPound {
 }
 
 impl Objective for WhompPound {
-    /// Dense adds (`OBRRT_DENSE_EVERY=obj`): boss hits are timing windows: a state every 10 frames, mid-air too.
-    fn dense_keep(&self) -> obrrt_core::DenseKeep {
-        obrrt_core::DenseKeep::Every { n: 10, air: true }
-    }
     fn precision(&self) -> obrrt_core::Precision {
         obrrt_core::Precision::Precise
     }
@@ -554,10 +550,6 @@ struct BigBooHit {
 }
 
 impl Objective for BigBooHit {
-    /// Dense adds (`OBRRT_DENSE_EVERY=obj`): boss hits are timing windows: a state every 10 frames, mid-air too.
-    fn dense_keep(&self) -> obrrt_core::DenseKeep {
-        obrrt_core::DenseKeep::Every { n: 10, air: true }
-    }
     fn precision(&self) -> obrrt_core::Precision {
         obrrt_core::Precision::Precise
     }
@@ -633,10 +625,6 @@ struct WigglerStomp {
 }
 
 impl Objective for WigglerStomp {
-    /// Dense adds (`OBRRT_DENSE_EVERY=obj`): boss hits are timing windows: a state every 10 frames, mid-air too.
-    fn dense_keep(&self) -> obrrt_core::DenseKeep {
-        obrrt_core::DenseKeep::Every { n: 10, air: true }
-    }
     fn precision(&self) -> obrrt_core::Precision {
         obrrt_core::Precision::Precise
     }
@@ -689,10 +677,6 @@ struct EyerokPunchEye {
 }
 
 impl Objective for EyerokPunchEye {
-    /// Dense adds (`OBRRT_DENSE_EVERY=obj`): boss hits are timing windows: a state every 10 frames, mid-air too.
-    fn dense_keep(&self) -> obrrt_core::DenseKeep {
-        obrrt_core::DenseKeep::Every { n: 10, air: true }
-    }
     fn precision(&self) -> obrrt_core::Precision {
         obrrt_core::Precision::Precise
     }
@@ -750,10 +734,6 @@ struct EyerokWake {
 }
 
 impl Objective for EyerokWake {
-    /// Dense adds (`OBRRT_DENSE_EVERY=obj`): boss hits are timing windows: a state every 10 frames, mid-air too.
-    fn dense_keep(&self) -> obrrt_core::DenseKeep {
-        obrrt_core::DenseKeep::Every { n: 10, air: true }
-    }
     fn precision(&self) -> obrrt_core::Precision {
         obrrt_core::Precision::Precise
     }
@@ -830,10 +810,6 @@ impl BullyPushOff {
 }
 
 impl Objective for BullyPushOff {
-    /// Dense adds (`OBRRT_DENSE_EVERY=obj`): boss hits are timing windows: a state every 10 frames, mid-air too.
-    fn dense_keep(&self) -> obrrt_core::DenseKeep {
-        obrrt_core::DenseKeep::Every { n: 10, air: true }
-    }
     fn precision(&self) -> obrrt_core::Precision {
         obrrt_core::Precision::Precise
     }
@@ -966,10 +942,6 @@ struct BowserGrabTail {
 }
 
 impl Objective for BowserGrabTail {
-    /// Dense adds (`OBRRT_DENSE_EVERY=obj`): boss hits are timing windows: a state every 10 frames, mid-air too.
-    fn dense_keep(&self) -> obrrt_core::DenseKeep {
-        obrrt_core::DenseKeep::Every { n: 10, air: true }
-    }
     fn precision(&self) -> obrrt_core::Precision {
         obrrt_core::Precision::Precise
     }
@@ -1026,9 +998,6 @@ struct BowserDefeated {
 }
 
 impl Objective for BowserDefeated {
-    fn dense_keep(&self) -> obrrt_core::DenseKeep {
-        obrrt_core::DenseKeep::EndOnly
-    }
     fn kind(&self) -> &'static str {
         "Bowser::Defeated"
     }
@@ -1094,10 +1063,6 @@ impl BowserThrow {
 }
 
 impl Objective for BowserThrow {
-    /// Dense adds (`OBRRT_DENSE_EVERY=obj`): boss hits are timing windows: a state every 10 frames, mid-air too.
-    fn dense_keep(&self) -> obrrt_core::DenseKeep {
-        obrrt_core::DenseKeep::Every { n: 10, air: true }
-    }
     fn precision(&self) -> obrrt_core::Precision {
         obrrt_core::Precision::Precise
     }

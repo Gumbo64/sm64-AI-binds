@@ -140,10 +140,6 @@ impl Hit {
 }
 
 impl Objective for Hit {
-    /// Dense adds (`OBRRT_DENSE_EVERY=obj`): boss hits are timing windows: a state every 10 frames, mid-air too.
-    fn dense_keep(&self) -> obrrt_core::DenseKeep {
-        obrrt_core::DenseKeep::Every { n: 10, air: true }
-    }
     fn precision(&self) -> obrrt_core::Precision {
         obrrt_core::Precision::Precise
     }

@@ -48,10 +48,6 @@ impl Enter {
 }
 
 impl Objective for Enter {
-    /// Dense adds (`OBRRT_DENSE_EVERY=obj`): doors: only the end matters.
-    fn dense_keep(&self) -> obrrt_core::DenseKeep {
-        obrrt_core::DenseKeep::EndOnly
-    }
     fn kind(&self) -> &'static str {
         "Door::Enter"
     }

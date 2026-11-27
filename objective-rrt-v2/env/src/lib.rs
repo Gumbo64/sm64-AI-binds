@@ -27,7 +27,7 @@ mod tests {
     fn toml_round_trips() {
         let mut c = SearchConfig::default();
         c.sampler.pick_by_b = true;
-        c.dedup.dense.add = Some("all".into());
+        c.dedup.dense_adds = false;
         c.stop.exit_skip = vec![2, 3];
         let back = from_toml(&to_toml(&c).unwrap()).unwrap();
         assert_eq!(c, back);

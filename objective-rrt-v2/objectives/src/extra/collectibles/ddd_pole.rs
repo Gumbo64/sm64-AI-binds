@@ -483,9 +483,6 @@ impl Hop {
 }
 
 impl Objective for Hop {
-    fn dense_keep(&self) -> obrrt_core::DenseKeep {
-        obrrt_core::DenseKeep::Every { n: 15, air: false }
-    }
     fn kind(&self) -> &'static str {
         match self.stage {
             0 => "DddPole::Hop",
