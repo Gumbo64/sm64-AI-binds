@@ -66,8 +66,9 @@ thread_local! {
     static SCOPED: RefCell<Option<Arc<Runtime>>> = const { RefCell::new(None) };
 }
 
-/// While alive, [`current`] on this thread answers with the runtime given to [`scope`].
-pub struct Scope(Option<Arc<Runtime>>);
+/// While alive, [`current`] on this thread answers with the runtime given to [`scope`]. Not `Send`: it
+/// restores the thread it was made on.
+pub struct Scope(Option<Arc<Runtime>>, std::marker::PhantomData<*const ()>);
 
 impl Drop for Scope {
     fn drop(&mut self) {
@@ -77,7 +78,7 @@ impl Drop for Scope {
 
 /// Makes `rt` this thread's runtime until the guard drops (scopes nest).
 pub fn scope(rt: Arc<Runtime>) -> Scope {
-    Scope(SCOPED.with(|s| s.borrow_mut().replace(rt)))
+    Scope(SCOPED.with(|s| s.borrow_mut().replace(rt)), std::marker::PhantomData)
 }
 
 /// Calls `f` with this thread's runtime: the scoped one, else the process-wide one.
@@ -90,7 +91,6 @@ pub fn with<R>(f: impl FnOnce(&Runtime) -> R) -> R {
 
 /// This thread's runtime.
 pub fn current() -> Arc<Runtime> {
-    with(|_| ());
     SCOPED.with(|s| s.borrow().clone()).unwrap_or_else(|| Runtime::global().clone())
 }
 

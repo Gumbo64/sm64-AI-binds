@@ -19,8 +19,9 @@ thread_local! {
     static SCOPED: Cell<Option<&'static SearchConfig>> = const { Cell::new(None) };
 }
 
-/// While alive, [`current`] on this thread answers with the config given to [`scope`].
-pub struct Scope(Option<&'static SearchConfig>);
+/// While alive, [`current`] on this thread answers with the config given to [`scope`]. Not `Send`: it
+/// restores the thread it was made on.
+pub struct Scope(Option<&'static SearchConfig>, std::marker::PhantomData<*const ()>);
 
 impl Drop for Scope {
     fn drop(&mut self) {
@@ -30,7 +31,7 @@ impl Drop for Scope {
 
 /// Makes `cfg` this thread's config until the guard drops (scopes nest).
 pub fn scope(cfg: &'static SearchConfig) -> Scope {
-    Scope(SCOPED.with(|s| s.replace(Some(cfg))))
+    Scope(SCOPED.with(|s| s.replace(Some(cfg))), std::marker::PhantomData)
 }
 
 /// A config that lives for the rest of the process (an engine keeps its config this way; they are few and small).
